@@ -231,10 +231,53 @@ def apply_answers(
 @app.command(name="build-folders")
 def build_folders(
     output_root: str = typer.Option(..., "--output-root", help="Path to the output directory."),
+    mock_bedrock: bool = typer.Option(
+        False,
+        "--mock-bedrock",
+        help="Use template-based folder summaries instead of Bedrock.",
+    ),
+    tracker_path: str | None = typer.Option(
+        None,
+        "--tracker-path",
+        help="Path to tracker JSONL file. Defaults to the tracker JSONL in the latest run dir.",
+    ),
+    config: str | None = typer.Option(None, "--config", help="Path to a YAML config file."),
 ) -> None:
     """Synthesize folder-level metadata and Markdown summaries."""
-    console.print("[yellow]build-folders: not yet implemented[/yellow]")
-    console.print(f"  output_root = {output_root}")
+    from proposal_ingest.folder_builder import build_all_folders
+    from proposal_ingest.tracker import load_tracker_rows_jsonl
+
+    logs_dir = Path(output_root) / "logs"
+    run_dirs = sorted(logs_dir.glob("run_*")) if logs_dir.is_dir() else []
+    if not run_dirs:
+        console.print(f"[red]No run directories found under {logs_dir}[/red]")
+        raise typer.Exit(code=1)
+
+    run_dir = run_dirs[-1]
+    store = MetadataStore(run_dir)
+    runtime_cfg = load_runtime_config(config)
+
+    tracker_rows = None
+    if tracker_path:
+        tracker_rows = load_tracker_rows_jsonl(Path(tracker_path))
+    else:
+        default_tracker = run_dir / "tracker" / "tracker_rows.jsonl"
+        if default_tracker.exists():
+            tracker_rows = load_tracker_rows_jsonl(default_tracker)
+
+    results = build_all_folders(
+        store,
+        tracker_rows=tracker_rows,
+        use_mock=mock_bedrock,
+        config=runtime_cfg,
+    )
+
+    console.print(
+        f"build-folders complete: {len(results)} folder(s) synthesized"
+        f"{' (mock mode)' if mock_bedrock else ''}"
+    )
+    for result in results:
+        console.print(f"  {result.proposal_id}: {result.json_path}")
 
 
 @app.command(name="build-clean-set")
