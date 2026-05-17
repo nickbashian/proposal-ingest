@@ -20,22 +20,17 @@ Known global rules:
 Return JSON matching this high-level structure:
 
 ```json
-{
-  "schema_version": "0.1.0",
-  "document_id": "...",
-  "proposal_id": "...",
-  "document_identity": {},
-  "proposal_context": {},
-  "content": {},
-  "opportunity_treatment": {},
-  "inclusion": {},
-  "sensitivity": {},
-  "tracker_matching": {},
-  "confidence": {},
-  "questions_for_user": [],
-  "processing_notes": []
-}
+{{DOCUMENT_METADATA_TEMPLATE_JSON}}
 ```
+
+Use the exact nested field names shown above. Do not invent alternate keys such as `document_type`, `citation_id`, `chunk_strategy`, `contains_pii`, or `contains_proprietary_technical`.
+
+Pipeline-managed fields (`schema_version`, `document_id`, `proposal_id`, `run_id`, and `system`) may be echoed exactly as shown above or omitted; the pipeline will overwrite them. All other fields must use the exact schema names from the template.
+
+Conditional inclusion rule:
+
+- If either `include_in_clean_set` or `include_in_future_rag` is `true`, provide `include_reason`.
+- If both are `false`, provide `exclude_reason`.
 
 For every question in `questions_for_user`, include:
 

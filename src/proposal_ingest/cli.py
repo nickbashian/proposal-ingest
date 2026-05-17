@@ -13,14 +13,17 @@ from pathlib import Path
 import typer
 from rich.console import Console
 
-from proposal_ingest.analyzer import analyze_from_output_root, analyze_inventory
+from proposal_ingest.analyzer import (
+    analyze_from_output_root,
+    analyze_inventory,
+    process_single_file,
+)
 from proposal_ingest.bedrock_client import BedrockSmokeTestResult, smoke_test_bedrock
 from proposal_ingest.config import load_runtime_config
 from proposal_ingest.file_filters import classify_path
 from proposal_ingest.hashing import document_id_from_sha256, sha256_file
 from proposal_ingest.logging_utils import configure_logging
 from proposal_ingest.metadata_store import MetadataStore
-from proposal_ingest.mock_bedrock import analyze_document_mock
 from proposal_ingest.path_utils import proposal_id_from_branch, sanitize_filename
 from proposal_ingest.scanner import scan_source_root
 from proposal_ingest.schemas import APP_SCHEMA_VERSION, InventoryRecord, RunManifest
@@ -236,26 +239,55 @@ def process_file(
     save_raw_responses: bool = typer.Option(
         False, "--save-raw-responses", help="Save raw model responses to disk."
     ),
+    dry_run: bool = typer.Option(
+        False,
+        "--dry-run",
+        help="Print strategy info without making Bedrock calls or writing output.",
+    ),
+    config_path: str | None = typer.Option(None, "--config", help="Path to a YAML config file."),
 ) -> None:
-    """Process a single document file."""
-    del save_raw_responses  # real Bedrock path; reserved for Phase 6
-    if not mock_bedrock:
-        console.print("[red]Real Bedrock not yet implemented. Use --mock-bedrock.[/red]")
-        raise typer.Exit(code=1)
-
+    """Process a single document file with Bedrock (or mock / dry-run mode)."""
     file_path = Path(file).resolve()
     if not file_path.is_file():
         console.print(f"[red]Error: file not found: {file_path}[/red]")
         raise typer.Exit(code=1)
 
+    runtime_cfg = load_runtime_config(
+        config_path, overrides={"bedrock": {"mock_bedrock": mock_bedrock}}
+    )
+
     run_id = _build_run_id()
     run_dir = Path(output_root).resolve() / "logs" / run_id
-    run_dir.mkdir(parents=True, exist_ok=True)
+
+    if not dry_run:
+        run_dir.mkdir(parents=True, exist_ok=True)
 
     record = _build_single_file_inventory_record(file_path)
 
-    metadata = analyze_document_mock(record, run_id)
-    MetadataStore(run_dir).write_document_metadata(metadata)
+    if dry_run:
+        from proposal_ingest.analyzer import _decide_strategy
+
+        strategy = _decide_strategy(file_path, record, runtime_cfg)
+        console.print("[bold]Dry run — no Bedrock calls or output will be written.[/bold]")
+        console.print(f"  file             = {file_path}")
+        console.print(f"  document_id      = {record.document_id}")
+        console.print(f"  extension        = {record.extension}")
+        console.print(f"  size_bytes       = {record.size_bytes}")
+        console.print(f"  strategy         = {strategy}")
+        console.print(f"  mock_bedrock     = {mock_bedrock}")
+        console.print(f"  output_run_dir   = {run_dir}  (not created)")
+        return
+
+    result = process_single_file(
+        file_path=file_path,
+        record=record,
+        run_dir=run_dir,
+        run_id=run_id,
+        config=runtime_cfg,
+        use_mock=mock_bedrock,
+        save_raw_responses=save_raw_responses,
+    )
+
     MetadataStore(run_dir).write_run_manifest(
         RunManifest(
             schema_version=APP_SCHEMA_VERSION,
@@ -263,13 +295,25 @@ def process_file(
             command="process-file",
             source_root=str(file_path.parent),
             output_root=str(Path(output_root).resolve()),
-            config_snapshot={"mock_bedrock": mock_bedrock},
+            config_snapshot={
+                "mock_bedrock": mock_bedrock,
+                "save_raw_responses": save_raw_responses,
+            },
             git_commit=None,
             timestamp=datetime.now(UTC).isoformat(),
             mock_bedrock=mock_bedrock,
         )
     )
-    console.print(f"process-file complete (mock mode): {record.document_id}")
+
+    if result.success and result.metadata:
+        console.print(
+            f"[green]process-file complete[/green]"
+            f"{'[mock]' if mock_bedrock else ''}: {record.document_id}"
+        )
+    else:
+        console.print(f"[red]process-file failed: {result.error_message}[/red]")
+        raise typer.Exit(code=1)
+
     console.print(f"  run_dir = {run_dir}")
 
 

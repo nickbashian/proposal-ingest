@@ -43,12 +43,28 @@ class BedrockConfig(BaseModel):
     retry_invalid_json_once: bool = True
 
 
+class ProcessingConfig(BaseModel):
+    """Document processing and strategy settings."""
+
+    direct_upload_default: bool = True
+    excel_local_extract_first: bool = True
+    local_extract_max_chars: int = Field(default=200_000, ge=1_000)
+    tiny_excel_max_sheets: int = Field(default=3, ge=1)
+    tiny_excel_max_nonempty_cells: int = Field(default=500, ge=1)
+    tiny_excel_max_size_mb: float = Field(default=1.0, ge=0.0)
+    ocr_enabled: bool = False
+    pass2_enabled: bool = True
+    pass2_confidence_threshold: float = Field(default=0.65, ge=0.0, le=1.0)
+    stop_before_clean_set_if_critical_questions: bool = True
+
+
 class RuntimeConfig(BaseModel):
     """Top-level runtime configuration used by the CLI."""
 
     app: AppConfig = Field(default_factory=AppConfig)
     aws: AwsConfig = Field(default_factory=AwsConfig)
     bedrock: BedrockConfig = Field(default_factory=BedrockConfig)
+    processing: ProcessingConfig = Field(default_factory=ProcessingConfig)
 
 
 def load_runtime_config(

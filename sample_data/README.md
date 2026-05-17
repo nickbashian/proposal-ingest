@@ -19,7 +19,6 @@ Expected structure:
         Grants In Progress/
           fake_grants_tracker.xlsx
 
-The checked-in files are plain-text stand-ins with proposal-like filenames. They are
-intended for scanner, inventory, schema, and mock-analysis validation only. Later
-extractor tests should add format-appropriate fixtures when real PDF/DOCX/XLSX parsing
-is exercised.
+The checked-in files are minimal valid PDF, DOCX, XLSX, and PPTX documents with fake
+content. They are safe to use for scanner, extractor, schema, mock-analysis, and
+single-file Bedrock smoke checks without introducing any real proposal material.

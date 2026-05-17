@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from proposal_ingest.bedrock_client import smoke_test_bedrock
+from proposal_ingest.bedrock_client import call_converse_with_document, smoke_test_bedrock
 from proposal_ingest.config import load_runtime_config
 
 
@@ -95,3 +95,36 @@ def test_smoke_test_bedrock_uses_converse_api(monkeypatch) -> None:
     assert result.region == "us-east-1"
     assert result.response_text == "Bedrock is reachable."
     assert result.total_tokens == 9
+
+
+def test_call_converse_with_document_sanitizes_document_name() -> None:
+    """DocumentBlock names should comply with Bedrock's restricted character set."""
+    captured: dict[str, object] = {}
+
+    class FakeClient:
+        def converse(self, **kwargs):
+            captured["converse_kwargs"] = kwargs
+            return {
+                "output": {
+                    "message": {
+                        "content": [{"text": "ok"}],
+                    }
+                },
+                "usage": {},
+            }
+
+    response_text, _usage = call_converse_with_document(
+        FakeClient(),
+        model_id="model",
+        system_prompt="system",
+        user_prompt="user",
+        file_bytes=b"%PDF-1.7",
+        doc_format="pdf",
+        doc_name="Quad_Chart.v2 [Final].pdf",
+        max_tokens=128,
+        temperature=0,
+    )
+
+    document_block = captured["converse_kwargs"]["messages"][0]["content"][0]["document"]
+    assert document_block["name"] == "Quad Chart v2 [Final]"
+    assert response_text == "ok"

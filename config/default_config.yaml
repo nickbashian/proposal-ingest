@@ -43,6 +43,7 @@ tracker:
 processing:
   direct_upload_default: true
   excel_local_extract_first: true
+  local_extract_max_chars: 200000
   tiny_excel_max_sheets: 3
   tiny_excel_max_nonempty_cells: 500
   tiny_excel_max_size_mb: 1

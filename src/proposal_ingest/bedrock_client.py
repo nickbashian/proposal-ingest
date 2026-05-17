@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+from pathlib import Path
 from typing import Any
 
 import boto3
@@ -12,6 +14,23 @@ from proposal_ingest.logging_utils import get_logger
 
 DEFAULT_SMOKE_TEST_PROMPT = "Reply with one short sentence confirming Bedrock connectivity."
 logger = get_logger("bedrock_client")
+
+# Document formats accepted by the Bedrock Converse DocumentBlock.
+# Maps file extension (with leading dot) to the Bedrock format string.
+BEDROCK_DOCUMENT_FORMATS: dict[str, str] = {
+    ".pdf": "pdf",
+    ".csv": "csv",
+    ".doc": "doc",
+    ".docx": "docx",
+    ".xls": "xls",
+    ".xlsx": "xlsx",
+    ".html": "html",
+    ".txt": "txt",
+    ".md": "md",
+}
+
+_BEDROCK_DOC_NAME_DISALLOWED_RE = re.compile(r"[^A-Za-z0-9\-\(\)\[\] ]+")
+_BEDROCK_DOC_NAME_WHITESPACE_RE = re.compile(r"\s+")
 
 
 class BedrockSmokeTestResult(BaseModel):
@@ -24,6 +43,19 @@ class BedrockSmokeTestResult(BaseModel):
     input_tokens: int | None = None
     output_tokens: int | None = None
     total_tokens: int | None = None
+
+
+def sanitize_bedrock_document_name(filename: str) -> str:
+    """Return a Bedrock-safe document name derived from the original filename.
+
+    Bedrock validates the DocumentBlock ``name`` separately from the document
+    format, so we strip the extension and keep only the characters allowed by
+    the Converse API.
+    """
+    stem = Path(filename).stem.strip() or "document"
+    sanitized = _BEDROCK_DOC_NAME_DISALLOWED_RE.sub(" ", stem)
+    sanitized = _BEDROCK_DOC_NAME_WHITESPACE_RE.sub(" ", sanitized).strip()
+    return sanitized or "document"
 
 
 def create_bedrock_runtime_client(config: RuntimeConfig) -> Any:
@@ -104,3 +136,81 @@ def _extract_text_from_converse_response(response: dict[str, Any]) -> str:
     text_parts = [part.get("text", "") for part in content if isinstance(part, dict)]
     response_text = " ".join(part.strip() for part in text_parts if part.strip())
     return response_text or "<no text returned>"
+
+
+def call_converse_with_document(
+    client: Any,
+    *,
+    model_id: str,
+    system_prompt: str,
+    user_prompt: str,
+    file_bytes: bytes,
+    doc_format: str,
+    doc_name: str,
+    max_tokens: int,
+    temperature: float,
+) -> tuple[str, dict[str, Any]]:
+    """Send a document to Bedrock via DocumentBlock and return (response_text, usage_dict).
+
+    The ``usage_dict`` contains the raw ``usage`` sub-dict from the Converse response
+    (keys: ``inputTokens``, ``outputTokens``, ``totalTokens``).
+    """
+    logger.debug(
+        "call_converse_with_document model_id=%s doc_format=%s doc_name=%s",
+        model_id,
+        doc_format,
+        doc_name,
+    )
+    safe_doc_name = sanitize_bedrock_document_name(doc_name)
+    response = client.converse(
+        modelId=model_id,
+        system=[{"text": system_prompt}],
+        messages=[
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "document": {
+                            "format": doc_format,
+                            "name": safe_doc_name,
+                            "source": {"bytes": file_bytes},
+                        }
+                    },
+                    {"text": user_prompt},
+                ],
+            }
+        ],
+        inferenceConfig={"maxTokens": max_tokens, "temperature": temperature},
+    )
+    usage: dict[str, Any] = response.get("usage", {})
+    return _extract_text_from_converse_response(response), usage
+
+
+def call_converse_with_text(
+    client: Any,
+    *,
+    model_id: str,
+    system_prompt: str,
+    user_prompt: str,
+    max_tokens: int,
+    temperature: float,
+) -> tuple[str, dict[str, Any]]:
+    """Send a text-only Converse request and return (response_text, usage_dict).
+
+    Used when the document content has been extracted locally and is passed as
+    part of the user prompt text rather than as a DocumentBlock.
+    """
+    logger.debug("call_converse_with_text model_id=%s", model_id)
+    response = client.converse(
+        modelId=model_id,
+        system=[{"text": system_prompt}],
+        messages=[
+            {
+                "role": "user",
+                "content": [{"text": user_prompt}],
+            }
+        ],
+        inferenceConfig={"maxTokens": max_tokens, "temperature": temperature},
+    )
+    usage: dict[str, Any] = response.get("usage", {})
+    return _extract_text_from_converse_response(response), usage

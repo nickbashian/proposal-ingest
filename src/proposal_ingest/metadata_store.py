@@ -6,7 +6,12 @@ import json
 from collections.abc import Iterable
 from pathlib import Path
 
-from proposal_ingest.schemas import DocumentMetadata, FolderMetadata, RunManifest
+from proposal_ingest.schemas import (
+    BedrockUsageRecord,
+    DocumentMetadata,
+    FolderMetadata,
+    RunManifest,
+)
 
 
 class MetadataStore:
@@ -21,6 +26,9 @@ class MetadataStore:
         )
         self.folder_metadata_dir = self.run_dir / "folder_metadata"
         self.run_manifest_path = self.run_dir / "run_manifest.json"
+        self.usage_dir = self.run_dir / "usage"
+        self.failures_dir = self.document_metadata_dir / "failures"
+        self.raw_responses_dir = self.run_dir / "raw_responses"
 
     def write_document_metadata(
         self, metadata: DocumentMetadata, *, append_jsonl: bool = True
@@ -52,6 +60,32 @@ class MetadataStore:
         self.run_dir.mkdir(parents=True, exist_ok=True)
         self._write_json(self.run_manifest_path, manifest)
         return self.run_manifest_path
+
+    def write_usage_record(self, record: BedrockUsageRecord) -> Path:
+        """Append one Bedrock usage record to the run-scoped usage JSONL file."""
+        self.usage_dir.mkdir(parents=True, exist_ok=True)
+        path = self.usage_dir / "bedrock_usage.jsonl"
+        with path.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(record.model_dump(mode="json"), sort_keys=True))
+            handle.write("\n")
+        return path
+
+    def write_failure_record(self, document_id: str, error_type: str, details: dict) -> Path:
+        """Write a JSON failure record for a document whose metadata could not be produced."""
+        self.failures_dir.mkdir(parents=True, exist_ok=True)
+        path = self.failures_dir / f"{document_id}.json"
+        payload = {"document_id": document_id, "error_type": error_type, **details}
+        with path.open("w", encoding="utf-8") as handle:
+            json.dump(payload, handle, indent=2, sort_keys=True)
+            handle.write("\n")
+        return path
+
+    def write_raw_response(self, document_id: str, pass_number: int, raw_text: str) -> Path:
+        """Save the raw model response text to disk for debugging."""
+        self.raw_responses_dir.mkdir(parents=True, exist_ok=True)
+        path = self.raw_responses_dir / f"{document_id}_pass{pass_number}.txt"
+        path.write_text(raw_text, encoding="utf-8")
+        return path
 
     @staticmethod
     def _append_jsonl(path: Path, model: DocumentMetadata) -> None:
