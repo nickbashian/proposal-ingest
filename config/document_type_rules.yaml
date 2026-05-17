@@ -1,0 +1,65 @@
+supported_processing_extensions:
+  - ".pdf"
+  - ".docx"
+  - ".doc"
+  - ".xlsx"
+  - ".xls"
+  - ".csv"
+  - ".txt"
+  - ".md"
+
+powerpoint_extensions:
+  - ".pptx"
+  - ".ppt"
+
+image_extensions:
+  - ".png"
+  - ".jpg"
+  - ".jpeg"
+  - ".tif"
+  - ".tiff"
+  - ".bmp"
+  - ".gif"
+
+archive_extensions:
+  - ".zip"
+  - ".7z"
+  - ".rar"
+
+always_include_roles:
+  - technical_volume
+  - project_description
+  - statement_of_work
+  - abstract
+  - quad_chart
+  - commercialization_plan
+  - milestone_report
+  - final_report
+  - review_feedback
+  - award_notice
+
+usually_exclude_roles:
+  - dfars_clauses
+  - terms_and_conditions
+  - current_pending_support
+
+budget_roles:
+  - budget
+  - budget_justification
+
+budget_default:
+  include_in_clean_set: false
+  include_in_future_rag: false
+  rag_priority: exclude
+  manual_review_required: true
+  sensitivity_labels:
+    - financial_sensitive
+
+opportunity_boilerplate_default:
+  recommended_rag_treatment: summary_only
+  rag_priority: low
+
+partner_doc_default:
+  sensitivity_labels:
+    - partner_confidential
+  manual_review_required: true

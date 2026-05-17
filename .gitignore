@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Environments
+.venv/
+env/
+.env
+.env.*
+!.env.example
+
+# Local confidential data — NEVER COMMIT
+source_documents/
+processed_output/
+proposal-assistant-output/
+raw_model_responses/
+logs/
+*.log
+
+# OS/editor
+.DS_Store
+Thumbs.db
+.vscode/
+!.vscode/extensions.json

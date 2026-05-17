@@ -1,0 +1,1 @@
+document_id,proposal_id,source_path,relative_path,year_folder,proposal_branch,file_name_original,file_name_safe,extension,size_bytes,modified_time,sha256,eligible_for_processing,processing_strategy,processing_status,skip_reason,duplicate_of_document_id,superseded_by_document_id

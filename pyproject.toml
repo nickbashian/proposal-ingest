@@ -1,0 +1,53 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "proposal-ingest"
+version = "0.1.0"
+description = "Local-first proposal archive ingestion and metadata pipeline"
+requires-python = ">=3.13"
+dependencies = [
+  "boto3",
+  "botocore",
+  "pydantic>=2",
+  "python-dotenv",
+  "pyyaml",
+  "pandas",
+  "openpyxl",
+  "pypdf",
+  "python-docx",
+  "typer",
+  "rich",
+]
+
+[project.optional-dependencies]
+dev = [
+  "ruff",
+  "pytest",
+  "mypy",
+  "types-PyYAML",
+  "pandas-stubs",
+]
+
+[project.scripts]
+proposal-ingest = "proposal_ingest.cli:app"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "SIM"]
+
+[tool.mypy]
+python_version = "3.13"
+warn_unused_configs = true
+disallow_untyped_defs = false
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

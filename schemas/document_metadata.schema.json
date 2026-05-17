@@ -1,0 +1,195 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.local/proposal-ingest/document_metadata.schema.json",
+  "title": "Proposal Ingest Document Metadata",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "document_id",
+    "proposal_id",
+    "document_identity",
+    "proposal_context",
+    "content",
+    "inclusion",
+    "sensitivity",
+    "confidence",
+    "questions_for_user"
+  ],
+  "properties": {
+    "schema_version": { "type": "string", "default": "0.1.0" },
+    "document_id": { "type": "string" },
+    "proposal_id": { "type": "string" },
+    "run_id": { "type": "string" },
+    "system": {
+      "type": "object",
+      "properties": {
+        "source_path": { "type": "string" },
+        "relative_path": { "type": "string" },
+        "year_folder": { "type": "string" },
+        "proposal_branch": { "type": "string" },
+        "file_name_original": { "type": "string" },
+        "file_name_safe": { "type": "string" },
+        "extension": { "type": "string" },
+        "size_bytes": { "type": "integer" },
+        "modified_time": { "type": "string" },
+        "sha256": { "type": "string" },
+        "processing_strategy": { "type": "string" },
+        "processing_status": { "type": "string" }
+      },
+      "additionalProperties": true
+    },
+    "document_identity": {
+      "type": "object",
+      "required": [
+        "canonical_document_title",
+        "document_category",
+        "document_role",
+        "origin_type",
+        "version_status"
+      ],
+      "properties": {
+        "canonical_document_title": { "type": "string" },
+        "document_category": {
+          "enum": [
+            "opportunity_document",
+            "proposal_response",
+            "supporting_document",
+            "budget_financial",
+            "administrative_compliance",
+            "partner_document",
+            "technical_data",
+            "report_or_deliverable",
+            "presentation",
+            "internal_planning",
+            "correspondence",
+            "unknown"
+          ]
+        },
+        "document_role": {
+          "enum": [
+            "technical_volume",
+            "project_description",
+            "commercialization_plan",
+            "statement_of_work",
+            "budget",
+            "budget_justification",
+            "quad_chart",
+            "abstract",
+            "letter_of_support",
+            "facilities_document",
+            "biosketch",
+            "data_management_plan",
+            "current_pending_support",
+            "rfp",
+            "foa",
+            "topic_description",
+            "submission_instructions",
+            "terms_and_conditions",
+            "dfars_clauses",
+            "evaluation_criteria",
+            "award_notice",
+            "review_feedback",
+            "milestone_report",
+            "final_report",
+            "tracker",
+            "unknown"
+          ]
+        },
+        "origin_type": {
+          "enum": [
+            "source_opportunity",
+            "generated_response",
+            "post_submission_feedback",
+            "award",
+            "internal_reference",
+            "unknown"
+          ]
+        },
+        "version_status": {
+          "enum": [
+            "final",
+            "draft",
+            "template",
+            "submitted_version",
+            "working_version",
+            "superseded",
+            "unknown"
+          ]
+        },
+        "draft_or_final_evidence": { "type": "string" },
+        "document_date": { "type": ["string", "null"] }
+      },
+      "additionalProperties": true
+    },
+    "proposal_context": { "type": "object", "additionalProperties": true },
+    "content": { "type": "object", "additionalProperties": true },
+    "opportunity_treatment": {
+      "type": "object",
+      "properties": {
+        "opportunity_context_useful": { "type": "boolean" },
+        "boilerplate_heavy": { "type": "boolean" },
+        "useful_context_summary": { "type": "string" },
+        "boilerplate_summary": { "type": "string" },
+        "recommended_rag_treatment": {
+          "enum": ["full_document", "summary_only", "metadata_only", "exclude", "manual_review"]
+        }
+      },
+      "additionalProperties": true
+    },
+    "inclusion": {
+      "type": "object",
+      "required": ["include_in_clean_set", "include_in_future_rag", "rag_priority"],
+      "properties": {
+        "include_in_clean_set": { "type": "boolean" },
+        "include_in_future_rag": { "type": "boolean" },
+        "rag_priority": { "enum": ["high", "medium", "low", "exclude"] },
+        "include_reason": { "type": "string" },
+        "exclude_reason": { "type": "string" },
+        "recommended_chunking_strategy": { "type": "string" }
+      },
+      "additionalProperties": true
+    },
+    "sensitivity": {
+      "type": "object",
+      "required": ["sensitivity_labels", "manual_review_required"],
+      "properties": {
+        "sensitivity_labels": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "public",
+              "internal",
+              "confidential",
+              "partner_confidential",
+              "financial_sensitive",
+              "export_control_review",
+              "personal_info",
+              "unknown"
+            ]
+          }
+        },
+        "contains_budget_or_rates": { "type": "boolean" },
+        "contains_personal_info": { "type": "boolean" },
+        "contains_partner_confidential": { "type": "boolean" },
+        "contains_export_control_flags": { "type": "boolean" },
+        "manual_review_required": { "type": "boolean" },
+        "manual_review_reasons": { "type": "array", "items": { "type": "string" } }
+      },
+      "additionalProperties": true
+    },
+    "tracker_matching": { "type": "object", "additionalProperties": true },
+    "confidence": {
+      "type": "object",
+      "additionalProperties": { "type": "number", "minimum": 0, "maximum": 1 }
+    },
+    "questions_for_user": {
+      "type": "array",
+      "items": { "type": "object", "additionalProperties": true }
+    },
+    "processing_notes": {
+      "type": "array",
+      "items": { "type": "string" }
+    }
+  },
+  "additionalProperties": true
+}

@@ -1,0 +1,61 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.local/proposal-ingest/folder_metadata.schema.json",
+  "title": "Proposal Ingest Folder Metadata",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "proposal_id",
+    "year_folder",
+    "proposal_branch",
+    "folder_summary_short",
+    "key_documents",
+    "ready_for_clean_set",
+    "ready_for_future_s3"
+  ],
+  "properties": {
+    "schema_version": { "type": "string", "default": "0.1.0" },
+    "proposal_id": { "type": "string" },
+    "year_folder": { "type": "string" },
+    "proposal_branch": { "type": "string" },
+    "canonical_proposal_name": { "type": "string" },
+    "proposal_short_name": { "type": "string" },
+    "agency": { "type": "string" },
+    "agency_subunit": { "type": "string" },
+    "program": { "type": "string" },
+    "phase": { "type": "string" },
+    "topic_number": { "type": "string" },
+    "topic_title": { "type": "string" },
+    "solicitation_number": { "type": "string" },
+    "submission_date": { "type": ["string", "null"] },
+    "selection_notification_date": { "type": ["string", "null"] },
+    "award_date": { "type": ["string", "null"] },
+    "status": { "type": "string" },
+    "award_status": { "type": "string" },
+    "lead_organization": { "type": "string" },
+    "prime_or_sub": { "type": "string" },
+    "partners": { "type": "array", "items": { "type": "string" } },
+    "technical_focus": { "type": "array", "items": { "type": "string" } },
+    "commercial_focus": { "type": "array", "items": { "type": "string" } },
+    "folder_summary_short": { "type": "string" },
+    "folder_summary_detailed": { "type": "string" },
+    "opportunity_context_summary": { "type": "string" },
+    "generated_response_summary": { "type": "string" },
+    "key_documents": {
+      "type": "array",
+      "items": { "type": "object", "additionalProperties": true }
+    },
+    "included_document_count": { "type": "integer" },
+    "excluded_document_count": { "type": "integer" },
+    "manual_review_count": { "type": "integer" },
+    "open_critical_questions": { "type": "integer" },
+    "ready_for_clean_set": { "type": "boolean" },
+    "ready_for_future_s3": { "type": "boolean" },
+    "tracker_match_status": { "type": "string" },
+    "tracker_disagreements": {
+      "type": "array",
+      "items": { "type": "object", "additionalProperties": true }
+    }
+  },
+  "additionalProperties": true
+}
