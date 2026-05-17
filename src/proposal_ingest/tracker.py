@@ -161,10 +161,10 @@ def load_tracker_rows(
     if isinstance(dataframe, dict):
         rows: list[TrackerRow] = []
         for resolved_sheet, df in dataframe.items():
-            rows.extend(_rows_from_dataframe(path, resolved_sheet, df))
+            rows.extend(_rows_from_dataframe(resolved_sheet, df))
         return rows
     resolved_sheet = sheet_name or "Sheet1"
-    return _rows_from_dataframe(path, resolved_sheet, dataframe)
+    return _rows_from_dataframe(resolved_sheet, dataframe)
 
 
 def write_tracker_rows_jsonl(rows: list[TrackerRow], run_dir: Path) -> Path:
@@ -304,8 +304,7 @@ def apply_tracker_overrides(
     return DocumentMetadata.model_validate(data)
 
 
-def _rows_from_dataframe(path: Path, sheet_name: str, dataframe: pd.DataFrame) -> list[TrackerRow]:
-    del path
+def _rows_from_dataframe(sheet_name: str, dataframe: pd.DataFrame) -> list[TrackerRow]:
     dataframe = _normalize_dataframe_columns(dataframe)
     rows: list[TrackerRow] = []
     for row_number, (_, row) in enumerate(dataframe.iterrows(), start=1):
@@ -332,8 +331,12 @@ def _normalize_column_name(raw: str) -> str:
 
 
 def _is_missing_column_key(key: Any) -> bool:
-    lowered = str(key).strip().lower()
-    return lowered in {"", "nan", "<na>", "none"}
+    if isinstance(key, str):
+        return key.strip() == ""
+    try:
+        return bool(pd.isna(key))
+    except TypeError:
+        return False
 
 
 def _normalize_dataframe_columns(dataframe: pd.DataFrame) -> pd.DataFrame:

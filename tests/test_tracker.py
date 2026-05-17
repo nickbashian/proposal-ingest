@@ -130,13 +130,13 @@ def test_scan_and_analyze_apply_tracker_rows(tmp_path: Path) -> None:
 
 def test_rows_from_dataframe_skips_missing_headers_and_uniquifies_duplicates() -> None:
     dataframe = pd.DataFrame(
-        [["Proposal A", "ignored", "Proposal A duplicate"]],
-        columns=["proposal_name", float("nan"), "proposal_name"],
+        [["Proposal A", "ignored", "Proposal A duplicate", "blank"]],
+        columns=["proposal_name", None, "proposal_name", ""],
     )
 
-    rows = _rows_from_dataframe(Path("/tmp/unused.xlsx"), "Tracker", dataframe)
+    rows = _rows_from_dataframe("Tracker", dataframe)
 
     assert len(rows) == 1
     assert rows[0].values["proposal_name"] == "Proposal A"
     assert rows[0].values["proposal_name_2"] == "Proposal A duplicate"
-    assert "nan" not in rows[0].values
+    assert "unknown_column" not in rows[0].values
