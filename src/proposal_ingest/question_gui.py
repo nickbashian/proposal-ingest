@@ -46,9 +46,9 @@ def write_question_rows(csv_path: Path, rows: list[dict[str, str]]) -> None:
         temp_path = Path(handle.name)
     try:
         temp_path.replace(csv_path)
-    except Exception:
+    except Exception as exc:
         temp_path.unlink(missing_ok=True)
-        raise
+        raise RuntimeError(f"Failed to write questions CSV to {csv_path}") from exc
 
 
 def answer_row(

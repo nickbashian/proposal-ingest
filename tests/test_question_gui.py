@@ -60,6 +60,7 @@ def test_question_gui_helpers_answer_and_rewrite_csv(tmp_path: Path) -> None:
     _write_questions_csv(questions_csv)
 
     rows = load_question_rows(questions_csv)
+    before_update = datetime.now(UTC)
     answer_row(rows[0], "final")
     write_question_rows(questions_csv, rows)
 
@@ -68,6 +69,7 @@ def test_question_gui_helpers_answer_and_rewrite_csv(tmp_path: Path) -> None:
     assert reloaded[0]["status"] == QuestionStatus.answered.value
     assert reloaded[0]["updated_at"]
     parsed_updated_at = datetime.fromisoformat(reloaded[0]["updated_at"])
+    assert parsed_updated_at >= before_update
     assert parsed_updated_at <= datetime.now(UTC)
     assert list(reloaded[0].keys()) == REVIEW_COLUMNS
 
@@ -93,6 +95,7 @@ def test_question_gui_helpers_skip_row() -> None:
 
 def test_question_gui_helpers_sync_answer_draft() -> None:
     row = {"user_answer": "draft", "updated_at": ""}
+    before_update = datetime.now(UTC)
 
     changed = _sync_answer_draft(row, "final")
 
@@ -100,6 +103,7 @@ def test_question_gui_helpers_sync_answer_draft() -> None:
     assert row["user_answer"] == "final"
     assert row["updated_at"]
     parsed_updated_at = datetime.fromisoformat(row["updated_at"])
+    assert parsed_updated_at >= before_update
     assert parsed_updated_at <= datetime.now(UTC)
 
 
