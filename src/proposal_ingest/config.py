@@ -58,6 +58,14 @@ class ProcessingConfig(BaseModel):
     stop_before_clean_set_if_critical_questions: bool = True
 
 
+class QuestionsConfig(BaseModel):
+    """Human-review question export settings."""
+
+    suppress_low_priority: bool = True
+    target_questions_per_file: int = Field(default=3, ge=1)
+    max_questions_per_file: int = Field(default=5, ge=1)
+
+
 class RuntimeConfig(BaseModel):
     """Top-level runtime configuration used by the CLI."""
 
@@ -65,6 +73,7 @@ class RuntimeConfig(BaseModel):
     aws: AwsConfig = Field(default_factory=AwsConfig)
     bedrock: BedrockConfig = Field(default_factory=BedrockConfig)
     processing: ProcessingConfig = Field(default_factory=ProcessingConfig)
+    questions: QuestionsConfig = Field(default_factory=QuestionsConfig)
 
 
 def load_runtime_config(

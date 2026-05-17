@@ -7,7 +7,6 @@ import json
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-import pytest
 from typer.testing import CliRunner
 
 from proposal_ingest.analyzer import (
@@ -263,8 +262,8 @@ def test_all_document_metadata_jsonl_is_written() -> None:
         source = root / "source"
         output = root / "output"
 
-        _write_text_file(source / "2025" / "Proj" / "a.pdf")
-        _write_text_file(source / "2025" / "Proj" / "b.docx")
+        _write_text_file(source / "2025" / "Proj" / "a.pdf", "first document")
+        _write_text_file(source / "2025" / "Proj" / "b.docx", "second document")
 
         artifacts = scan_source_root(source, output)
         analyze_inventory(
@@ -277,11 +276,15 @@ def test_all_document_metadata_jsonl_is_written() -> None:
         assert len(lines) == 2
 
 
-def test_real_bedrock_path_raises_not_implemented() -> None:
-    """analyze_inventory with use_mock=False must raise NotImplementedError."""
+def test_real_bedrock_path_logs_per_file_errors_without_raising(tmp_path: Path) -> None:
+    """Real batch mode should log per-file errors and continue."""
     record = _make_fake_inventory_record("a.pdf")
-    with pytest.raises(NotImplementedError):
-        analyze_inventory(Path("/tmp"), [record], "run_x", use_mock=False)
+    record.source_path = str(tmp_path / "missing.pdf")  # type: ignore[misc]
+
+    results = analyze_inventory(tmp_path, [record], "run_x", use_mock=False)
+
+    assert results == []
+    assert (tmp_path / "document_metadata" / "failures" / f"{record.document_id}.json").exists()
 
 
 # ---------------------------------------------------------------------------

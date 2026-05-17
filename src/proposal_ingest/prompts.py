@@ -92,6 +92,11 @@ def load_repair_prompt_template() -> str:
     return _load_prompt("document_metadata_repair.md")
 
 
+def load_pass2_system_prompt() -> str:
+    """Return the system prompt for Phase 9 contextual review."""
+    return _load_prompt("pass2_contextual_review_system.md")
+
+
 def _document_metadata_template_json() -> str:
     """Return a compact JSON template matching the required metadata shape."""
     return json.dumps(_DOCUMENT_METADATA_TEMPLATE, indent=2)
@@ -113,4 +118,26 @@ def render_repair_prompt(validation_error: str, raw_model_response: str) -> str:
         .replace("{{VALIDATION_ERROR}}", validation_error)
         .replace("{{RAW_MODEL_RESPONSE}}", raw_model_response)
         .replace("{{DOCUMENT_METADATA_TEMPLATE_JSON}}", _document_metadata_template_json())
+    )
+
+
+def render_pass2_user_prompt(
+    current_metadata_json: str,
+    branch_context_json: str,
+    extracted_document_text: str,
+) -> str:
+    """Render the text prompt for contextual pass-2 review."""
+    document_text = (
+        extracted_document_text.strip() or "(No text could be extracted from this file.)"
+    )
+    return (
+        "Re-evaluate this document using branch context and return one strict JSON object only.\n\n"
+        "Current Pass 1 metadata:\n"
+        f"{current_metadata_json}\n\n"
+        "Branch context packet:\n"
+        f"{branch_context_json}\n\n"
+        "Current document text or extracted representation:\n"
+        f"{document_text}\n\n"
+        "Return a full document metadata object matching this template:\n"
+        f"{_document_metadata_template_json()}"
     )

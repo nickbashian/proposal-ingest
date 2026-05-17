@@ -24,6 +24,7 @@ from proposal_ingest.file_filters import classify_path
 from proposal_ingest.hashing import document_id_from_sha256, sha256_file
 from proposal_ingest.logging_utils import configure_logging
 from proposal_ingest.metadata_store import MetadataStore
+from proposal_ingest.question_loop import apply_answers_from_csv, export_questions_to_csv
 from proposal_ingest.path_utils import proposal_id_from_branch, sanitize_filename
 from proposal_ingest.scanner import scan_source_root
 from proposal_ingest.schemas import APP_SCHEMA_VERSION, InventoryRecord, RunManifest
@@ -113,42 +114,81 @@ def analyze(
     mock_bedrock: bool = typer.Option(
         False, "--mock-bedrock", help="Use mock Bedrock instead of real AWS calls."
     ),
+    force: bool = typer.Option(
+        False, "--force", help="Reprocess files even when hash metadata already exists."
+    ),
+    limit: int | None = typer.Option(
+        None, "--limit", min=1, help="Process at most this many eligible files."
+    ),
+    save_raw_responses: bool = typer.Option(
+        False, "--save-raw-responses", help="Save raw model responses to disk."
+    ),
     config: str | None = typer.Option(None, "--config", help="Path to a YAML config file."),
 ) -> None:
     """Analyze inventoried documents with Bedrock (or mock mode)."""
-    del config
-    if not mock_bedrock:
-        console.print("[red]Real Bedrock not yet implemented. Use --mock-bedrock.[/red]")
-        raise typer.Exit(code=1)
     try:
-        run_dir, results = analyze_from_output_root(Path(output_root), use_mock=mock_bedrock)
+        runtime_cfg = load_runtime_config(
+            config,
+            overrides={"bedrock": {"mock_bedrock": mock_bedrock}},
+        )
+        run_dir, results = analyze_from_output_root(
+            Path(output_root),
+            use_mock=mock_bedrock,
+            config=runtime_cfg,
+            force=force,
+            limit=limit,
+            save_raw_responses=save_raw_responses,
+        )
     except FileNotFoundError as exc:
         console.print(f"[red]Error: {exc}[/red]")
         raise typer.Exit(code=1) from exc
-    console.print(f"Analyze complete: {len(results)} documents processed (mock mode)")
+    console.print(
+        f"Analyze complete: {len(results)} documents processed"
+        f"{' (mock mode)' if mock_bedrock else ''}"
+    )
     console.print(f"  run_dir = {run_dir}")
 
 
 @app.command(name="export-questions")
 def export_questions(
     output_root: str = typer.Option(..., "--output-root", help="Path to the output directory."),
+    include_low_priority: bool = typer.Option(
+        False, "--include-low-priority", help="Include low-priority questions in the export."
+    ),
+    config: str | None = typer.Option(None, "--config", help="Path to a YAML config file."),
 ) -> None:
     """Export the questions-to-answer CSV for human review."""
-    console.print("[yellow]export-questions: not yet implemented[/yellow]")
-    console.print(f"  output_root = {output_root}")
+    runtime_cfg = load_runtime_config(config)
+    result = export_questions_to_csv(
+        Path(output_root),
+        include_low_priority=include_low_priority,
+        max_questions_per_file=runtime_cfg.questions.max_questions_per_file,
+    )
+    console.print(f"Exported {result.exported_count} questions to {result.questions_csv}")
+    if result.suppressed_count:
+        console.print(f"Suppressed {result.suppressed_count} low-priority questions")
 
 
 @app.command(name="apply-answers")
 def apply_answers(
     output_root: str = typer.Option(..., "--output-root", help="Path to the output directory."),
-    answers_csv: str = typer.Option(
-        ..., "--answers-csv", help="Path to the answered questions CSV."
+    answers_csv: str | None = typer.Option(
+        None, "--answers-csv", help="Path to the answered questions CSV."
     ),
 ) -> None:
     """Apply human answers from the review CSV to the metadata store."""
-    console.print("[yellow]apply-answers: not yet implemented[/yellow]")
-    console.print(f"  output_root = {output_root}")
-    console.print(f"  answers_csv = {answers_csv}")
+    csv_path = (
+        Path(answers_csv)
+        if answers_csv
+        else Path(output_root) / "review" / "questions_to_answer.csv"
+    )
+    result = apply_answers_from_csv(Path(output_root), csv_path)
+    console.print(
+        f"Applied {result.applied_count} answers; "
+        f"{result.invalid_count} invalid; {result.skipped_count} skipped"
+    )
+    console.print(f"  archive = {result.archive_csv}")
+    console.print(f"  errors  = {result.errors_csv}")
 
 
 @app.command(name="build-folders")
@@ -181,7 +221,6 @@ def run_all(
     config: str | None = typer.Option(None, "--config", help="Path to a YAML config file."),
 ) -> None:
     """Run the full pipeline end-to-end."""
-    del config
     if not mock_bedrock:
         console.print("[red]Real Bedrock not yet implemented. Use --mock-bedrock.[/red]")
         raise typer.Exit(code=1)
@@ -199,11 +238,13 @@ def run_all(
 
     # Stage 2: analyze
     eligible = [r for r in artifacts.inventory_records if r.eligible_for_processing]
+    runtime_cfg = load_runtime_config(config, overrides={"bedrock": {"mock_bedrock": mock_bedrock}})
     results = analyze_inventory(
         artifacts.run_dir,
         artifacts.inventory_records,
         artifacts.run_id,
         use_mock=mock_bedrock,
+        config=runtime_cfg,
     )
     console.print(
         f"Analyze complete: {len(results)} of {len(eligible)} eligible documents"

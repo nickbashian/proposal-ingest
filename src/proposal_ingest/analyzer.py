@@ -20,6 +20,7 @@ from proposal_ingest.config import RuntimeConfig
 from proposal_ingest.extractors import count_excel_nonempty_cells, extract_text
 from proposal_ingest.logging_utils import get_logger
 from proposal_ingest.metadata_store import MetadataStore
+from proposal_ingest.model_output import normalize_metadata_output
 from proposal_ingest.mock_bedrock import analyze_document_mock
 from proposal_ingest.prompts import render_repair_prompt, render_user_prompt, load_system_prompt
 from proposal_ingest.schemas import (
@@ -31,6 +32,7 @@ from proposal_ingest.schemas import (
     ProcessingStrategy,
     SystemMetadata,
 )
+from proposal_ingest.two_pass import run_two_pass_review
 
 logger = get_logger("analyzer")
 
@@ -281,9 +283,22 @@ def process_single_file(
 
     # ---- Mock path -------------------------------------------------------
     if use_mock:
+        start_time = datetime.now(UTC)
         metadata = analyze_document_mock(record, run_id)
+        end_time = datetime.now(UTC)
+        usage_rec = _build_usage_record(
+            record,
+            run_id,
+            config,
+            strategy,
+            start_time,
+            end_time,
+            usage_dict={},
+            success=True,
+        )
         store.write_document_metadata(metadata)
-        return SingleFileResult(record=record, metadata=metadata, success=True)
+        store.write_usage_record(usage_rec)
+        return SingleFileResult(record=record, metadata=metadata, success=True, usage=usage_rec)
 
     # ---- Real Bedrock path -----------------------------------------------
     system_prompt = load_system_prompt()
@@ -348,6 +363,7 @@ def process_single_file(
         error_msg = "Model response could not be parsed as JSON"
         logger.warning("%s for %s", error_msg, file_path.name)
     else:
+        parsed = normalize_metadata_output(parsed)
         _inject_system_fields(parsed, record, run_id, strategy)
         validated_meta: DocumentMetadata | None
         validated_meta, validation_error = _validate_metadata(parsed)
@@ -420,6 +436,7 @@ def process_single_file(
 
         repair_parsed = _parse_json_response(repair_raw)
         if repair_parsed is not None:
+            repair_parsed = normalize_metadata_output(repair_parsed)
             _inject_system_fields(repair_parsed, record, run_id, strategy)
             repaired_meta: DocumentMetadata | None
             repaired_meta, repair_error = _validate_metadata(repair_parsed)
@@ -594,37 +611,123 @@ def analyze_inventory(
     run_id: str,
     *,
     use_mock: bool,
+    config: RuntimeConfig | None = None,
+    force: bool = False,
+    limit: int | None = None,
+    save_raw_responses: bool | None = None,
 ) -> list[DocumentMetadata]:
     """Analyze eligible inventory records and write metadata to run_dir.
 
-    Args:
-        run_dir: The run-scoped output directory (must already exist or be creatable).
-        inventory_records: All records from the scan inventory.
-        run_id: The run identifier to embed in each DocumentMetadata record.
-        use_mock: When True, calls ``analyze_document_mock``; when False, raises
-                  NotImplementedError (real Bedrock batch is Phase 7).
-
-    Returns:
-        List of DocumentMetadata objects produced (eligible documents only).
+    Per-file errors are logged to failure records and do not halt the batch.
+    Existing document metadata with the same content hash is skipped unless
+    ``force`` is true. ``limit`` applies to attempted, non-skipped documents.
     """
-    if not use_mock:
-        raise NotImplementedError(
-            "Real Bedrock batch analysis is not yet implemented. Use --mock-bedrock."
-        )
-
-    store = MetadataStore(run_dir)
+    runtime_config = config or RuntimeConfig()
+    save_raw = (
+        runtime_config.bedrock.save_raw_model_responses
+        if save_raw_responses is None
+        else save_raw_responses
+    )
     results: list[DocumentMetadata] = []
+    attempted = 0
 
+    existing_ids = _processed_document_ids(run_dir)
     eligible = [r for r in inventory_records if r.eligible_for_processing]
 
     for record in eligible:
-        metadata = analyze_document_mock(record, run_id)
-        store.write_document_metadata(metadata)
-        results.append(metadata)
+        if not force and record.document_id in existing_ids:
+            logger.info(
+                "Skipping already-processed file document_id=%s path=%s",
+                record.document_id,
+                record.source_path,
+            )
+            continue
+        if limit is not None and attempted >= limit:
+            break
+        attempted += 1
+        try:
+            result = process_single_file(
+                file_path=Path(record.source_path),
+                record=record,
+                run_dir=run_dir,
+                run_id=run_id,
+                config=runtime_config,
+                use_mock=use_mock,
+                save_raw_responses=save_raw,
+            )
+        except Exception as exc:  # defensive per-file isolation for batch mode
+            logger.exception("Unhandled analysis error for %s", record.source_path)
+            _write_unhandled_failure(run_dir, record, run_id, runtime_config, exc)
+            continue
 
+        if result.success and result.metadata is not None:
+            results.append(result.metadata)
+        else:
+            logger.error("Analysis failed for %s: %s", record.source_path, result.error_message)
+
+    if runtime_config.processing.pass2_enabled:
+        pass2_result = run_two_pass_review(
+            run_dir,
+            run_id,
+            runtime_config,
+            use_mock=use_mock,
+        )
+        logger.info(
+            "Pass 2 reviewed %s documents and recorded %s changes",
+            pass2_result.reviewed_count,
+            pass2_result.changed_count,
+        )
+        results = [
+            pass2_result.documents_by_id.get(metadata.document_id, metadata) for metadata in results
+        ]
+
+    _rewrite_all_document_metadata_jsonl(run_dir)
     _finalize_run_manifest(run_dir, use_mock=use_mock)
 
     return results
+
+
+def _processed_document_ids(run_dir: Path) -> set[str]:
+    """Return document IDs already present in document metadata for this run."""
+    return MetadataStore(run_dir).document_metadata_ids()
+
+
+def _rewrite_all_document_metadata_jsonl(run_dir: Path) -> None:
+    """Rewrite aggregate document metadata JSONL from canonical by-id files."""
+    store = MetadataStore(run_dir)
+    metadata_by_id = store.load_document_metadata_by_id()
+    store.write_document_metadata_jsonl(
+        sorted(metadata_by_id.values(), key=lambda metadata: metadata.document_id)
+    )
+
+
+def _write_unhandled_failure(
+    run_dir: Path,
+    record: InventoryRecord,
+    run_id: str,
+    config: RuntimeConfig,
+    exc: Exception,
+) -> None:
+    store = MetadataStore(run_dir)
+    now = datetime.now(UTC)
+    usage_rec = _build_usage_record(
+        record,
+        run_id,
+        config,
+        str(record.processing_strategy),
+        now,
+        now,
+        usage_dict={},
+        success=False,
+        error_type=type(exc).__name__,
+        error_message=str(exc),
+    )
+    store.write_usage_record(usage_rec)
+    store.write_failure_record(
+        record.document_id,
+        "unhandled_analysis_error",
+        {"error_message": str(exc), "source_path": record.source_path},
+    )
 
 
 def _finalize_run_manifest(run_dir: Path, *, use_mock: bool) -> None:
@@ -643,6 +746,10 @@ def analyze_from_output_root(
     output_root: Path,
     *,
     use_mock: bool,
+    config: RuntimeConfig | None = None,
+    force: bool = False,
+    limit: int | None = None,
+    save_raw_responses: bool | None = None,
 ) -> tuple[Path, list[DocumentMetadata]]:
     """Locate the latest scan inventory under output_root and analyze it.
 
@@ -663,6 +770,15 @@ def analyze_from_output_root(
     run_id = run_dir.name
 
     records = load_inventory_jsonl(inventory_path)
-    results = analyze_inventory(run_dir, records, run_id, use_mock=use_mock)
+    results = analyze_inventory(
+        run_dir,
+        records,
+        run_id,
+        use_mock=use_mock,
+        config=config,
+        force=force,
+        limit=limit,
+        save_raw_responses=save_raw_responses,
+    )
 
     return run_dir, results
