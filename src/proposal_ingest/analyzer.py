@@ -70,7 +70,23 @@ def analyze_inventory(
         store.write_document_metadata(metadata)
         results.append(metadata)
 
+    _finalize_run_manifest(run_dir, use_mock=use_mock)
+
     return results
+
+
+def _finalize_run_manifest(run_dir: Path, *, use_mock: bool) -> None:
+    """Update an existing run manifest to reflect analysis mode."""
+    manifest_path = run_dir / "run_manifest.json"
+    if not manifest_path.exists():
+        return
+
+    raw = json.loads(manifest_path.read_text(encoding="utf-8"))
+    raw["mock_bedrock"] = use_mock
+    raw["command"] = "analyze"
+    manifest_path.write_text(
+        json.dumps(raw, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
 
 
 def analyze_from_output_root(
@@ -98,16 +114,5 @@ def analyze_from_output_root(
 
     records = load_inventory_jsonl(inventory_path)
     results = analyze_inventory(run_dir, records, run_id, use_mock=use_mock)
-
-    # Update the run manifest to reflect Bedrock mode used
-    manifest_path = run_dir / "run_manifest.json"
-    if manifest_path.exists():
-        import json as _json
-        raw = _json.loads(manifest_path.read_text(encoding="utf-8"))
-        raw["mock_bedrock"] = use_mock
-        raw["command"] = "analyze"
-        manifest_path.write_text(
-            _json.dumps(raw, indent=2, sort_keys=True) + "\n", encoding="utf-8"
-        )
 
     return run_dir, results

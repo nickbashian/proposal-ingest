@@ -319,6 +319,12 @@ def test_cli_run_all_mock_bedrock() -> None:
         json_files = list((output / "logs").rglob("document_metadata/by_document_id/*.json"))
         assert len(json_files) >= 1
 
+        manifest_files = list((output / "logs").rglob("run_manifest.json"))
+        assert len(manifest_files) == 1
+        manifest = json.loads(manifest_files[0].read_text(encoding="utf-8"))
+        assert manifest["command"] == "analyze"
+        assert manifest["mock_bedrock"] is True
+
 
 def test_cli_analyze_mock_bedrock_reads_latest_run() -> None:
     """'analyze --mock-bedrock' reads the most recent scan inventory and processes it."""

@@ -155,6 +155,10 @@ sample_data/fake_source_root/
 
 The fake data should be synthetic and safe to commit.
 
+For early scanner and mock-analysis phases, these may be lightweight text fixtures with
+realistic filenames rather than fully valid Office/PDF binaries. Add format-accurate
+fixtures when extraction behavior is under test.
+
 ## Recommended branch strategy
 
 For this prototype:
