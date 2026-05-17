@@ -67,7 +67,8 @@ def test_question_gui_helpers_answer_and_rewrite_csv(tmp_path: Path) -> None:
     assert reloaded[0]["user_answer"] == "final"
     assert reloaded[0]["status"] == QuestionStatus.answered.value
     assert reloaded[0]["updated_at"]
-    datetime.fromisoformat(reloaded[0]["updated_at"])
+    parsed_updated_at = datetime.fromisoformat(reloaded[0]["updated_at"])
+    assert isinstance(parsed_updated_at, datetime)
     assert list(reloaded[0].keys()) == REVIEW_COLUMNS
 
 
@@ -98,7 +99,8 @@ def test_question_gui_helpers_sync_answer_draft() -> None:
     assert changed is True
     assert row["user_answer"] == "final"
     assert row["updated_at"]
-    datetime.fromisoformat(row["updated_at"])
+    parsed_updated_at = datetime.fromisoformat(row["updated_at"])
+    assert isinstance(parsed_updated_at, datetime)
 
 
 def test_question_gui_helpers_sync_answer_draft_no_change() -> None:
