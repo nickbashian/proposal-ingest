@@ -1,4 +1,4 @@
-.PHONY: install format lint lint-fix spellcheck precommit-install precommit-run mypy test check
+.PHONY: install format lint lint-fix ruff spellcheck precommit-install precommit-run mypy test check
 
 install:
 	python -m pip install --upgrade pip
@@ -12,6 +12,9 @@ lint:
 
 lint-fix:
 	black src tests
+
+ruff:
+	ruff check src tests
 
 spellcheck:
 	codespell
@@ -28,4 +31,4 @@ mypy:
 test:
 	pytest
 
-check: lint spellcheck mypy test
+check: lint ruff spellcheck mypy test

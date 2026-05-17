@@ -29,7 +29,7 @@ proposal-ingest/
   Makefile                  Developer shortcuts (install, lint, test, check)
   .env.example              Environment variable template (copy to .env)
   .gitignore                Excludes confidential data, environments, build artifacts
-  .github/workflows/ci.yml  GitHub Actions CI (Black, spell check, mypy, pytest — no real Bedrock)
+  .github/workflows/ci.yml  GitHub Actions CI (Black, Ruff, spell check, mypy, pytest — no real Bedrock)
   config/
     default_config.yaml     Default runtime configuration
     document_type_rules.yaml  File type inclusion/exclusion rules
@@ -85,7 +85,7 @@ copy .env.example .env
 ### Verify dev tooling
 
 ```bash
-make check   # runs Black check, spell check, mypy, pytest
+make check   # runs Black check, Ruff, spell check, mypy, pytest
 ```
 
 Install the local git hook once per clone:
@@ -99,6 +99,7 @@ Or individually:
 ```bash
 make format  # black src tests
 make lint    # black --check src tests
+make ruff    # ruff check src tests
 make spellcheck  # codespell
 make precommit-run  # pre-commit run --all-files
 make mypy    # mypy src

@@ -14,6 +14,7 @@ make check
 # Individual checks
 make lint       # black --check src tests
 make format     # black src tests
+make ruff       # ruff check src tests
 make spellcheck # codespell
 make precommit-install  # install local git hooks
 make precommit-run      # run hooks across all files
