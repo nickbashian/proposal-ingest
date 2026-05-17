@@ -31,3 +31,6 @@ Thumbs.db
 
 # Spec kit archive
 *.zip
+
+# AI tool config
+.claude/
