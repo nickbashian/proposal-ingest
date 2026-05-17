@@ -32,6 +32,12 @@ from proposal_ingest.schemas import (
     ProcessingStrategy,
     SystemMetadata,
 )
+from proposal_ingest.tracker import (
+    TrackerRow,
+    apply_tracker_overrides,
+    load_tracker_rows_jsonl,
+    match_tracker_row,
+)
 from proposal_ingest.two_pass import run_two_pass_review
 
 logger = get_logger("analyzer")
@@ -633,6 +639,7 @@ def analyze_inventory(
 
     existing_ids = _processed_document_ids(run_dir)
     eligible = [r for r in inventory_records if r.eligible_for_processing]
+    tracker_rows = _load_tracker_rows_for_run(run_dir)
 
     for record in eligible:
         if not force and record.document_id in existing_ids:
@@ -661,7 +668,10 @@ def analyze_inventory(
             continue
 
         if result.success and result.metadata is not None:
-            results.append(result.metadata)
+            metadata = _apply_tracker_match_to_metadata(result.metadata, tracker_rows)
+            if metadata != result.metadata:
+                MetadataStore(run_dir).write_document_metadata(metadata, append_jsonl=False)
+            results.append(metadata)
         else:
             logger.error("Analysis failed for %s: %s", record.source_path, result.error_message)
 
@@ -740,6 +750,30 @@ def _finalize_run_manifest(run_dir: Path, *, use_mock: bool) -> None:
     raw["mock_bedrock"] = use_mock
     raw["command"] = "analyze"
     manifest_path.write_text(json.dumps(raw, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def _load_tracker_rows_for_run(run_dir: Path) -> list[TrackerRow]:
+    tracker_rows_path = run_dir / "tracker" / "tracker_rows.jsonl"
+    if not tracker_rows_path.exists():
+        return []
+    try:
+        return load_tracker_rows_jsonl(tracker_rows_path)
+    except Exception:
+        logger.exception("Failed to load tracker rows from %s", tracker_rows_path)
+        return []
+
+
+def _apply_tracker_match_to_metadata(
+    metadata: DocumentMetadata, tracker_rows: list[TrackerRow]
+) -> DocumentMetadata:
+    if not tracker_rows:
+        return metadata
+    match_result = match_tracker_row(
+        metadata.system.proposal_branch,
+        tracker_rows,
+        canonical_proposal_name=metadata.proposal_context.canonical_proposal_name,
+    )
+    return apply_tracker_overrides(metadata, match_result)
 
 
 def analyze_from_output_root(

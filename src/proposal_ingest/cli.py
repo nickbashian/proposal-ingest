@@ -88,17 +88,54 @@ def scan(
         "--prune-empty-runs/--keep-empty-runs",
         help="Prune empty run directories under output_root/logs after the scan.",
     ),
+    tracker_path: str | None = typer.Option(
+        None,
+        "--tracker-path",
+        help="Path to a grants tracker workbook (.xlsx) for normalization and later matching.",
+    ),
+    tracker_sheet_name: str | None = typer.Option(
+        None, "--tracker-sheet-name", help="Optional tracker workbook sheet name."
+    ),
+    tracker_header_row: int | None = typer.Option(
+        None,
+        "--tracker-header-row",
+        min=0,
+        help="Zero-based header row index in the tracker sheet.",
+    ),
     config: str | None = typer.Option(None, "--config", help="Path to a YAML config file."),
 ) -> None:
     """Scan the source root and generate a file inventory."""
-    del config
+    tracker_overrides: dict[str, object] = {}
+    if tracker_path is not None:
+        tracker_overrides["path"] = tracker_path
+    if tracker_sheet_name is not None:
+        tracker_overrides["sheet_name"] = tracker_sheet_name
+    if tracker_header_row is not None:
+        tracker_overrides["header_row"] = tracker_header_row
+    runtime_cfg = load_runtime_config(
+        config,
+        overrides={
+            "app": {"source_root": source_root, "output_root": output_root},
+            "tracker": tracker_overrides,
+        },
+    )
+    effective_tracker_path = runtime_cfg.tracker.path if runtime_cfg.tracker.enabled else None
     artifacts = scan_source_root(
         source_root=Path(source_root),
         output_root=Path(output_root),
         dry_run=dry_run,
         prune_empty_runs=prune_empty_runs,
+        tracker_path=Path(effective_tracker_path) if effective_tracker_path else None,
+        tracker_sheet_name=runtime_cfg.tracker.sheet_name,
+        tracker_header_row=runtime_cfg.tracker.header_row,
     )
     console.print(f"Scan complete: {len(artifacts.inventory_records)} files inventoried")
+    if effective_tracker_path and not dry_run:
+        if artifacts.tracker_load_error:
+            console.print(f"[yellow]Tracker ingest error: {artifacts.tracker_load_error}[/yellow]")
+        else:
+            console.print(f"Tracker rows loaded: {artifacts.tracker_row_count}")
+            console.print(f"Tracker JSONL: {artifacts.tracker_rows_jsonl}")
     if dry_run:
         console.print(f"Dry run only. No files were written to {artifacts.run_dir}")
     elif artifacts.pruned_run_dir:

@@ -22,6 +22,7 @@ from proposal_ingest.metadata_store import MetadataStore
 from proposal_ingest.path_utils import proposal_id_from_branch, sanitize_filename
 from proposal_ingest.powerpoints import apply_powerpoint_rules
 from proposal_ingest.schemas import APP_SCHEMA_VERSION, InventoryRecord, RunManifest
+from proposal_ingest.tracker import load_tracker_rows, write_tracker_rows_jsonl
 
 _YEAR_FOLDER_RE = re.compile(r"^20\d{2}$")
 
@@ -62,6 +63,9 @@ class ScanArtifacts:
     inventory_records: list[InventoryRecord]
     stray_files: list[dict[str, str]]
     powerpoint_review_questions: list[dict[str, str]]
+    tracker_rows_jsonl: Path
+    tracker_row_count: int
+    tracker_load_error: str | None
 
 
 def scan_source_root(
@@ -70,6 +74,9 @@ def scan_source_root(
     *,
     dry_run: bool = False,
     prune_empty_runs: bool = True,
+    tracker_path: Path | None = None,
+    tracker_sheet_name: str | None = None,
+    tracker_header_row: int = 0,
 ) -> ScanArtifacts:
     """Scan a source tree and write inventory artifacts under a run-scoped output directory."""
     source_root = source_root.resolve()
@@ -117,8 +124,11 @@ def scan_source_root(
     inventory_jsonl = inventory_dir / "file_inventory.jsonl"
     stray_files_csv = inventory_dir / "stray_files_ignored.csv"
     powerpoint_questions_jsonl = inventory_dir / "powerpoint_review_questions.jsonl"
+    tracker_rows_jsonl = run_dir / "tracker" / "tracker_rows.jsonl"
     wrote_outputs = False
     pruned_run_dir = False
+    tracker_row_count = 0
+    tracker_load_error: str | None = None
 
     if not dry_run:
         inventory_dir.mkdir(parents=True, exist_ok=True)
@@ -126,6 +136,17 @@ def scan_source_root(
         _write_jsonl(inventory_jsonl, validated_inventory_records)
         _write_csv(stray_files_csv, STRAY_FILE_COLUMNS, stray_files)
         _write_jsonl(powerpoint_questions_jsonl, powerpoint_questions)
+        if tracker_path is not None:
+            try:
+                tracker_rows = load_tracker_rows(
+                    tracker_path,
+                    sheet_name=tracker_sheet_name,
+                    header_row=tracker_header_row,
+                )
+                tracker_row_count = len(tracker_rows)
+                write_tracker_rows_jsonl(tracker_rows, run_dir)
+            except Exception as exc:  # non-fatal by design
+                tracker_load_error = str(exc)
         MetadataStore(run_dir).write_run_manifest(
             RunManifest(
                 schema_version=APP_SCHEMA_VERSION,
@@ -136,6 +157,11 @@ def scan_source_root(
                 config_snapshot={
                     "dry_run": dry_run,
                     "prune_empty_runs": prune_empty_runs,
+                    "tracker_path": str(tracker_path) if tracker_path else None,
+                    "tracker_sheet_name": tracker_sheet_name,
+                    "tracker_header_row": tracker_header_row,
+                    "tracker_row_count": tracker_row_count,
+                    "tracker_load_error": tracker_load_error,
                 },
                 git_commit=None,
                 timestamp=datetime.now(UTC).isoformat(),
@@ -160,6 +186,9 @@ def scan_source_root(
         inventory_records=validated_inventory_records,
         stray_files=stray_files,
         powerpoint_review_questions=powerpoint_questions,
+        tracker_rows_jsonl=tracker_rows_jsonl,
+        tracker_row_count=tracker_row_count,
+        tracker_load_error=tracker_load_error,
     )
 
 

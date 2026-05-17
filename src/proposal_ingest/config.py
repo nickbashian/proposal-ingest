@@ -66,12 +66,22 @@ class QuestionsConfig(BaseModel):
     max_questions_per_file: int = Field(default=5, ge=1)
 
 
+class TrackerConfig(BaseModel):
+    """Grants tracker ingestion settings."""
+
+    enabled: bool = True
+    path: str | None = None
+    sheet_name: str | None = None
+    header_row: int = Field(default=0, ge=0)
+
+
 class RuntimeConfig(BaseModel):
     """Top-level runtime configuration used by the CLI."""
 
     app: AppConfig = Field(default_factory=AppConfig)
     aws: AwsConfig = Field(default_factory=AwsConfig)
     bedrock: BedrockConfig = Field(default_factory=BedrockConfig)
+    tracker: TrackerConfig = Field(default_factory=TrackerConfig)
     processing: ProcessingConfig = Field(default_factory=ProcessingConfig)
     questions: QuestionsConfig = Field(default_factory=QuestionsConfig)
 
@@ -119,6 +129,7 @@ def _apply_environment_overrides(config: dict[str, Any]) -> None:
         "MAX_DIRECT_UPLOAD_MB": ("bedrock", "max_direct_upload_mb", int),
         "SAVE_RAW_MODEL_RESPONSES": ("bedrock", "save_raw_model_responses", bool),
         "MOCK_BEDROCK": ("bedrock", "mock_bedrock", bool),
+        "PROPOSAL_INGEST_TRACKER_PATH": ("tracker", "path", str),
     }
 
     for env_name, (section, key, value_type) in env_map.items():

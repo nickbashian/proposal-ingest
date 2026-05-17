@@ -31,14 +31,6 @@ tracker:
   path: null
   sheet_name: null
   header_row: 0
-  high_authority_fields:
-    - submission_date
-    - response_date
-    - selection_notification_date
-    - award_date
-    - status
-    - award_status
-    - result
 
 processing:
   direct_upload_default: true
