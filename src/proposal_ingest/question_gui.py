@@ -44,7 +44,11 @@ def write_question_rows(csv_path: Path, rows: list[dict[str, str]]) -> None:
         writer.writeheader()
         writer.writerows(rows)
         temp_path = Path(handle.name)
-    temp_path.replace(csv_path)
+    try:
+        temp_path.replace(csv_path)
+    except Exception:
+        temp_path.unlink(missing_ok=True)
+        raise
 
 
 def answer_row(
