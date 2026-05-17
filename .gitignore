@@ -28,3 +28,6 @@ logs/
 Thumbs.db
 .vscode/
 !.vscode/extensions.json
+
+# Spec kit archive
+*.zip
