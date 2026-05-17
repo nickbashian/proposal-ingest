@@ -53,7 +53,7 @@ This is a **local-first batch pipeline** — Python owns orchestration, state, v
 
 | Module | Responsibility |
 |---|---|
-| `cli.py` | Typer entry point — all commands currently placeholder |
+| `cli.py` | Typer entry point for scan, analysis, review, folder, and clean-set commands |
 | `config.py` | Loads/merges YAML + env + CLI overrides |
 | `scanner.py` | Year-folder / proposal-branch discovery, file inventory |
 | `file_filters.py` | Eligibility rules (hidden, temp, images, ZIPs, etc.) |
@@ -88,7 +88,7 @@ This is a **local-first batch pipeline** — Python owns orchestration, state, v
 
 ## Implementation status
 
-**Phases 1-5 complete** — scanner, file rules, metadata store, mock Bedrock mode, and the real Bedrock smoke test are implemented. Later document-processing and export phases remain to be built. The suggested branch order is:
+**Phases 1-11 complete** — scanner, file rules, metadata store, mock/real Bedrock paths, question loop, two-pass review, tracker integration, and folder synthesis are implemented. Phase 12 clean-set/S3 manifest work remains. The suggested branch order is:
 
 1. `feature/scanner-inventory` (Phase 1–2)
 2. `feature/metadata-models` (Phase 3)

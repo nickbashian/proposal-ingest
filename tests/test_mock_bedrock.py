@@ -323,7 +323,7 @@ def test_cli_run_all_mock_bedrock() -> None:
         manifest_files = list((output / "logs").rglob("run_manifest.json"))
         assert len(manifest_files) == 1
         manifest = json.loads(manifest_files[0].read_text(encoding="utf-8"))
-        assert manifest["command"] == "analyze"
+        assert manifest["command"] == "run-all"
         assert manifest["mock_bedrock"] is True
 
 

@@ -218,18 +218,25 @@ processed_output/
 
 ## Implementation status
 
-Phases 1 through 5 are complete:
+Phases 1 through 11 are complete:
 
 - Phase 1 — scanner and inventory
 - Phase 2 — file rules and PowerPoint handling
 - Phase 3 — metadata models and store
 - Phase 4 — mock Bedrock mode
 - Phase 5 — Bedrock smoke test
+- Phase 6 — one-file Bedrock/mock processing
+- Phase 7 — batch document analysis
+- Phase 8 — human review question export and answer application
+- Phase 9 — two-pass contextual analysis
+- Phase 10 — grants tracker ingestion and overrides
+- Phase 11 — folder metadata synthesis and Markdown summaries
 
 Current implementation boundary:
 
-- `scan`, `analyze --mock-bedrock`, `run-all --mock-bedrock`, `process-file --mock-bedrock`, and `bedrock-smoke-test` are working.
-- Later-phase commands such as `process-folder`, `export-questions`, `apply-answers`, `build-folders`, and `build-clean-set` are still placeholders.
+- `scan`, `process-file`, `analyze`, `export-questions`, `apply-answers`, `build-folders`, `process-folder`, `run-all`, and `bedrock-smoke-test` are wired.
+- Use `--mock-bedrock` for local and CI-safe runs; real Bedrock paths require valid AWS credentials and model access.
+- `build-clean-set` is still a Phase 12 placeholder.
 
 See `docs/10_implementation_plan.md` for the phase-by-phase status and `docs/11_copilot_agent_prompts.md`
 for the ready-to-use Copilot/agent prompts for later phases.

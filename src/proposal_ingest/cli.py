@@ -1,8 +1,4 @@
-"""proposal-ingest CLI entry point.
-
-All commands are placeholders. Implement each module in the order defined in
-docs/10_implementation_plan.md, then wire the real logic here.
-"""
+"""proposal-ingest CLI entry point."""
 
 from __future__ import annotations
 
@@ -26,7 +22,7 @@ from proposal_ingest.logging_utils import configure_logging
 from proposal_ingest.metadata_store import MetadataStore
 from proposal_ingest.question_loop import apply_answers_from_csv, export_questions_to_csv
 from proposal_ingest.path_utils import proposal_id_from_branch, sanitize_filename
-from proposal_ingest.scanner import scan_source_root
+from proposal_ingest.scanner import scan_proposal_branch, scan_source_root
 from proposal_ingest.schemas import APP_SCHEMA_VERSION, InventoryRecord, RunManifest
 
 app = typer.Typer(
@@ -210,7 +206,10 @@ def export_questions(
 def apply_answers(
     output_root: str = typer.Option(..., "--output-root", help="Path to the output directory."),
     answers_csv: str | None = typer.Option(
-        None, "--answers-csv", help="Path to the answered questions CSV."
+        None,
+        "--answers-csv",
+        "--questions-csv",
+        help="Path to the answered questions CSV.",
     ),
 ) -> None:
     """Apply human answers from the review CSV to the metadata store."""
@@ -300,17 +299,33 @@ def run_all(
     ),
     config: str | None = typer.Option(None, "--config", help="Path to a YAML config file."),
 ) -> None:
-    """Run the full pipeline end-to-end."""
-    if not mock_bedrock:
-        console.print("[red]Real Bedrock not yet implemented. Use --mock-bedrock.[/red]")
-        raise typer.Exit(code=1)
+    """Run the implemented pipeline end-to-end through folder synthesis."""
+    from proposal_ingest.folder_builder import build_all_folders
+    from proposal_ingest.tracker import load_tracker_rows_jsonl
+
+    runtime_cfg = load_runtime_config(
+        config,
+        overrides={
+            "app": {"source_root": source_root, "output_root": output_root},
+            "bedrock": {"mock_bedrock": mock_bedrock},
+        },
+    )
+    effective_tracker_path = runtime_cfg.tracker.path if runtime_cfg.tracker.enabled else None
 
     # Stage 1: scan
     artifacts = scan_source_root(
         source_root=Path(source_root),
         output_root=Path(output_root),
+        tracker_path=Path(effective_tracker_path) if effective_tracker_path else None,
+        tracker_sheet_name=runtime_cfg.tracker.sheet_name,
+        tracker_header_row=runtime_cfg.tracker.header_row,
     )
     console.print(f"Scan complete: {len(artifacts.inventory_records)} files inventoried")
+    if effective_tracker_path:
+        if artifacts.tracker_load_error:
+            console.print(f"[yellow]Tracker ingest error: {artifacts.tracker_load_error}[/yellow]")
+        else:
+            console.print(f"Tracker rows loaded: {artifacts.tracker_row_count}")
 
     if artifacts.pruned_run_dir:
         console.print("[yellow]No eligible files found — run directory pruned.[/yellow]")
@@ -318,36 +333,119 @@ def run_all(
 
     # Stage 2: analyze
     eligible = [r for r in artifacts.inventory_records if r.eligible_for_processing]
-    runtime_cfg = load_runtime_config(config, overrides={"bedrock": {"mock_bedrock": mock_bedrock}})
     results = analyze_inventory(
         artifacts.run_dir,
         artifacts.inventory_records,
         artifacts.run_id,
         use_mock=mock_bedrock,
         config=runtime_cfg,
+        final_command="run-all",
     )
     console.print(
         f"Analyze complete: {len(results)} of {len(eligible)} eligible documents"
-        " processed (mock mode)"
+        f" processed{' (mock mode)' if mock_bedrock else ''}"
+    )
+
+    # Stage 3: export questions
+    questions_result = export_questions_to_csv(
+        Path(output_root),
+        include_low_priority=False,
+        max_questions_per_file=runtime_cfg.questions.max_questions_per_file,
+    )
+    console.print(
+        f"Exported {questions_result.exported_count} questions to "
+        f"{questions_result.questions_csv}"
+    )
+
+    # Stage 4: folder synthesis
+    tracker_rows = None
+    if artifacts.tracker_rows_jsonl.exists():
+        tracker_rows = load_tracker_rows_jsonl(artifacts.tracker_rows_jsonl)
+    folder_results = build_all_folders(
+        MetadataStore(artifacts.run_dir),
+        tracker_rows=tracker_rows,
+        use_mock=mock_bedrock,
+        config=runtime_cfg,
+    )
+    console.print(
+        f"build-folders complete: {len(folder_results)} folder(s) synthesized"
+        f"{' (mock mode)' if mock_bedrock else ''}"
     )
     console.print(f"  run_dir = {artifacts.run_dir}")
 
 
 @app.command(name="process-folder")
 def process_folder(
-    folder: str = typer.Option(
-        ..., "--folder", help="Path to a single proposal branch folder to process."
+    source_folder: str = typer.Option(
+        ...,
+        "--source-folder",
+        "--folder",
+        help="Path to a single proposal branch folder to process.",
     ),
     output_root: str = typer.Option(..., "--output-root", help="Path to the output directory."),
     mock_bedrock: bool = typer.Option(
         False, "--mock-bedrock", help="Use mock Bedrock instead of real AWS calls."
     ),
+    config: str | None = typer.Option(None, "--config", help="Path to a YAML config file."),
 ) -> None:
     """Process a single proposal branch folder."""
-    console.print("[yellow]process-folder: not yet implemented[/yellow]")
-    console.print(f"  folder       = {folder}")
-    console.print(f"  output_root  = {output_root}")
-    console.print(f"  mock_bedrock = {mock_bedrock}")
+    from proposal_ingest.folder_builder import build_all_folders
+
+    try:
+        runtime_cfg = load_runtime_config(
+            config,
+            overrides={
+                "app": {"source_root": source_folder, "output_root": output_root},
+                "bedrock": {"mock_bedrock": mock_bedrock},
+            },
+        )
+        artifacts = scan_proposal_branch(
+            source_folder=Path(source_folder),
+            output_root=Path(output_root),
+        )
+    except ValueError as exc:
+        console.print(f"[red]Error: {exc}[/red]")
+        raise typer.Exit(code=1) from exc
+
+    console.print(f"Scan complete: {len(artifacts.inventory_records)} files inventoried")
+    if artifacts.pruned_run_dir:
+        console.print("[yellow]No eligible files found — run directory pruned.[/yellow]")
+        return
+
+    eligible = [r for r in artifacts.inventory_records if r.eligible_for_processing]
+    results = analyze_inventory(
+        artifacts.run_dir,
+        artifacts.inventory_records,
+        artifacts.run_id,
+        use_mock=mock_bedrock,
+        config=runtime_cfg,
+        final_command="process-folder",
+    )
+    console.print(
+        f"Analyze complete: {len(results)} of {len(eligible)} eligible documents"
+        f" processed{' (mock mode)' if mock_bedrock else ''}"
+    )
+
+    questions_result = export_questions_to_csv(
+        Path(output_root),
+        include_low_priority=False,
+        max_questions_per_file=runtime_cfg.questions.max_questions_per_file,
+    )
+    console.print(
+        f"Exported {questions_result.exported_count} questions to "
+        f"{questions_result.questions_csv}"
+    )
+
+    folder_results = build_all_folders(
+        MetadataStore(artifacts.run_dir),
+        use_mock=mock_bedrock,
+        config=runtime_cfg,
+    )
+    console.print(
+        f"build-folders complete: {len(folder_results)} folder(s) synthesized"
+        f"{' (mock mode)' if mock_bedrock else ''}"
+    )
+    console.print(f"  run_dir = {artifacts.run_dir}")
 
 
 @app.command(name="process-file")

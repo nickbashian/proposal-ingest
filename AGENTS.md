@@ -53,7 +53,7 @@ After every code change, run `make check` to verify CI would pass.
 
 The project is built in **13 sequential phases** — never skip ahead. See [docs/10_implementation_plan.md](docs/10_implementation_plan.md) for the full phase list with acceptance criteria.
 
-Current status: **Phases 1-5 complete** (scanner, file rules, metadata store, mock Bedrock mode, and Bedrock smoke test).
+Current status: **Phases 1-11 complete** (scanner through folder synthesis). Phase 12 clean-set and S3 manifest work is next.
 
 Build the next phase only after its acceptance criteria pass. Do not wire together modules that belong to a later phase.
 
@@ -69,8 +69,8 @@ Build the next phase only after its acceptance criteria pass. Do not wire togeth
 
 ## Critical Pitfalls
 
-- **Several later-phase CLI commands are still stubs** — `process-folder`, `export-questions`, `apply-answers`, `build-folders`, and `build-clean-set` still print placeholder messages.
-- **`tracker.path` is `null` in default config** — tracker integration is enabled by default but will error unless you either set the path or add `--no-tracker` (once implemented).
+- **Phase 12 is still a stub** — `build-clean-set` still prints a placeholder message until the clean-set/S3 manifest phase is implemented.
+- **`tracker.path` is `null` in default config** — tracker ingestion is skipped unless a tracker path is provided by CLI, environment, or config.
 - **Bedrock model ID** `us.anthropic.claude-opus-4-6-v1` — use the Bedrock inference profile ID for Phase 5 smoke tests; the raw foundation model ID is rejected for on-demand Converse calls in this account.
 - **OCR is disabled** (`ocr_enabled: false`) — scanned PDFs without embedded text will return empty extractions silently; this is by design for the MVP.
 - **Pass-2 confidence default** — if a document returns no confidence field, the default handling (fire or skip pass 2) must be explicitly coded; it is not currently specified.

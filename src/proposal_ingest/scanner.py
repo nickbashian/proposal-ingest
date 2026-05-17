@@ -192,6 +192,103 @@ def scan_source_root(
     )
 
 
+def scan_proposal_branch(
+    source_folder: Path,
+    output_root: Path,
+    *,
+    dry_run: bool = False,
+    prune_empty_runs: bool = True,
+) -> ScanArtifacts:
+    """Scan one proposal branch folder and write inventory artifacts.
+
+    ``source_folder`` is expected to be an immediate child of a year folder
+    such as ``.../2025/My Proposal``. This keeps branch-scoped runs compatible
+    with the normal inventory and proposal_id conventions.
+    """
+    source_folder = source_folder.resolve()
+    output_root = output_root.resolve()
+
+    if not source_folder.exists() or not source_folder.is_dir():
+        raise ValueError(f"Source folder does not exist or is not a directory: {source_folder}")
+
+    year_dir = source_folder.parent
+    if not _YEAR_FOLDER_RE.match(year_dir.name):
+        raise ValueError(
+            "Process-folder expects a proposal branch whose parent is a year "
+            f"folder like 2025: {source_folder}"
+        )
+
+    source_root = year_dir.parent
+    run_id = _build_run_id()
+    run_dir = output_root / "logs" / run_id
+    inventory_dir = run_dir / "inventory"
+    run_manifest_path = run_dir / "run_manifest.json"
+
+    inventory_records = _scan_branch(
+        source_root=source_root,
+        year_dir=year_dir,
+        branch_dir=source_folder,
+    )
+    _mark_duplicate_records(inventory_records)
+    powerpoint_questions = apply_powerpoint_rules(inventory_records)
+    validated_inventory_records = [
+        InventoryRecord.model_validate(record) for record in inventory_records
+    ]
+
+    inventory_csv = inventory_dir / "file_inventory.csv"
+    inventory_jsonl = inventory_dir / "file_inventory.jsonl"
+    stray_files_csv = inventory_dir / "stray_files_ignored.csv"
+    powerpoint_questions_jsonl = inventory_dir / "powerpoint_review_questions.jsonl"
+    tracker_rows_jsonl = run_dir / "tracker" / "tracker_rows.jsonl"
+    wrote_outputs = False
+    pruned_run_dir = False
+
+    if not dry_run:
+        inventory_dir.mkdir(parents=True, exist_ok=True)
+        _write_csv(inventory_csv, INVENTORY_COLUMNS, validated_inventory_records)
+        _write_jsonl(inventory_jsonl, validated_inventory_records)
+        _write_csv(stray_files_csv, STRAY_FILE_COLUMNS, [])
+        _write_jsonl(powerpoint_questions_jsonl, powerpoint_questions)
+        MetadataStore(run_dir).write_run_manifest(
+            RunManifest(
+                schema_version=APP_SCHEMA_VERSION,
+                run_id=run_id,
+                command="process-folder",
+                source_root=str(source_folder),
+                output_root=str(output_root),
+                config_snapshot={
+                    "dry_run": dry_run,
+                    "prune_empty_runs": prune_empty_runs,
+                },
+                git_commit=None,
+                timestamp=datetime.now(UTC).isoformat(),
+                mock_bedrock=False,
+            )
+        )
+        wrote_outputs = True
+
+    if prune_empty_runs:
+        pruned_run_dir = run_dir in _prune_empty_run_dirs(output_root / "logs")
+
+    return ScanArtifacts(
+        run_id=run_id,
+        run_dir=run_dir,
+        inventory_csv=inventory_csv,
+        inventory_jsonl=inventory_jsonl,
+        stray_files_csv=stray_files_csv,
+        powerpoint_questions_jsonl=powerpoint_questions_jsonl,
+        run_manifest_path=run_manifest_path,
+        wrote_outputs=wrote_outputs,
+        pruned_run_dir=pruned_run_dir,
+        inventory_records=validated_inventory_records,
+        stray_files=[],
+        powerpoint_review_questions=powerpoint_questions,
+        tracker_rows_jsonl=tracker_rows_jsonl,
+        tracker_row_count=0,
+        tracker_load_error=None,
+    )
+
+
 def _build_run_id() -> str:
     timestamp = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
     return f"run_{timestamp}_{secrets.token_hex(3)}"

@@ -12,12 +12,12 @@ Use small, testable increments. Avoid starting with Bedrock. Build the local sta
 - Phase 3 — complete
 - Phase 4 — complete
 - Phase 5 — complete
-- Phase 6 — not started
-- Phase 7 — not started
-- Phase 8 — not started
-- Phase 9 — not started
-- Phase 10 — not started
-- Phase 11 — not started
+- Phase 6 — complete
+- Phase 7 — complete
+- Phase 8 — complete
+- Phase 9 — complete
+- Phase 10 — complete
+- Phase 11 — complete
 - Phase 12 — not started
 - Phase 13 — not started
 
@@ -136,6 +136,8 @@ Returns a short successful response.
 
 ## Phase 6 — Process one file with Bedrock
 
+Status: complete
+
 Deliverables:
 
 - prompt loading
@@ -155,6 +157,8 @@ Produces valid document metadata.
 
 ## Phase 7 — Batch document analysis
 
+Status: complete
+
 Deliverables:
 
 - `analyze` command
@@ -168,6 +172,8 @@ Acceptance criteria:
 - one proposal branch processes without halting on a bad file.
 
 ## Phase 8 — Human review loop
+
+Status: complete
 
 Deliverables:
 
@@ -184,6 +190,8 @@ Acceptance criteria:
 
 ## Phase 9 — Two-pass contextual analysis
 
+Status: complete
+
 Deliverables:
 
 - low-confidence flagger
@@ -197,6 +205,8 @@ Acceptance criteria:
 - ambiguous fake letter improves classification after pass 2 using branch context.
 
 ## Phase 10 — Grants tracker integration
+
+Status: complete
 
 Deliverables:
 
@@ -212,6 +222,8 @@ Acceptance criteria:
 - disagreement logged when names differ
 
 ## Phase 11 — Folder synthesis
+
+Status: complete
 
 Deliverables:
 

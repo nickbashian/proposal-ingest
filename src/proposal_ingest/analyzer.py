@@ -621,6 +621,7 @@ def analyze_inventory(
     force: bool = False,
     limit: int | None = None,
     save_raw_responses: bool | None = None,
+    final_command: str = "analyze",
 ) -> list[DocumentMetadata]:
     """Analyze eligible inventory records and write metadata to run_dir.
 
@@ -692,7 +693,7 @@ def analyze_inventory(
         ]
 
     _rewrite_all_document_metadata_jsonl(run_dir)
-    _finalize_run_manifest(run_dir, use_mock=use_mock)
+    _finalize_run_manifest(run_dir, use_mock=use_mock, command=final_command)
 
     return results
 
@@ -740,7 +741,7 @@ def _write_unhandled_failure(
     )
 
 
-def _finalize_run_manifest(run_dir: Path, *, use_mock: bool) -> None:
+def _finalize_run_manifest(run_dir: Path, *, use_mock: bool, command: str) -> None:
     """Update an existing run manifest to reflect analysis mode."""
     manifest_path = run_dir / "run_manifest.json"
     if not manifest_path.exists():
@@ -748,7 +749,7 @@ def _finalize_run_manifest(run_dir: Path, *, use_mock: bool) -> None:
 
     raw = json.loads(manifest_path.read_text(encoding="utf-8"))
     raw["mock_bedrock"] = use_mock
-    raw["command"] = "analyze"
+    raw["command"] = command
     manifest_path.write_text(json.dumps(raw, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 

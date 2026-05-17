@@ -126,7 +126,7 @@ Options:
 
 Runs the main pipeline.
 
-Default order:
+Target order once Phase 12 is implemented:
 
 1. scan
 2. analyze
@@ -136,7 +136,8 @@ Default order:
 6. build-folders
 7. build-clean-set
 
-`run-all` should stop before clean-set if critical open questions remain.
+Current Phase 11 implementation runs through `build-folders`. Phase 12 will add
+the clean-set step and the critical-question stop before final output.
 
 ### `process-folder`
 

@@ -1,4 +1,4 @@
-"""Minimal bootstrap tests: verify the CLI imports and all placeholder commands run."""
+"""CLI tests for command wiring and pipeline entry points."""
 
 from __future__ import annotations
 
@@ -276,16 +276,70 @@ def test_analyze_without_mock_bedrock_exits_nonzero() -> None:
     assert result.exit_code != 0
 
 
-def test_run_all_without_mock_bedrock_exits_nonzero() -> None:
-    """run-all without --mock-bedrock must fail because real Bedrock is not yet wired."""
-    result = runner.invoke(app, ["run-all", "--source-root", ".", "--output-root", "."])
-    assert result.exit_code != 0
+def test_run_all_mock_builds_folder_outputs(tmp_path: Path) -> None:
+    """run-all --mock-bedrock should execute through Phase 11 folder synthesis."""
+    source_root = tmp_path / "source"
+    output_root = tmp_path / "output"
+    proposal_branch = source_root / "2025" / "Demo Proposal"
+    proposal_branch.mkdir(parents=True)
+    (proposal_branch / "Technical Volume.pdf").write_text("pdf content", encoding="utf-8")
+
+    result = runner.invoke(
+        app,
+        [
+            "run-all",
+            "--source-root",
+            str(source_root),
+            "--output-root",
+            str(output_root),
+            "--mock-bedrock",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "Analyze complete:" in result.output
+    assert "Exported" in result.output
+    assert "build-folders complete: 1 folder(s) synthesized (mock mode)" in result.output
+    run_dir = next((output_root / "logs").glob("run_*"))
+    assert list((run_dir / "folder_metadata").glob("*.json"))
+    assert (output_root / "review" / "questions_to_answer.csv").exists()
 
 
 def test_process_file_without_mock_bedrock_exits_nonzero() -> None:
     """process-file without --mock-bedrock must fail because real Bedrock is not yet wired."""
     result = runner.invoke(app, ["process-file", "--file", "fake.pdf", "--output-root", "."])
     assert result.exit_code != 0
+
+
+def test_process_folder_mock_processes_one_branch(tmp_path: Path) -> None:
+    """process-folder should build a branch-scoped inventory and folder metadata."""
+    source_root = tmp_path / "source"
+    output_root = tmp_path / "output"
+    branch_a = source_root / "2025" / "Branch A"
+    branch_b = source_root / "2025" / "Branch B"
+    branch_a.mkdir(parents=True)
+    branch_b.mkdir(parents=True)
+    (branch_a / "Technical Volume.pdf").write_text("branch a", encoding="utf-8")
+    (branch_b / "Technical Volume.pdf").write_text("branch b", encoding="utf-8")
+
+    result = runner.invoke(
+        app,
+        [
+            "process-folder",
+            "--source-folder",
+            str(branch_a),
+            "--output-root",
+            str(output_root),
+            "--mock-bedrock",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "build-folders complete: 1 folder(s) synthesized (mock mode)" in result.output
+    run_dir = next((output_root / "logs").glob("run_*"))
+    inventory_text = (run_dir / "inventory" / "file_inventory.csv").read_text(encoding="utf-8")
+    assert "Branch A" in inventory_text
+    assert "Branch B" not in inventory_text
 
 
 def test_build_folders_uses_latest_run_directory(tmp_path: Path, monkeypatch) -> None:
