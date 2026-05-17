@@ -14,8 +14,10 @@ opus-4.6
 Default Bedrock model ID:
 
 ```text
-anthropic.claude-opus-4-6-v1
+us.anthropic.claude-opus-4-6-v1
 ```
+
+This repo uses the Bedrock inference profile ID for Claude Opus 4.6. The raw foundation model ID `anthropic.claude-opus-4-6-v1` is rejected for on-demand `converse` calls in this account.
 
 Default region:
 
@@ -169,7 +171,7 @@ Then set the Bedrock values in `.env`:
 AWS_PROFILE=proposal-assistant
 AWS_REGION=us-east-1
 BEDROCK_MODEL_LABEL=opus-4.6
-BEDROCK_MODEL_ID=anthropic.claude-opus-4-6-v1
+BEDROCK_MODEL_ID=us.anthropic.claude-opus-4-6-v1
 ```
 
 Also set your local paths:
@@ -188,7 +190,7 @@ PowerShell example:
 $env:AWS_PROFILE="proposal-assistant"
 $env:AWS_REGION="us-east-1"
 $env:BEDROCK_MODEL_LABEL="opus-4.6"
-$env:BEDROCK_MODEL_ID="anthropic.claude-opus-4-6-v1"
+$env:BEDROCK_MODEL_ID="us.anthropic.claude-opus-4-6-v1"
 ```
 
 ## Step 7 — Install Python dependencies
@@ -222,10 +224,19 @@ Expected output:
 Example shape:
 
 ```text
-Model ID: anthropic.claude-opus-4-6-v1
+Model ID: us.anthropic.claude-opus-4-6-v1
 Region: us-east-1
 Response: Bedrock connectivity is working.
 Usage: input=12 output=7 total=19
+```
+
+Real example from a successful local run:
+
+```text
+Model ID: us.anthropic.claude-opus-4-6-v1
+Region: us-east-1
+Response: I'm connected and responding to you via Amazon Bedrock successfully.
+Usage: input=19 output=17 total=36
 ```
 
 If this command succeeds, your Bedrock credentials, region, model access, and repo config are all good enough for the next phase.
@@ -268,8 +279,18 @@ The region or model ID is wrong for your account.
 Fix:
 
 - confirm `AWS_REGION=us-east-1`
-- confirm `BEDROCK_MODEL_ID=anthropic.claude-opus-4-6-v1`
+- confirm `BEDROCK_MODEL_ID=us.anthropic.claude-opus-4-6-v1`
 - confirm the model is actually enabled in that region
+
+### `Invocation of model ID ... with on-demand throughput isn’t supported`
+
+You are calling the raw foundation model ID instead of the required inference profile.
+
+Fix:
+
+- use `BEDROCK_MODEL_ID=us.anthropic.claude-opus-4-6-v1`
+- or use the full inference profile ARN for that same Bedrock profile
+- open a fresh terminal after editing `.env` if your shell still has stale environment variables loaded
 
 ### AWS CLI works but `proposal-ingest bedrock-smoke-test` fails
 
@@ -313,7 +334,7 @@ file_path = Path("Technical Volume.pdf")
 file_bytes = file_path.read_bytes()
 
 response = client.converse(
-    modelId="anthropic.claude-opus-4-6-v1",
+  modelId="us.anthropic.claude-opus-4-6-v1",
     system=[{"text": system_prompt}],
     messages=[
         {

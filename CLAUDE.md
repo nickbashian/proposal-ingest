@@ -88,7 +88,7 @@ This is a **local-first batch pipeline** — Python owns orchestration, state, v
 
 ## Implementation status
 
-**Phase 0 complete** — all CLI commands are placeholder stubs. Implement phases in order per `docs/10_implementation_plan.md`. The suggested branch order is:
+**Phases 1-5 complete** — scanner, file rules, metadata store, mock Bedrock mode, and the real Bedrock smoke test are implemented. Later document-processing and export phases remain to be built. The suggested branch order is:
 
 1. `feature/scanner-inventory` (Phase 1–2)
 2. `feature/metadata-models` (Phase 3)

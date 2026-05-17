@@ -83,9 +83,15 @@ def smoke_test_bedrock(
         total_tokens=usage.get("totalTokens"),
     )
     logger.info(
-        "Bedrock smoke test succeeded model_id=%s region=%s",
+        (
+            "Bedrock smoke test succeeded model_id=%s region=%s "
+            "input_tokens=%s output_tokens=%s total_tokens=%s"
+        ),
         result.model_id,
         result.region,
+        result.input_tokens,
+        result.output_tokens,
+        result.total_tokens,
     )
     return result
 

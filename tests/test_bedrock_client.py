@@ -73,7 +73,7 @@ def test_smoke_test_bedrock_uses_converse_api(monkeypatch) -> None:
         overrides={
             "aws": {"profile": "proposal-assistant", "region": "us-east-1"},
             "bedrock": {
-                "model_id": "anthropic.claude-opus-4-6-v1",
+                "model_id": "us.anthropic.claude-opus-4-6-v1",
                 "model_label": "opus-4.6",
                 "max_tokens": 4096,
                 "temperature": 0,
@@ -87,11 +87,11 @@ def test_smoke_test_bedrock_uses_converse_api(monkeypatch) -> None:
     assert captured["service_name"] == "bedrock-runtime"
     assert captured["region_name"] == "us-east-1"
     assert captured["converse_kwargs"] == {
-        "modelId": "anthropic.claude-opus-4-6-v1",
+        "modelId": "us.anthropic.claude-opus-4-6-v1",
         "messages": [{"role": "user", "content": [{"text": "ping"}]}],
         "inferenceConfig": {"maxTokens": 128, "temperature": 0.0},
     }
-    assert result.model_id == "anthropic.claude-opus-4-6-v1"
+    assert result.model_id == "us.anthropic.claude-opus-4-6-v1"
     assert result.region == "us-east-1"
     assert result.response_text == "Bedrock is reachable."
     assert result.total_tokens == 9

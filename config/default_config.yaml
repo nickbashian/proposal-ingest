@@ -10,7 +10,7 @@ aws:
 
 bedrock:
   model_label: "opus-4.6"
-  model_id: "anthropic.claude-opus-4-6-v1"
+  model_id: "us.anthropic.claude-opus-4-6-v1"
   max_direct_upload_mb: 20
   save_raw_model_responses: true
   mock_bedrock: false

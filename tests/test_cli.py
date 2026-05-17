@@ -173,7 +173,7 @@ def test_bedrock_smoke_test_prints_result(monkeypatch) -> None:
         proposal_ingest.cli,
         "smoke_test_bedrock",
         lambda *_args, **_kwargs: BedrockSmokeTestResult(
-            model_id="anthropic.claude-opus-4-6-v1",
+            model_id="us.anthropic.claude-opus-4-6-v1",
             model_label="opus-4.6",
             region="us-east-1",
             response_text="Bedrock connectivity is working.",
@@ -185,7 +185,7 @@ def test_bedrock_smoke_test_prints_result(monkeypatch) -> None:
 
     result = runner.invoke(app, ["bedrock-smoke-test"])
     assert result.exit_code == 0
-    assert "Model ID: anthropic.claude-opus-4-6-v1" in result.output
+    assert "Model ID: us.anthropic.claude-opus-4-6-v1" in result.output
     assert "Region: us-east-1" in result.output
     assert "Response: Bedrock connectivity is working." in result.output
     assert "Usage: input=12 output=7 total=19" in result.output

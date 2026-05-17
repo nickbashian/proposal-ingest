@@ -179,7 +179,7 @@ Required for real Bedrock mode:
 AWS_PROFILE=proposal-assistant
 AWS_REGION=us-east-1
 BEDROCK_MODEL_LABEL=opus-4.6
-BEDROCK_MODEL_ID=anthropic.claude-opus-4-6-v1
+BEDROCK_MODEL_ID=us.anthropic.claude-opus-4-6-v1
 ```
 
 Useful local config:

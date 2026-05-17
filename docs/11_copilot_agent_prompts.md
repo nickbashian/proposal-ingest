@@ -88,7 +88,7 @@ Implement the Bedrock client wrapper and `bedrock-smoke-test` command.
 Requirements:
 - Load AWS_PROFILE, AWS_REGION, BEDROCK_MODEL_ID, and BEDROCK_MODEL_LABEL from env/config.
 - Default region: us-east-1.
-- Default model ID: anthropic.claude-opus-4-6-v1.
+- Default model ID: us.anthropic.claude-opus-4-6-v1.
 - Use boto3 bedrock-runtime client and the Converse API.
 - Send a small text-only prompt.
 - Print model ID, region, and a short response.

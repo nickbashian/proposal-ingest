@@ -84,7 +84,7 @@ The system shall analyze eligible documents using Amazon Bedrock with `opus-4.6`
 Acceptance criteria:
 
 - Actual model ID is configurable.
-- Default model ID is `anthropic.claude-opus-4-6-v1`.
+- Default model ID is `us.anthropic.claude-opus-4-6-v1`.
 - Region defaults to `us-east-1`.
 - Direct document processing is attempted first for eligible files under the configured size limit, except Excel files.
 - Maximum direct upload size defaults to 20 MB and is configurable.

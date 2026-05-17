@@ -34,7 +34,7 @@ class BedrockConfig(BaseModel):
     """Bedrock model settings."""
 
     model_label: str = "opus-4.6"
-    model_id: str = "anthropic.claude-opus-4-6-v1"
+    model_id: str = "us.anthropic.claude-opus-4-6-v1"
     max_direct_upload_mb: int = Field(default=20, ge=1)
     save_raw_model_responses: bool = True
     mock_bedrock: bool = False

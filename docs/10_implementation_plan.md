@@ -4,6 +4,23 @@
 
 Use small, testable increments. Avoid starting with Bedrock. Build the local state machine first, then add AI calls.
 
+## Current phase status
+
+- Phase 0 — complete
+- Phase 1 — complete
+- Phase 2 — complete
+- Phase 3 — complete
+- Phase 4 — complete
+- Phase 5 — complete
+- Phase 6 — not started
+- Phase 7 — not started
+- Phase 8 — not started
+- Phase 9 — not started
+- Phase 10 — not started
+- Phase 11 — not started
+- Phase 12 — not started
+- Phase 13 — not started
+
 ## Phase 0 — Repo bootstrap
 
 Deliverables:
@@ -26,6 +43,8 @@ proposal-ingest --help
 
 ## Phase 1 — Scanner and inventory
 
+Status: complete
+
 Deliverables:
 
 - source root scan
@@ -45,6 +64,8 @@ Produces inventory with expected rows.
 
 ## Phase 2 — File rules and PowerPoint handling
 
+Status: complete
+
 Deliverables:
 
 - supported file type classification
@@ -61,6 +82,8 @@ Acceptance criteria:
 
 ## Phase 3 — Metadata models and store
 
+Status: complete
+
 Deliverables:
 
 - Pydantic models
@@ -75,6 +98,8 @@ Acceptance criteria:
 - invalid metadata fails predictably
 
 ## Phase 4 — Mock Bedrock mode
+
+Status: complete
 
 Deliverables:
 
@@ -91,6 +116,8 @@ proposal-ingest run-all --source-root sample_data/fake_source_root --output-root
 Produces end-to-end output without AWS.
 
 ## Phase 5 — Bedrock smoke test
+
+Status: complete
 
 Deliverables:
 

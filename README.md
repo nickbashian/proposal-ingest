@@ -115,6 +115,7 @@ See `docs/06_aws_bedrock_setup.md` for the full AWS/Bedrock configuration checkl
 
 - creating a named AWS profile
 - enabling Bedrock model access for Claude
+- using the Bedrock inference profile ID required by Claude Opus 4.6
 - verifying credentials before running any real pipeline calls
 
 **Never run Bedrock calls in CI.** The `MOCK_BEDROCK=true` env var or `--mock-bedrock` CLI flag
@@ -128,8 +129,6 @@ proposal-ingest run-all \
   --output-root tmp/mock_output \
   --mock-bedrock
 ```
-
-> **Note:** This command is a placeholder until Phase 4 (mock Bedrock) is implemented.
 
 ## First Bedrock smoke test
 
@@ -219,9 +218,21 @@ processed_output/
 
 ## Implementation status
 
-This repo is at **Phase 0 — bootstrap**. All CLI commands print placeholder messages.
-See `docs/10_implementation_plan.md` for the full build order and `docs/11_copilot_agent_prompts.md`
-for the ready-to-use Copilot/agent prompts for each implementation phase.
+Phases 1 through 5 are complete:
+
+- Phase 1 — scanner and inventory
+- Phase 2 — file rules and PowerPoint handling
+- Phase 3 — metadata models and store
+- Phase 4 — mock Bedrock mode
+- Phase 5 — Bedrock smoke test
+
+Current implementation boundary:
+
+- `scan`, `analyze --mock-bedrock`, `run-all --mock-bedrock`, `process-file --mock-bedrock`, and `bedrock-smoke-test` are working.
+- Later-phase commands such as `process-folder`, `export-questions`, `apply-answers`, `build-folders`, and `build-clean-set` are still placeholders.
+
+See `docs/10_implementation_plan.md` for the phase-by-phase status and `docs/11_copilot_agent_prompts.md`
+for the ready-to-use Copilot/agent prompts for later phases.
 
 **Suggested branch order:**
 
