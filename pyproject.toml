@@ -24,6 +24,7 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
   "black",
+  "ruff",
   "codespell",
   "pre-commit",
   "pytest",

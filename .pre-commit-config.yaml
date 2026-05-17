@@ -3,6 +3,8 @@ repos:
     rev: v5.0.0
     hooks:
       - id: check-merge-conflict
+      - id: mixed-line-ending
+        args: ["--fix=lf"]
       - id: end-of-file-fixer
         exclude: \.(docx|pptx|xlsx)$
       - id: trailing-whitespace
@@ -15,6 +17,12 @@ repos:
     hooks:
       - id: black
         args: ["--line-length=100"]
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.9.10
+    hooks:
+      - id: ruff
+        args: ["--fix"]
 
   - repo: https://github.com/codespell-project/codespell
     rev: v2.4.2
