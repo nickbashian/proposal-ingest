@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -43,8 +44,6 @@ def _make_fake_inventory_record(
     extension: str = ".pdf",
 ) -> InventoryRecord:
     """Build a minimal valid InventoryRecord for unit tests."""
-    import hashlib
-
     sha = hashlib.sha256(file_name.encode()).hexdigest()
     return InventoryRecord(
         document_id=f"doc_{sha[:16]}",
@@ -132,6 +131,7 @@ def test_mock_infers_letter_of_support_role() -> None:
 
 
 def test_mock_infers_abstract_role() -> None:
+    """'Abstract' in filename should yield abstract role."""
     record = _make_fake_inventory_record("Abstract.docx")
     result = analyze_document_mock(record, "run_x")
 
@@ -159,8 +159,6 @@ def test_mock_ineligible_record_excluded_from_rag() -> None:
 
 def test_mock_infers_doe_agency_from_branch_name() -> None:
     """Branch name containing 'DOE' should set agency to DOE."""
-    import hashlib
-
     sha = hashlib.sha256(b"x").hexdigest()
     record = InventoryRecord(
         document_id=f"doc_{sha[:16]}",

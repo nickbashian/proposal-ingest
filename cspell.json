@@ -1,0 +1,30 @@
+{
+  "version": "0.2",
+  "language": "en",
+  "useGitignore": true,
+  "ignorePaths": [
+    ".git",
+    ".venv",
+    ".mypy_cache",
+    ".pytest_cache",
+    ".ruff_cache",
+    "tmp",
+    "src/proposal_ingest.egg-info",
+    "schemas/*.json"
+  ],
+  "words": [
+    "Bedrock",
+    "botocore",
+    "boto3",
+    "codespell",
+    "docx",
+    "jsonl",
+    "mypy",
+    "openpyxl",
+    "pydantic",
+    "pypdf",
+    "Pylance",
+    "Typer",
+    "yaml"
+  ]
+}

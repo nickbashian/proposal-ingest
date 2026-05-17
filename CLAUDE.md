@@ -12,13 +12,16 @@ pip install -e ".[dev]"
 make check
 
 # Individual checks
-make lint       # ruff check
+make lint       # black --check src tests
+make format     # black src tests
+make spellcheck # codespell
+make precommit-install  # install local git hooks
+make precommit-run      # run hooks across all files
 make mypy       # mypy src
 make test       # pytest
 
-# Auto-fix lint issues
-make lint-fix   # ruff check --fix
-make format     # ruff format
+# Apply formatter
+make lint-fix   # black src tests
 
 # Run a single test file
 pytest tests/test_scanner.py
@@ -76,7 +79,8 @@ This is a **local-first batch pipeline** — Python owns orchestration, state, v
 
 - **Never call Bedrock in CI.** Use `--mock-bedrock` / `MOCK_BEDROCK=true` for all tests.
 - **Source root is read-only.** No module ever writes to it.
-- **Ruff line length is 100.** Selected rules: E, F, I, B, UP, SIM.
+- **Black line length is 100.** Use the project formatter settings from `pyproject.toml`.
+- **Spell check is lightweight by design.** Prefer fixing real typos and keeping project terms in repo spell-check config over disabling whole files.
 - **Mypy is lenient:** `disallow_untyped_defs = false`, `ignore_missing_imports = true` — still run it.
 - Test files live in `tests/` and mirror module names (e.g., `test_scanner.py` for `scanner.py`).
 - `sample_data/fake_source_root/` contains synthetic files for local testing — no real proposals.

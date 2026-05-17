@@ -23,7 +23,9 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
-  "ruff",
+  "black",
+  "codespell",
+  "pre-commit",
   "pytest",
   "mypy",
   "types-PyYAML",
@@ -36,12 +38,9 @@ proposal-ingest = "proposal_ingest.cli:app"
 [tool.setuptools.packages.find]
 where = ["src"]
 
-[tool.ruff]
+[tool.black]
 line-length = 100
-target-version = "py313"
-
-[tool.ruff.lint]
-select = ["E", "F", "I", "B", "UP", "SIM"]
+target-version = ["py313"]
 
 [tool.mypy]
 python_version = "3.13"

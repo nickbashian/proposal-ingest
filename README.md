@@ -29,7 +29,7 @@ proposal-ingest/
   Makefile                  Developer shortcuts (install, lint, test, check)
   .env.example              Environment variable template (copy to .env)
   .gitignore                Excludes confidential data, environments, build artifacts
-  .github/workflows/ci.yml  GitHub Actions CI (Ruff, mypy, pytest — no real Bedrock)
+  .github/workflows/ci.yml  GitHub Actions CI (Black, spell check, mypy, pytest — no real Bedrock)
   config/
     default_config.yaml     Default runtime configuration
     document_type_rules.yaml  File type inclusion/exclusion rules
@@ -85,16 +85,28 @@ copy .env.example .env
 ### Verify dev tooling
 
 ```bash
-make check   # runs ruff, mypy, pytest
+make check   # runs Black check, spell check, mypy, pytest
+```
+
+Install the local git hook once per clone:
+
+```bash
+make precommit-install
 ```
 
 Or individually:
 
 ```bash
-make lint    # ruff check
+make format  # black src tests
+make lint    # black --check src tests
+make spellcheck  # codespell
+make precommit-run  # pre-commit run --all-files
 make mypy    # mypy src
 make test    # pytest
 ```
+
+VS Code workspace settings recommend the Code Spell Checker extension and keep spelling
+diagnostics at hint level so domain terms do not turn into noisy errors.
 
 ## AWS setup
 

@@ -6,6 +6,8 @@ docs/10_implementation_plan.md, then wire the real logic here.
 
 from __future__ import annotations
 
+import secrets
+from datetime import UTC, datetime
 from pathlib import Path
 
 import typer
@@ -26,6 +28,43 @@ app = typer.Typer(
     add_completion=False,
 )
 console = Console()
+
+
+def _build_run_id() -> str:
+    """Return a run identifier for one-off CLI operations."""
+    timestamp = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
+    return f"run_{timestamp}_{secrets.token_hex(3)}"
+
+
+def _build_single_file_inventory_record(file_path: Path) -> InventoryRecord:
+    """Build a minimal inventory record for process-file mock mode."""
+    sha256_hex = sha256_file(file_path)
+    classification = classify_path(file_path)
+    file_stat = file_path.stat()
+    proposal_id = proposal_id_from_branch(
+        year_folder="unknown",
+        proposal_branch_name=file_path.parent.name,
+        relative_branch_path=file_path.parent.name,
+    )
+
+    return InventoryRecord(
+        document_id=document_id_from_sha256(sha256_hex),
+        proposal_id=proposal_id,
+        source_path=str(file_path),
+        relative_path=file_path.name,
+        year_folder="unknown",
+        proposal_branch=file_path.parent.name,
+        file_name_original=file_path.name,
+        file_name_safe=sanitize_filename(file_path.name),
+        extension=file_path.suffix.lower(),
+        size_bytes=file_stat.st_size,
+        modified_time=datetime.fromtimestamp(file_stat.st_mtime, tz=UTC).isoformat(),
+        sha256=sha256_hex,
+        eligible_for_processing=classification.eligible_for_processing,
+        processing_strategy=classification.processing_strategy,  # type: ignore[arg-type]
+        processing_status=classification.processing_status,  # type: ignore[arg-type]
+        skip_reason=classification.skip_reason,
+    )
 
 
 @app.command()
@@ -76,15 +115,11 @@ def analyze(
         console.print("[red]Real Bedrock not yet implemented. Use --mock-bedrock.[/red]")
         raise typer.Exit(code=1)
     try:
-        run_dir, results = analyze_from_output_root(
-            Path(output_root), use_mock=mock_bedrock
-        )
+        run_dir, results = analyze_from_output_root(Path(output_root), use_mock=mock_bedrock)
     except FileNotFoundError as exc:
         console.print(f"[red]Error: {exc}[/red]")
         raise typer.Exit(code=1) from exc
-    console.print(
-        f"Analyze complete: {len(results)} documents processed (mock mode)"
-    )
+    console.print(f"Analyze complete: {len(results)} documents processed (mock mode)")
     console.print(f"  run_dir = {run_dir}")
 
 
@@ -150,9 +185,7 @@ def run_all(
         source_root=Path(source_root),
         output_root=Path(output_root),
     )
-    console.print(
-        f"Scan complete: {len(artifacts.inventory_records)} files inventoried"
-    )
+    console.print(f"Scan complete: {len(artifacts.inventory_records)} files inventoried")
 
     if artifacts.pruned_run_dir:
         console.print("[yellow]No eligible files found — run directory pruned.[/yellow]")
@@ -212,43 +245,11 @@ def process_file(
         console.print(f"[red]Error: file not found: {file_path}[/red]")
         raise typer.Exit(code=1)
 
-    import secrets
-    from datetime import UTC, datetime
-
-    run_id = f"run_{datetime.now(UTC).strftime('%Y%m%d_%H%M%S')}_{secrets.token_hex(3)}"
+    run_id = _build_run_id()
     run_dir = Path(output_root).resolve() / "logs" / run_id
     run_dir.mkdir(parents=True, exist_ok=True)
 
-    sha256_hex = sha256_file(file_path)
-    doc_id = document_id_from_sha256(sha256_hex)
-    classification = classify_path(file_path)
-    file_stat = file_path.stat()
-
-    # Best-effort synthetic proposal context
-    proposal_id = proposal_id_from_branch(
-        year_folder="unknown",
-        proposal_branch_name=file_path.parent.name,
-        relative_branch_path=file_path.parent.name,
-    )
-
-    record = InventoryRecord(
-        document_id=doc_id,
-        proposal_id=proposal_id,
-        source_path=str(file_path),
-        relative_path=file_path.name,
-        year_folder="unknown",
-        proposal_branch=file_path.parent.name,
-        file_name_original=file_path.name,
-        file_name_safe=sanitize_filename(file_path.name),
-        extension=file_path.suffix.lower(),
-        size_bytes=file_stat.st_size,
-        modified_time=datetime.fromtimestamp(file_stat.st_mtime, tz=UTC).isoformat(),
-        sha256=sha256_hex,
-        eligible_for_processing=classification.eligible_for_processing,
-        processing_strategy=classification.processing_strategy,  # type: ignore[arg-type]
-        processing_status=classification.processing_status,  # type: ignore[arg-type]
-        skip_reason=classification.skip_reason,
-    )
+    record = _build_single_file_inventory_record(file_path)
 
     metadata = analyze_document_mock(record, run_id)
     MetadataStore(run_dir).write_document_metadata(metadata)
@@ -265,7 +266,7 @@ def process_file(
             mock_bedrock=mock_bedrock,
         )
     )
-    console.print(f"process-file complete (mock mode): {doc_id}")
+    console.print(f"process-file complete (mock mode): {record.document_id}")
     console.print(f"  run_dir = {run_dir}")
 
 

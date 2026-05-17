@@ -187,8 +187,8 @@ def analyze_document_mock(record: InventoryRecord, run_id: str) -> DocumentMetad
     program_str = _infer_program(record.proposal_branch)
     agency = _infer_agency(record.proposal_branch)
 
-    LOW = 0.30
-    MOD = 0.45
+    low_confidence = 0.30
+    moderate_confidence = 0.45
 
     return DocumentMetadata(
         schema_version=APP_SCHEMA_VERSION,
@@ -253,16 +253,16 @@ def analyze_document_mock(record: InventoryRecord, run_id: str) -> DocumentMetad
         confidence=DocumentConfidence(
             document_category=cat_conf,
             document_role=role_conf,
-            origin_type=LOW,
-            version_status=LOW,
-            canonical_proposal_name=MOD,
-            agency=LOW,
-            program=LOW,
-            status=LOW,
-            award_status=LOW,
-            include_in_clean_set=MOD,
-            include_in_future_rag=MOD,
-            rag_priority=MOD,
+            origin_type=low_confidence,
+            version_status=low_confidence,
+            canonical_proposal_name=moderate_confidence,
+            agency=low_confidence,
+            program=low_confidence,
+            status=low_confidence,
+            award_status=low_confidence,
+            include_in_clean_set=moderate_confidence,
+            include_in_future_rag=moderate_confidence,
+            rag_priority=moderate_confidence,
         ),
         processing_notes=["generated_by: mock_bedrock"],
     )

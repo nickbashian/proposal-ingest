@@ -11,8 +11,12 @@ See [README.md](README.md) for setup and [docs/02_system_architecture.md](docs/0
 ```bash
 pip install -e ".[dev]"   # first-time setup
 
-make check                # lint (ruff) + types (mypy) + tests (pytest) — CI gate
-make lint                 # ruff check only
+make check                # format check (black) + spell check + types (mypy) + tests (pytest) — CI gate
+make lint                 # black --check on src/ and tests/
+make format               # black formatter
+make spellcheck           # codespell
+make precommit-install    # install local git hooks
+make precommit-run        # run hooks across all files
 make mypy                 # mypy src/ only
 pytest                    # tests only
 ```

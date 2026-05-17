@@ -46,7 +46,7 @@ def analyze_inventory(
     """Analyze eligible inventory records and write metadata to run_dir.
 
     Args:
-        run_dir: The run-scoped output directory (must already exist or be createable).
+        run_dir: The run-scoped output directory (must already exist or be creatable).
         inventory_records: All records from the scan inventory.
         run_id: The run identifier to embed in each DocumentMetadata record.
         use_mock: When True, calls ``analyze_document_mock``; when False, raises
@@ -84,9 +84,7 @@ def _finalize_run_manifest(run_dir: Path, *, use_mock: bool) -> None:
     raw = json.loads(manifest_path.read_text(encoding="utf-8"))
     raw["mock_bedrock"] = use_mock
     raw["command"] = "analyze"
-    manifest_path.write_text(
-        json.dumps(raw, indent=2, sort_keys=True) + "\n", encoding="utf-8"
-    )
+    manifest_path.write_text(json.dumps(raw, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
 def analyze_from_output_root(

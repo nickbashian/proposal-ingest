@@ -1,17 +1,26 @@
-.PHONY: install format lint lint-fix mypy test check
+.PHONY: install format lint lint-fix spellcheck precommit-install precommit-run mypy test check
 
 install:
 	python -m pip install --upgrade pip
 	python -m pip install -e ".[dev]"
 
 format:
-	ruff format .
+	black src tests
 
 lint:
-	ruff check .
+	black --check src tests
 
 lint-fix:
-	ruff check . --fix
+	black src tests
+
+spellcheck:
+	codespell
+
+precommit-install:
+	pre-commit install
+
+precommit-run:
+	pre-commit run --all-files
 
 mypy:
 	mypy src
@@ -19,4 +28,4 @@ mypy:
 test:
 	pytest
 
-check: lint mypy test
+check: lint spellcheck mypy test

@@ -49,7 +49,9 @@ Recommended CLI framework: `typer`, because it is concise and friendly for typed
 ## Dev dependencies
 
 ```text
-ruff
+black
+codespell
+pre-commit
 pytest
 mypy
 types-PyYAML
@@ -58,13 +60,31 @@ pandas-stubs
 
 ## Formatting and linting
 
-Use Ruff for linting and formatting.
+Use Black for formatting and style enforcement.
 
 Commands:
 
 ```bash
-ruff check .
-ruff format .
+black src tests
+black --check src tests
+```
+
+## Spell checking
+
+Use `codespell` for a lightweight typo check in code and docs, and use the VS Code
+Code Spell Checker extension for interactive feedback while editing.
+
+```bash
+codespell
+```
+
+## Git hooks
+
+Use `pre-commit` for lightweight commit-time checks.
+
+```bash
+pre-commit install
+pre-commit run --all-files
 ```
 
 ## Type checking
@@ -90,13 +110,22 @@ install:
 	python -m pip install -e ".[dev]"
 
 format:
-	ruff format .
+  black src tests
 
 lint:
-	ruff check .
+  black --check src tests
 
 lint-fix:
-	ruff check . --fix
+  black src tests
+
+spellcheck:
+  codespell
+
+precommit-install:
+  pre-commit install
+
+precommit-run:
+  pre-commit run --all-files
 
 mypy:
 	mypy src
@@ -104,7 +133,7 @@ mypy:
 test:
 	pytest
 
-check: lint mypy test
+check: lint spellcheck mypy test
 ```
 
 ## GitHub Actions
@@ -112,8 +141,8 @@ check: lint mypy test
 CI should run:
 
 - install package
-- Ruff check
-- Ruff format check
+- Black format check
+- spell check
 - mypy
 - pytest
 

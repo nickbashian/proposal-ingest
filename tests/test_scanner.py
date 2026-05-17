@@ -129,9 +129,7 @@ def test_scan_writes_csv_and_jsonl() -> None:
         assert artifacts.run_manifest_path.exists()
         with artifacts.inventory_jsonl.open(encoding="utf-8") as handle:
             rows = [
-                InventoryRecord.model_validate(json.loads(line))
-                for line in handle
-                if line.strip()
+                InventoryRecord.model_validate(json.loads(line)) for line in handle if line.strip()
             ]
         assert len(rows) == 2
         with artifacts.run_manifest_path.open(encoding="utf-8") as handle:
@@ -169,9 +167,7 @@ def test_scan_marks_same_stem_powerpoint_as_superseded() -> None:
 
         artifacts = scan_source_root(source_root, output_root)
 
-        records_by_extension = {
-            record.extension: record for record in artifacts.inventory_records
-        }
+        records_by_extension = {record.extension: record for record in artifacts.inventory_records}
         assert records_by_extension[".pptx"].processing_status == "superseded_by_pdf"
         assert (
             records_by_extension[".pptx"].superseded_by_document_id

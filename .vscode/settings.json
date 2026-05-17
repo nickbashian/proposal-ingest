@@ -1,0 +1,25 @@
+{
+  "[python]": {
+    "editor.defaultFormatter": "ms-python.black-formatter",
+    "editor.formatOnSave": true
+  },
+  "black-formatter.importStrategy": "fromEnvironment",
+  "black-formatter.args": [
+    "--line-length",
+    "100"
+  ],
+  "cSpell.enabled": true,
+  "cSpell.useGitignore": true,
+  "cSpell.diagnosticLevel": "Hint",
+  "cSpell.enabledLanguageIds": [
+    "markdown",
+    "plaintext",
+    "python",
+    "json",
+    "jsonc",
+    "yaml"
+  ],
+  "pylint.enabled": false,
+  "ruff.enable": false,
+  "python.analysis.typeCheckingMode": "basic"
+}

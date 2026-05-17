@@ -1,0 +1,3 @@
+[codespell]
+skip = .git,.venv,.mypy_cache,.pytest_cache,.ruff_cache,tmp,src/proposal_ingest.egg-info
+quiet-level = 2
