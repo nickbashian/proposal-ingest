@@ -20,6 +20,7 @@ from proposal_ingest.config import RuntimeConfig
 from proposal_ingest.extractors import count_excel_nonempty_cells, extract_text
 from proposal_ingest.logging_utils import get_logger
 from proposal_ingest.metadata_store import MetadataStore
+from proposal_ingest.model_output import normalize_metadata_output
 from proposal_ingest.mock_bedrock import analyze_document_mock
 from proposal_ingest.prompts import render_repair_prompt, render_user_prompt, load_system_prompt
 from proposal_ingest.schemas import (
@@ -31,6 +32,7 @@ from proposal_ingest.schemas import (
     ProcessingStrategy,
     SystemMetadata,
 )
+from proposal_ingest.two_pass import run_two_pass_review
 
 logger = get_logger("analyzer")
 
@@ -361,6 +363,7 @@ def process_single_file(
         error_msg = "Model response could not be parsed as JSON"
         logger.warning("%s for %s", error_msg, file_path.name)
     else:
+        parsed = normalize_metadata_output(parsed)
         _inject_system_fields(parsed, record, run_id, strategy)
         validated_meta: DocumentMetadata | None
         validated_meta, validation_error = _validate_metadata(parsed)
@@ -433,6 +436,7 @@ def process_single_file(
 
         repair_parsed = _parse_json_response(repair_raw)
         if repair_parsed is not None:
+            repair_parsed = normalize_metadata_output(repair_parsed)
             _inject_system_fields(repair_parsed, record, run_id, strategy)
             repaired_meta: DocumentMetadata | None
             repaired_meta, repair_error = _validate_metadata(repair_parsed)
@@ -627,14 +631,14 @@ def analyze_inventory(
     results: list[DocumentMetadata] = []
     attempted = 0
 
-    existing_hashes = _processed_hashes(run_dir)
+    existing_ids = _processed_document_ids(run_dir)
     eligible = [r for r in inventory_records if r.eligible_for_processing]
 
     for record in eligible:
-        if not force and record.sha256 in existing_hashes:
+        if not force and record.document_id in existing_ids:
             logger.info(
-                "Skipping already-processed file sha256=%s path=%s",
-                record.sha256,
+                "Skipping already-processed file document_id=%s path=%s",
+                record.document_id,
                 record.source_path,
             )
             continue
@@ -661,25 +665,40 @@ def analyze_inventory(
         else:
             logger.error("Analysis failed for %s: %s", record.source_path, result.error_message)
 
+    if runtime_config.processing.pass2_enabled:
+        pass2_result = run_two_pass_review(
+            run_dir,
+            run_id,
+            runtime_config,
+            use_mock=use_mock,
+        )
+        logger.info(
+            "Pass 2 reviewed %s documents and recorded %s changes",
+            pass2_result.reviewed_count,
+            pass2_result.changed_count,
+        )
+        results = [
+            pass2_result.documents_by_id.get(metadata.document_id, metadata) for metadata in results
+        ]
+
+    _rewrite_all_document_metadata_jsonl(run_dir)
     _finalize_run_manifest(run_dir, use_mock=use_mock)
 
     return results
 
 
-def _processed_hashes(run_dir: Path) -> set[str]:
-    """Return SHA-256 hashes already present in document metadata for this run."""
-    by_id_dir = run_dir / "document_metadata" / "by_document_id"
-    if not by_id_dir.exists():
-        return set()
-    hashes: set[str] = set()
-    for path in by_id_dir.glob("*.json"):
-        try:
-            metadata = DocumentMetadata.model_validate_json(path.read_text(encoding="utf-8"))
-        except Exception:
-            logger.warning("Ignoring unreadable metadata while checking skip cache: %s", path)
-            continue
-        hashes.add(metadata.system.sha256)
-    return hashes
+def _processed_document_ids(run_dir: Path) -> set[str]:
+    """Return document IDs already present in document metadata for this run."""
+    return MetadataStore(run_dir).document_metadata_ids()
+
+
+def _rewrite_all_document_metadata_jsonl(run_dir: Path) -> None:
+    """Rewrite aggregate document metadata JSONL from canonical by-id files."""
+    store = MetadataStore(run_dir)
+    metadata_by_id = store.load_document_metadata_by_id()
+    store.write_document_metadata_jsonl(
+        sorted(metadata_by_id.values(), key=lambda metadata: metadata.document_id)
+    )
 
 
 def _write_unhandled_failure(

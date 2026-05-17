@@ -20,6 +20,8 @@ from proposal_ingest.analyzer import (
 from proposal_ingest.cli import app
 from proposal_ingest.config import load_runtime_config
 from proposal_ingest.extractors import extract_text
+from proposal_ingest.model_output import normalize_metadata_output
+from proposal_ingest.mock_bedrock import analyze_document_mock
 from proposal_ingest.prompts import (
     load_system_prompt,
     load_user_prompt_template,
@@ -27,7 +29,10 @@ from proposal_ingest.prompts import (
     render_user_prompt,
 )
 from proposal_ingest.schemas import (
+    DocumentCategory,
     DocumentMetadata,
+    DocumentRole,
+    OriginType,
     InventoryRecord,
     ProcessingStatus,
 )
@@ -181,6 +186,26 @@ def test_parse_json_response_invalid_returns_none() -> None:
 def test_parse_json_response_array_returns_none() -> None:
     # We only accept top-level objects, not arrays.
     assert _parse_json_response("[1, 2, 3]") is None
+
+
+def test_normalize_metadata_output_maps_common_enum_aliases() -> None:
+    record = _make_inventory_record()
+    payload = analyze_document_mock(record, "run_norm_001").model_dump(mode="json")
+    payload["document_identity"]["document_category"] = "budget"
+    payload["document_identity"]["document_role"] = "partner_support_letter"
+    payload["document_identity"]["origin_type"] = "generated_by_team"
+    payload["opportunity_treatment"]["recommended_rag_treatment"] = "full_ingest"
+    payload["proposal_context"]["program"] = "SBIR Phase I"
+    payload["proposal_context"]["status"] = "pre-submission"
+
+    normalized = normalize_metadata_output(payload)
+
+    assert normalized["document_identity"]["document_category"] == "budget_financial"
+    assert normalized["document_identity"]["document_role"] == "letter_of_support"
+    assert normalized["document_identity"]["origin_type"] == "generated_response"
+    assert normalized["opportunity_treatment"]["recommended_rag_treatment"] == "full_document"
+    assert normalized["proposal_context"]["program"] == "SBIR"
+    assert normalized["proposal_context"]["status"] == "drafted"
 
 
 def test_build_local_extract_prompt_truncates_large_extraction() -> None:
@@ -673,7 +698,7 @@ def test_analyze_inventory_mock_writes_usage_and_respects_limit(tmp_path: Path) 
     usage_lines = (
         (run_dir / "usage" / "bedrock_usage.jsonl").read_text(encoding="utf-8").splitlines()
     )
-    assert len(usage_lines) == 1
+    assert len(usage_lines) == 2
     assert json.loads(usage_lines[0])["success"] is True
 
 
@@ -698,3 +723,52 @@ def test_analyze_inventory_skips_existing_hash_unless_forced(tmp_path: Path) -> 
     assert len(first) == 1
     assert second == []
     assert len(forced) == 1
+
+    jsonl_path = run_dir / "document_metadata" / "all_document_metadata.jsonl"
+    lines = [line for line in jsonl_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    assert len(lines) == 1
+    assert json.loads(lines[0])["document_id"] == record.document_id
+
+
+def test_analyze_inventory_runs_pass2_for_ambiguous_mock_letter(tmp_path: Path) -> None:
+    from proposal_ingest.analyzer import analyze_inventory
+    from proposal_ingest.mock_bedrock import analyze_document_mock
+
+    technical = _make_inventory_record("Technical Volume FINAL.docx", ".docx")
+    letter = _make_inventory_record("Support Letter.docx", ".docx")
+    for record in (technical, letter):
+        record.proposal_id = "prop_2025-branch__abcd1234"  # type: ignore[misc]
+        record.proposal_branch = "2025 Fake DOE SBIR Battery Project"  # type: ignore[misc]
+        file_path = tmp_path / record.file_name_original
+        file_path.write_text(record.file_name_original, encoding="utf-8")
+        record.source_path = str(file_path)  # type: ignore[misc]
+        record.size_bytes = file_path.stat().st_size  # type: ignore[misc]
+
+    def ambiguous_mock(record: InventoryRecord, run_id: str) -> DocumentMetadata:
+        metadata = analyze_document_mock(record, run_id)
+        if record.file_name_original == "Support Letter.docx":
+            metadata.document_identity.document_category = DocumentCategory.unknown
+            metadata.document_identity.document_role = DocumentRole.unknown
+            metadata.document_identity.origin_type = OriginType.unknown
+            metadata.confidence.document_category = 0.2
+            metadata.confidence.document_role = 0.2
+            metadata.confidence.origin_type = 0.2
+            metadata.confidence.include_in_future_rag = 0.2
+        return metadata
+
+    with patch("proposal_ingest.analyzer.analyze_document_mock", side_effect=ambiguous_mock):
+        results = analyze_inventory(
+            tmp_path / "run_pass2_batch",
+            [technical, letter],
+            "run_pass2_batch",
+            use_mock=True,
+            config=load_runtime_config(),
+        )
+
+    support_letter = next(
+        result for result in results if result.system.file_name_original == "Support Letter.docx"
+    )
+    assert support_letter.system.processing_status == ProcessingStatus.processed_pass2
+    assert support_letter.document_identity.document_category == DocumentCategory.partner_document
+    assert support_letter.document_identity.document_role == DocumentRole.letter_of_support
+    assert (tmp_path / "run_pass2_batch" / "reports" / "pass2_changes.csv").exists()

@@ -262,8 +262,8 @@ def test_all_document_metadata_jsonl_is_written() -> None:
         source = root / "source"
         output = root / "output"
 
-        _write_text_file(source / "2025" / "Proj" / "a.pdf")
-        _write_text_file(source / "2025" / "Proj" / "b.docx")
+        _write_text_file(source / "2025" / "Proj" / "a.pdf", "first document")
+        _write_text_file(source / "2025" / "Proj" / "b.docx", "second document")
 
         artifacts = scan_source_root(source, output)
         analyze_inventory(

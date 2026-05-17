@@ -12,6 +12,7 @@ from typing import Any
 from pydantic import ValidationError
 
 from proposal_ingest.analyzer import find_latest_inventory_jsonl
+from proposal_ingest.metadata_store import MetadataStore
 from proposal_ingest.path_utils import short_hash
 from proposal_ingest.schemas import (
     Agency,
@@ -155,8 +156,9 @@ def export_questions_to_csv(
     exported: list[ReviewQuestion] = []
     suppressed = 0
     seen_ids: set[str] = set()
+    store = MetadataStore(run_dir)
 
-    for metadata_path in _document_metadata_paths(run_dir):
+    for metadata_path in store.iter_document_metadata_paths():
         metadata = DocumentMetadata.model_validate_json(metadata_path.read_text(encoding="utf-8"))
         file_questions = _questions_from_document(metadata)
         file_questions = sorted(file_questions, key=_question_sort_key)[:max_questions_per_file]
@@ -193,7 +195,8 @@ def apply_answers_from_csv(output_root: Path, answers_csv: Path) -> ApplyAnswers
     archive_csv = review_dir / "answered_questions_archive.csv"
     errors_csv = reports_dir / "answer_apply_errors.csv"
 
-    metadata_by_id = _load_metadata_by_id(run_dir)
+    store = MetadataStore(run_dir)
+    metadata_by_id = store.load_document_metadata_by_id()
     archive_rows: list[dict[str, str]] = []
     error_rows: list[dict[str, str]] = []
     applied_count = 0
@@ -244,7 +247,7 @@ def apply_answers_from_csv(output_root: Path, answers_csv: Path) -> ApplyAnswers
             continue
 
         metadata_by_id[document_id] = updated
-        metadata_path = run_dir / "document_metadata" / "by_document_id" / f"{document_id}.json"
+        metadata_path = store.document_metadata_path(document_id)
         metadata_path.write_text(
             json.dumps(updated.model_dump(mode="json"), indent=2, sort_keys=True) + "\n",
             encoding="utf-8",
@@ -259,7 +262,7 @@ def apply_answers_from_csv(output_root: Path, answers_csv: Path) -> ApplyAnswers
     if archive_rows:
         _append_csv(archive_csv, REVIEW_COLUMNS, archive_rows)
     _write_csv(errors_csv, ERROR_COLUMNS, error_rows)
-    _rewrite_all_document_metadata_jsonl(run_dir, metadata_by_id.values())
+    _rewrite_all_document_metadata_jsonl(store, metadata_by_id.values())
 
     return ApplyAnswersResult(
         run_dir=run_dir,
@@ -276,13 +279,6 @@ def stable_question_id(document_id: str, field: str | None, question: str) -> st
     """Build a stable review question id from document, field, and normalized text."""
     normalized = " ".join(question.lower().split())
     return f"q_{short_hash(f'{document_id}|{field or ''}|{normalized}', length=12)}"
-
-
-def _document_metadata_paths(run_dir: Path) -> list[Path]:
-    by_id = run_dir / "document_metadata" / "by_document_id"
-    if not by_id.exists():
-        return []
-    return sorted(by_id.glob("*.json"), key=lambda path: path.name)
 
 
 def _questions_from_document(metadata: DocumentMetadata) -> list[ReviewQuestion]:
@@ -389,14 +385,6 @@ def _append_csv(path: Path, fieldnames: list[str], rows: list[dict[str, Any]]) -
         writer.writerows(rows)
 
 
-def _load_metadata_by_id(run_dir: Path) -> dict[str, DocumentMetadata]:
-    result: dict[str, DocumentMetadata] = {}
-    for path in _document_metadata_paths(run_dir):
-        metadata = DocumentMetadata.model_validate_json(path.read_text(encoding="utf-8"))
-        result[metadata.document_id] = metadata
-    return result
-
-
 def _apply_field(
     data: dict[str, Any], field: str, raw_answer: str, answer_type: str | None
 ) -> None:
@@ -465,13 +453,8 @@ def _error_row(row: dict[str, str], error: str) -> dict[str, str]:
     }
 
 
-def _rewrite_all_document_metadata_jsonl(run_dir: Path, metadata_values: Any) -> None:
-    path = run_dir / "document_metadata" / "all_document_metadata.jsonl"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", encoding="utf-8") as handle:
-        for metadata in sorted(metadata_values, key=lambda item: item.document_id):
-            handle.write(json.dumps(metadata.model_dump(mode="json"), sort_keys=True))
-            handle.write("\n")
+def _rewrite_all_document_metadata_jsonl(store: MetadataStore, metadata_values: Any) -> None:
+    store.write_document_metadata_jsonl(sorted(metadata_values, key=lambda item: item.document_id))
 
 
 def _append_powerpoint_override(

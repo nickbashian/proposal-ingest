@@ -30,11 +30,33 @@ class MetadataStore:
         self.failures_dir = self.document_metadata_dir / "failures"
         self.raw_responses_dir = self.run_dir / "raw_responses"
 
+    def document_metadata_path(self, document_id: str) -> Path:
+        """Return the canonical path for one document's metadata JSON."""
+        return self.document_by_id_dir / f"{document_id}.json"
+
+    def iter_document_metadata_paths(self) -> list[Path]:
+        """Return all per-document metadata JSON paths in stable name order."""
+        if not self.document_by_id_dir.exists():
+            return []
+        return sorted(self.document_by_id_dir.glob("*.json"), key=lambda path: path.name)
+
+    def document_metadata_ids(self) -> set[str]:
+        """Return document IDs already written for this run."""
+        return {path.stem for path in self.iter_document_metadata_paths()}
+
+    def load_document_metadata_by_id(self) -> dict[str, DocumentMetadata]:
+        """Load all stored document metadata keyed by document_id."""
+        result: dict[str, DocumentMetadata] = {}
+        for path in self.iter_document_metadata_paths():
+            metadata = DocumentMetadata.model_validate_json(path.read_text(encoding="utf-8"))
+            result[metadata.document_id] = metadata
+        return result
+
     def write_document_metadata(
         self, metadata: DocumentMetadata, *, append_jsonl: bool = True
     ) -> Path:
         self.document_by_id_dir.mkdir(parents=True, exist_ok=True)
-        path = self.document_by_id_dir / f"{metadata.document_id}.json"
+        path = self.document_metadata_path(metadata.document_id)
         self._write_json(path, metadata)
         if append_jsonl:
             self.document_metadata_dir.mkdir(parents=True, exist_ok=True)
