@@ -10,6 +10,7 @@ from typer.testing import CliRunner
 import proposal_ingest.cli
 from proposal_ingest.cli import app
 from proposal_ingest.question_gui import (
+    _sync_answer_draft,
     answer_row,
     choices_for_row,
     load_question_rows,
@@ -87,6 +88,25 @@ def test_question_gui_helpers_skip_row() -> None:
     assert row["updated_at"]
 
 
+def test_question_gui_helpers_sync_answer_draft() -> None:
+    row = {"user_answer": "draft", "updated_at": ""}
+
+    changed = _sync_answer_draft(row, "final")
+
+    assert changed is True
+    assert row["user_answer"] == "final"
+    assert row["updated_at"]
+
+
+def test_question_gui_helpers_sync_answer_draft_no_change() -> None:
+    row = {"user_answer": "final", "updated_at": "keep"}
+
+    changed = _sync_answer_draft(row, "final")
+
+    assert changed is False
+    assert row["updated_at"] == "keep"
+
+
 def test_answer_questions_cli_uses_default_csv_path(tmp_path: Path, monkeypatch) -> None:
     questions_csv = tmp_path / "review" / "questions_to_answer.csv"
     _write_questions_csv(questions_csv)
@@ -109,3 +129,20 @@ def test_answer_questions_cli_reports_missing_csv(tmp_path: Path) -> None:
 
     assert result.exit_code == 1
     assert "questions CSV not found" in result.output
+
+
+def test_answer_questions_cli_reports_headless_error(tmp_path: Path, monkeypatch) -> None:
+    questions_csv = tmp_path / "review" / "questions_to_answer.csv"
+    _write_questions_csv(questions_csv)
+
+    def _raise_headless(_: Path) -> None:
+        raise RuntimeError(
+            "Tkinter GUI could not be initialized. Ensure a GUI display is available."
+        )
+
+    monkeypatch.setattr(proposal_ingest.cli, "launch_questions_gui", _raise_headless)
+
+    result = runner.invoke(app, ["answer-questions", "--output-root", str(tmp_path)])
+
+    assert result.exit_code == 1
+    assert "Tkinter GUI could not be initialized" in result.output

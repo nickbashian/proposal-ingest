@@ -7,6 +7,7 @@ from functools import partial
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
+import tempfile
 
 from proposal_ingest.question_loop import REVIEW_COLUMNS
 from proposal_ingest.schemas import QuestionStatus
@@ -30,10 +31,20 @@ def write_question_rows(csv_path: Path, rows: list[dict[str, str]]) -> None:
     """Rewrite a review CSV after GUI edits while preserving known review columns."""
     fieldnames = _fieldnames_for_rows(rows)
     csv_path.parent.mkdir(parents=True, exist_ok=True)
-    with csv_path.open("w", encoding="utf-8", newline="") as handle:
+    with tempfile.NamedTemporaryFile(
+        mode="w",
+        encoding="utf-8",
+        newline="",
+        dir=csv_path.parent,
+        prefix=f".{csv_path.name}.",
+        suffix=".tmp",
+        delete=False,
+    ) as handle:
         writer = csv.DictWriter(handle, fieldnames=fieldnames, extrasaction="ignore")
         writer.writeheader()
         writer.writerows(rows)
+        temp_path = Path(handle.name)
+    temp_path.replace(csv_path)
 
 
 def answer_row(
@@ -72,7 +83,12 @@ def launch_questions_gui(csv_path: Path) -> None:
     if not rows:
         raise ValueError(f"No question rows found in {csv_path}")
 
-    root = tk.Tk()
+    try:
+        root = tk.Tk()
+    except tk.TclError as exc:
+        raise RuntimeError(
+            "Tkinter GUI could not be initialized. Ensure a GUI display is available."
+        ) from exc
     root.title(f"Proposal Questions - {csv_path.name}")
     root.geometry("820x560")
 
@@ -179,7 +195,8 @@ def launch_questions_gui(csv_path: Path) -> None:
         )
 
     def move(delta: int) -> None:
-        write_question_rows(csv_path, rows)
+        if _sync_answer_draft(current_row(), answer_value.get()):
+            write_question_rows(csv_path, rows)
         next_index = min(max(current_index.get() + delta, 0), len(rows) - 1)
         current_index.set(next_index)
         refresh()
@@ -220,7 +237,8 @@ def launch_questions_gui(csv_path: Path) -> None:
         refresh()
 
     def close() -> None:
-        write_question_rows(csv_path, rows)
+        if _sync_answer_draft(current_row(), answer_value.get()):
+            write_question_rows(csv_path, rows)
         root.destroy()
 
     root.protocol("WM_DELETE_WINDOW", close)
@@ -237,6 +255,15 @@ def _parse_suggested_options(raw_options: str) -> list[str]:
         cleaned = cleaned.removeprefix("[").removesuffix("]")
     delimiter = "|" if "|" in cleaned else ","
     return [option.strip().strip("\"'") for option in cleaned.split(delimiter) if option.strip()]
+
+
+def _sync_answer_draft(row: dict[str, str], answer: str) -> bool:
+    normalized_answer = answer.strip()
+    if normalized_answer == (row.get("user_answer") or ""):
+        return False
+    row["user_answer"] = normalized_answer
+    row["updated_at"] = datetime.now(UTC).isoformat()
+    return True
 
 
 def _fieldnames_for_rows(rows: list[dict[str, str]]) -> list[str]:

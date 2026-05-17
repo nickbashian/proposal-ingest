@@ -230,6 +230,9 @@ def answer_questions(
     except ImportError as exc:
         console.print("[red]Error: Tkinter is not available in this Python environment.[/red]")
         raise typer.Exit(code=1) from exc
+    except RuntimeError as exc:
+        console.print(f"[red]Error: {exc}[/red]")
+        raise typer.Exit(code=1) from exc
     except ValueError as exc:
         console.print(f"[red]Error: {exc}[/red]")
         raise typer.Exit(code=1) from exc
