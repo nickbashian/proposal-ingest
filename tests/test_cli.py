@@ -10,6 +10,7 @@ from typer.testing import CliRunner
 import proposal_ingest.cli
 from proposal_ingest.bedrock_client import BedrockSmokeTestResult
 from proposal_ingest.cli import app
+from proposal_ingest.scanner import ScanArtifacts
 
 runner = CliRunner()
 
@@ -172,6 +173,100 @@ def test_scan_with_tracker_path_writes_tracker_jsonl(tmp_path: Path) -> None:
     run_directories = list((output_root / "logs").glob("run_*"))
     assert len(run_directories) == 1
     assert (run_directories[0] / "tracker" / "tracker_rows.jsonl").exists()
+
+
+def test_scan_dry_run_with_tracker_path_does_not_print_tracker_loaded(tmp_path: Path) -> None:
+    """scan --dry-run should not print tracker-loaded paths that are not written."""
+    source_root = tmp_path / "source"
+    output_root = tmp_path / "output"
+    proposal_branch = source_root / "2025" / "Demo Proposal"
+    proposal_branch.mkdir(parents=True)
+    (proposal_branch / "Technical Volume.pdf").write_text("pdf content", encoding="utf-8")
+
+    tracker_path = tmp_path / "tracker.xlsx"
+    pd.DataFrame(
+        [{"proposal_name": "Demo Proposal", "status": "submitted", "award_status": "unknown"}]
+    ).to_excel(tracker_path, index=False)
+
+    result = runner.invoke(
+        app,
+        [
+            "scan",
+            "--source-root",
+            str(source_root),
+            "--output-root",
+            str(output_root),
+            "--tracker-path",
+            str(tracker_path),
+            "--dry-run",
+        ],
+    )
+    assert result.exit_code == 0
+    assert "Tracker rows loaded:" not in result.output
+    assert "Tracker JSONL:" not in result.output
+
+
+def test_scan_respects_tracker_header_row_from_config_when_cli_not_set(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """scan should not override tracker.header_row unless --tracker-header-row is provided."""
+    source_root = tmp_path / "source"
+    output_root = tmp_path / "output"
+    source_root.mkdir(parents=True)
+    output_root.mkdir(parents=True)
+
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        "app:\n"
+        "  source_root: null\n"
+        "  output_root: null\n"
+        "tracker:\n"
+        "  enabled: true\n"
+        "  path: /tmp/tracker.xlsx\n"
+        "  sheet_name: Tracker\n"
+        "  header_row: 3\n",
+        encoding="utf-8",
+    )
+
+    captured: dict[str, object] = {}
+
+    def _fake_scan_source_root(*args, **kwargs):
+        captured.update(kwargs)
+        run_dir = Path(output_root) / "logs" / "run_fake"
+        return ScanArtifacts(
+            run_id="run_fake",
+            run_dir=run_dir,
+            inventory_csv=run_dir / "inventory" / "file_inventory.csv",
+            inventory_jsonl=run_dir / "inventory" / "file_inventory.jsonl",
+            stray_files_csv=run_dir / "inventory" / "stray_files_ignored.csv",
+            powerpoint_questions_jsonl=run_dir / "inventory" / "powerpoint_review_questions.jsonl",
+            run_manifest_path=run_dir / "run_manifest.json",
+            wrote_outputs=False,
+            pruned_run_dir=False,
+            inventory_records=[],
+            stray_files=[],
+            powerpoint_review_questions=[],
+            tracker_rows_jsonl=run_dir / "tracker" / "tracker_rows.jsonl",
+            tracker_row_count=0,
+            tracker_load_error=None,
+        )
+
+    monkeypatch.setattr(proposal_ingest.cli, "scan_source_root", _fake_scan_source_root)
+
+    result = runner.invoke(
+        app,
+        [
+            "scan",
+            "--source-root",
+            str(source_root),
+            "--output-root",
+            str(output_root),
+            "--config",
+            str(config_path),
+        ],
+    )
+    assert result.exit_code == 0
+    assert captured["tracker_header_row"] == 3
 
 
 def test_analyze_without_mock_bedrock_exits_nonzero() -> None:

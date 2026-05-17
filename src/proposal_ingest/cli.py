@@ -96,8 +96,11 @@ def scan(
     tracker_sheet_name: str | None = typer.Option(
         None, "--tracker-sheet-name", help="Optional tracker workbook sheet name."
     ),
-    tracker_header_row: int = typer.Option(
-        0, "--tracker-header-row", min=0, help="Zero-based header row index in the tracker sheet."
+    tracker_header_row: int | None = typer.Option(
+        None,
+        "--tracker-header-row",
+        min=0,
+        help="Zero-based header row index in the tracker sheet.",
     ),
     config: str | None = typer.Option(None, "--config", help="Path to a YAML config file."),
 ) -> None:
@@ -107,7 +110,8 @@ def scan(
         tracker_overrides["path"] = tracker_path
     if tracker_sheet_name is not None:
         tracker_overrides["sheet_name"] = tracker_sheet_name
-    tracker_overrides["header_row"] = tracker_header_row
+    if tracker_header_row is not None:
+        tracker_overrides["header_row"] = tracker_header_row
     runtime_cfg = load_runtime_config(
         config,
         overrides={
@@ -126,7 +130,7 @@ def scan(
         tracker_header_row=runtime_cfg.tracker.header_row,
     )
     console.print(f"Scan complete: {len(artifacts.inventory_records)} files inventoried")
-    if effective_tracker_path:
+    if effective_tracker_path and not dry_run:
         if artifacts.tracker_load_error:
             console.print(f"[yellow]Tracker ingest error: {artifacts.tracker_load_error}[/yellow]")
         else:

@@ -73,17 +73,6 @@ class TrackerConfig(BaseModel):
     path: str | None = None
     sheet_name: str | None = None
     header_row: int = Field(default=0, ge=0)
-    high_authority_fields: list[str] = Field(
-        default_factory=lambda: [
-            "submission_date",
-            "response_date",
-            "selection_notification_date",
-            "award_date",
-            "status",
-            "award_status",
-            "result",
-        ]
-    )
 
 
 class RuntimeConfig(BaseModel):

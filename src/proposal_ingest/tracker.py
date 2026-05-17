@@ -305,8 +305,8 @@ def apply_tracker_overrides(
 
 
 def _rows_from_dataframe(path: Path, sheet_name: str, dataframe: pd.DataFrame) -> list[TrackerRow]:
-    normalized_columns = [_normalize_column_name(str(column)) for column in dataframe.columns]
-    dataframe.columns = normalized_columns
+    del path
+    dataframe = _normalize_dataframe_columns(dataframe)
     rows: list[TrackerRow] = []
     for row_number, (_, row) in enumerate(dataframe.iterrows(), start=1):
         normalized_row = {
@@ -332,11 +332,28 @@ def _normalize_column_name(raw: str) -> str:
 
 
 def _is_missing_column_key(key: Any) -> bool:
-    if key is None:
-        return True
-    if isinstance(key, float):
-        return pd.isna(key)
-    return False
+    lowered = str(key).strip().lower()
+    return lowered in {"", "nan", "<na>", "none"}
+
+
+def _normalize_dataframe_columns(dataframe: pd.DataFrame) -> pd.DataFrame:
+    raw_columns = list(dataframe.columns)
+    keep_positions: list[int] = []
+    normalized_columns: list[str] = []
+    seen: dict[str, int] = {}
+
+    for idx, column in enumerate(raw_columns):
+        if _is_missing_column_key(column):
+            continue
+        base_name = _normalize_column_name(str(column))
+        seen[base_name] = seen.get(base_name, 0) + 1
+        unique_name = base_name if seen[base_name] == 1 else f"{base_name}_{seen[base_name]}"
+        keep_positions.append(idx)
+        normalized_columns.append(unique_name)
+
+    trimmed = dataframe.iloc[:, keep_positions].copy()
+    trimmed.columns = normalized_columns
+    return trimmed
 
 
 def _normalize_value(value: Any) -> Any:

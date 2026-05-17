@@ -12,6 +12,7 @@ from proposal_ingest.config import load_runtime_config
 from proposal_ingest.scanner import scan_source_root
 from proposal_ingest.schemas import DocumentMetadata
 from proposal_ingest.tracker import (
+    _rows_from_dataframe,
     apply_tracker_overrides,
     load_tracker_rows,
     match_tracker_row,
@@ -125,3 +126,17 @@ def test_scan_and_analyze_apply_tracker_rows(tmp_path: Path) -> None:
     )
     saved = json.loads(by_id_path.read_text(encoding="utf-8"))
     assert saved["tracker_matching"]["tracker_match_status"] == "matched"
+
+
+def test_rows_from_dataframe_skips_missing_headers_and_uniquifies_duplicates() -> None:
+    dataframe = pd.DataFrame(
+        [["Proposal A", "ignored", "Proposal A duplicate"]],
+        columns=["proposal_name", float("nan"), "proposal_name"],
+    )
+
+    rows = _rows_from_dataframe(Path("/tmp/unused.xlsx"), "Tracker", dataframe)
+
+    assert len(rows) == 1
+    assert rows[0].values["proposal_name"] == "Proposal A"
+    assert rows[0].values["proposal_name_2"] == "Proposal A duplicate"
+    assert "nan" not in rows[0].values
