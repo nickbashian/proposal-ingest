@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pandas as pd
 from typer.testing import CliRunner
 
 import proposal_ingest.cli
@@ -138,6 +139,39 @@ def test_scan_keep_empty_runs_retains_directory(tmp_path: Path) -> None:
     assert result.exit_code == 0
     assert "Run directory:" in result.output
     assert len(list((output_root / "logs").glob("run_*"))) == 1
+
+
+def test_scan_with_tracker_path_writes_tracker_jsonl(tmp_path: Path) -> None:
+    """scan --tracker-path should ingest tracker rows into the run directory."""
+    source_root = tmp_path / "source"
+    output_root = tmp_path / "output"
+    proposal_branch = source_root / "2025" / "Demo Proposal"
+    proposal_branch.mkdir(parents=True)
+    (proposal_branch / "Technical Volume.pdf").write_text("pdf content", encoding="utf-8")
+
+    tracker_path = tmp_path / "tracker.xlsx"
+    pd.DataFrame(
+        [{"proposal_name": "Demo Proposal", "status": "submitted", "award_status": "unknown"}]
+    ).to_excel(tracker_path, index=False)
+
+    result = runner.invoke(
+        app,
+        [
+            "scan",
+            "--source-root",
+            str(source_root),
+            "--output-root",
+            str(output_root),
+            "--tracker-path",
+            str(tracker_path),
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "Tracker rows loaded: 1" in result.output
+    run_directories = list((output_root / "logs").glob("run_*"))
+    assert len(run_directories) == 1
+    assert (run_directories[0] / "tracker" / "tracker_rows.jsonl").exists()
 
 
 def test_analyze_without_mock_bedrock_exits_nonzero() -> None:
