@@ -191,7 +191,6 @@ def build_folder_metadata(
     has_export_control = any(
         SensitivityLabel.export_control_review in d.sensitivity.sensitivity_labels
         for d in documents
-        if d.sensitivity.manual_review_required
     )
     ready_for_clean_set = len(included_docs) > 0 and open_critical == 0
     ready_for_future_s3 = ready_for_clean_set and not has_export_control
@@ -277,10 +276,15 @@ def build_all_folders(
             logger.exception("Failed to build folder metadata for %s", proposal_id)
             continue
 
-        json_path = store.write_folder_metadata(metadata)
         summary_text = render_folder_summary_markdown(metadata)
-        summary_md_path = json_path.with_suffix(".md")
-        summary_md_path.write_text(summary_text, encoding="utf-8")
+        json_path = store.write_folder_metadata(metadata)
+        summary_md_path = store.write_folder_summary(metadata.proposal_id, summary_text)
+        store.write_mirror_folder_metadata(metadata)
+        store.write_mirror_folder_summary(
+            metadata.year_folder,
+            metadata.proposal_branch,
+            summary_text,
+        )
 
         results.append(
             FolderBuildResult(
@@ -403,18 +407,21 @@ def render_folder_summary_markdown(metadata: FolderMetadata) -> str:
 
 def _consensus_str(values: list[str | None], *, fallback: str, ignore: set[str]) -> str:
     candidates = [v for v in values if v and v not in ignore]
-    if not candidates:
-        return fallback
-    most_common, _ = Counter(candidates).most_common(1)[0]
-    return most_common
+    return _consensus_value(candidates, default=fallback)
 
 
 def _consensus_enum(values: list[str], *, default: str, ignore: set[str]) -> str:
     candidates = [v for v in values if v not in ignore]
+    return _consensus_value(candidates, default=default)
+
+
+def _consensus_value(candidates: list[str], *, default: str) -> str:
     if not candidates:
         return default
-    most_common, _ = Counter(candidates).most_common(1)[0]
-    return most_common
+    counts = Counter(candidates).most_common(2)
+    if len(counts) > 1 and counts[0][1] == counts[1][1]:
+        return default
+    return counts[0][0]
 
 
 def _first_non_none(values: list[str | None]) -> str | None:
@@ -698,6 +705,7 @@ def _build_bedrock_summaries(
         call_converse_with_text,
         create_bedrock_runtime_client,
     )
+    from proposal_ingest.config import load_runtime_config
 
     doc_lines: list[str] = []
     for i, doc in enumerate(included_docs[:20], start=1):
@@ -724,10 +732,11 @@ def _build_bedrock_summaries(
         Return only the JSON object with no other text.
     """).strip()
 
-    model_id = config.bedrock.model_id if config else "claude-opus-4-6"
+    runtime_config = config or load_runtime_config()
+    model_id = runtime_config.bedrock.model_id
 
     try:
-        client = create_bedrock_runtime_client(config)
+        client = create_bedrock_runtime_client(runtime_config)
         raw_text, _ = call_converse_with_text(
             client,
             model_id=model_id,
@@ -736,7 +745,7 @@ def _build_bedrock_summaries(
             max_tokens=1024,
             temperature=0.0,
         )
-        parsed = json.loads(raw_text)
+        parsed = _parse_summary_json_response(raw_text)
         return (
             parsed.get("folder_summary_short", ""),
             parsed.get("folder_summary_detailed", ""),
@@ -753,3 +762,43 @@ def _build_bedrock_summaries(
             status_str=status_str,
             included_docs=included_docs,
         )
+
+
+def _strip_markdown_fences(text: str) -> str:
+    text = text.strip()
+    if text.startswith("```"):
+        lines = text.splitlines()
+        lines = lines[1:]
+        if lines and lines[-1].strip().startswith("```"):
+            lines = lines[:-1]
+        return "\n".join(lines).strip()
+    return text
+
+
+def _parse_summary_json_response(raw_text: str) -> dict[str, Any]:
+    decoder = json.JSONDecoder()
+    candidates = [raw_text.strip()]
+
+    stripped = _strip_markdown_fences(raw_text)
+    if stripped != raw_text.strip():
+        candidates.insert(0, stripped)
+
+    for candidate in candidates:
+        try:
+            parsed = json.loads(candidate)
+            if isinstance(parsed, dict):
+                return parsed
+        except json.JSONDecodeError:
+            pass
+
+        start = candidate.find("{")
+        if start < 0:
+            continue
+        try:
+            parsed, _ = decoder.raw_decode(candidate[start:])
+        except json.JSONDecodeError:
+            continue
+        if isinstance(parsed, dict):
+            return parsed
+
+    raise ValueError("Bedrock folder summary response did not contain a JSON object")

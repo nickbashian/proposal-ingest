@@ -14,6 +14,7 @@ from proposal_ingest.folder_builder import (
     build_folder_metadata,
     render_folder_summary_markdown,
 )
+from proposal_ingest.config import RuntimeConfig
 from proposal_ingest.metadata_store import MetadataStore
 from proposal_ingest.schemas import (
     APP_SCHEMA_VERSION,
@@ -238,6 +239,15 @@ def test_consensus_agency_and_program() -> None:
     assert str(meta.program) == "SBIR"
 
 
+def test_consensus_enum_tie_returns_unknown() -> None:
+    docs = [
+        _make_doc(document_id="doc_001", agency="DOE"),
+        _make_doc(document_id="doc_002", agency="NSF"),
+    ]
+    meta = build_folder_metadata(docs, use_mock=True)
+    assert str(meta.agency) == "unknown"
+
+
 def test_consensus_proposal_name_most_common_wins() -> None:
     docs = [
         _make_doc(document_id="doc_001", canonical_proposal_name="Alpha"),
@@ -246,6 +256,15 @@ def test_consensus_proposal_name_most_common_wins() -> None:
     ]
     meta = build_folder_metadata(docs, use_mock=True)
     assert meta.canonical_proposal_name == "Alpha"
+
+
+def test_consensus_string_tie_returns_fallback() -> None:
+    docs = [
+        _make_doc(document_id="doc_001", canonical_proposal_name="Alpha"),
+        _make_doc(document_id="doc_002", canonical_proposal_name="Beta"),
+    ]
+    meta = build_folder_metadata(docs, use_mock=True)
+    assert meta.canonical_proposal_name == "Demo Battery Proposal"
 
 
 def test_partners_are_union_deduped() -> None:
@@ -370,6 +389,19 @@ def test_ready_for_future_s3_false_when_export_control_label() -> None:
             document_id="doc_001",
             include_in_clean_set=True,
             manual_review_required=True,
+            sensitivity_labels=["export_control_review"],
+        )
+    ]
+    meta = build_folder_metadata(docs, use_mock=True)
+    assert meta.ready_for_future_s3 is False
+
+
+def test_ready_for_future_s3_false_when_export_control_without_manual_review() -> None:
+    docs = [
+        _make_doc(
+            document_id="doc_001",
+            include_in_clean_set=True,
+            manual_review_required=False,
             sensitivity_labels=["export_control_review"],
         )
     ]
@@ -601,6 +633,18 @@ def test_build_all_folders_writes_json_and_md(tmp_path: Path) -> None:
     assert "## Summary" in md_text
 
 
+def test_build_all_folders_writes_mirror_outputs(tmp_path: Path) -> None:
+    store = MetadataStore(tmp_path / "run_001")
+    doc = _make_doc(document_id="doc_001", proposal_id="prop_aaa")
+    store.write_document_metadata(doc, append_jsonl=False)
+
+    build_all_folders(store, use_mock=True)
+
+    mirror_dir = store.mirror_branch_dir("2025", "Demo Battery Proposal")
+    assert (mirror_dir / "folder_metadata.json").exists()
+    assert (mirror_dir / "folder_summary.md").exists()
+
+
 def test_build_all_folders_returns_empty_when_no_docs(tmp_path: Path) -> None:
     store = MetadataStore(tmp_path / "run_001")
     results = build_all_folders(store, use_mock=True)
@@ -667,3 +711,44 @@ def test_tracker_fixture_integration(tmp_path: Path) -> None:
     ]
     meta = build_folder_metadata(docs, tracker_rows=tracker_rows, use_mock=True)
     assert str(meta.tracker_match_status) == TrackerMatchStatus.matched.value
+
+
+def test_real_summary_mode_uses_default_config_and_parses_wrapped_json(monkeypatch) -> None:
+    docs = [_make_doc(document_id="doc_001")]
+    captured: dict[str, object] = {}
+
+    def _fake_load_runtime_config() -> RuntimeConfig:
+        return RuntimeConfig()
+
+    def _fake_create_client(config: RuntimeConfig) -> object:
+        captured["model_id"] = config.bedrock.model_id
+        return object()
+
+    def _fake_call(*_args, **kwargs):
+        captured["call_model_id"] = kwargs["model_id"]
+        return (
+            "Here is the JSON you asked for:\n```json\n"
+            '{"folder_summary_short":"Short","folder_summary_detailed":"Detailed",'
+            '"opportunity_context_summary":"Opportunity","generated_response_summary":"Response"}'
+            "\n```\nThanks.",
+            {},
+        )
+
+    monkeypatch.setattr("proposal_ingest.config.load_runtime_config", _fake_load_runtime_config)
+    monkeypatch.setattr(
+        "proposal_ingest.bedrock_client.create_bedrock_runtime_client",
+        _fake_create_client,
+    )
+    monkeypatch.setattr(
+        "proposal_ingest.bedrock_client.call_converse_with_text",
+        _fake_call,
+    )
+
+    meta = build_folder_metadata(docs, use_mock=False, config=None)
+
+    assert captured["model_id"] == "us.anthropic.claude-opus-4-6-v1"
+    assert captured["call_model_id"] == "us.anthropic.claude-opus-4-6-v1"
+    assert meta.folder_summary_short == "Short"
+    assert meta.folder_summary_detailed == "Detailed"
+    assert meta.opportunity_context_summary == "Opportunity"
+    assert meta.generated_response_summary == "Response"
