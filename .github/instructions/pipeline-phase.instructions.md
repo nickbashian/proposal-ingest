@@ -24,7 +24,7 @@ Before writing any code for a new phase, read the acceptance criteria in [docs/1
 
 ## Output Path Pattern
 
-All output goes under `{output_root}/run_{YYYYMMDD_HHMMSS}_{short_id}/`. Never derive output paths from `source_root`.
+All output goes under `{output_root}/logs/run_{YYYYMMDD_HHMMSS}_{short_id}/`. Never derive output paths from `source_root`.
 
 ## Mock Bedrock Contract
 

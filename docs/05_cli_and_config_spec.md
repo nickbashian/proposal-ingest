@@ -45,9 +45,13 @@ Options:
 --output-root PATH
 --tracker-path PATH
 --dry-run
+--prune-empty-runs
+--keep-empty-runs
 --force
 --config PATH
 ```
+
+By default, `scan` prunes empty run directories under `output_root/logs`. Use `--keep-empty-runs` to retain them.
 
 ### `analyze`
 

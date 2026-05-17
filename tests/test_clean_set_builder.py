@@ -11,19 +11,19 @@ import pytest
 
 @pytest.mark.skip(reason="clean_set_builder not yet implemented — Phase 12")
 def test_clean_set_contains_only_included_files() -> None:
-    pass
+    """The clean set should only include files marked for inclusion."""
 
 
 @pytest.mark.skip(reason="clean_set_builder not yet implemented — Phase 12")
 def test_excluded_files_are_reported_not_copied() -> None:
-    pass
+    """Excluded files should be logged instead of being copied."""
 
 
 @pytest.mark.skip(reason="clean_set_builder not yet implemented — Phase 12")
 def test_filenames_are_sanitized() -> None:
-    pass
+    """Copied files should have sanitized output filenames."""
 
 
 @pytest.mark.skip(reason="clean_set_builder not yet implemented — Phase 12")
 def test_s3_manifest_rows_match_copied_files() -> None:
-    pass
+    """Manifest rows should correspond to the files copied into the clean set."""

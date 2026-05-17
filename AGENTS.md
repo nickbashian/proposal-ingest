@@ -24,7 +24,7 @@ After every code change, run `make check` to verify CI would pass.
 - **Python owns all orchestration** — Bedrock is a dumb model endpoint only; no tool use, no orchestration on the model side.
 - **Source root is always read-only.** All output (inventory, metadata, clean copies) goes to `--output-root`. Never write to `source_root`.
 - **Two-pass AI design**: Pass 1 classifies each document; Pass 2 re-runs low-confidence docs (threshold `0.65`) using branch context. See [docs/04_processing_pipeline.md](docs/04_processing_pipeline.md).
-- **Run-scoped output** — every run produces a `run_YYYYMMDD_HHMMSS_<short_random>` directory with a `run_manifest.json` capturing config, git commit, and mock/real Bedrock mode.
+- **Run-scoped output** — every run produces a `logs/run_YYYYMMDD_HHMMSS_<short_random>` directory with a `run_manifest.json` capturing config, git commit, and mock/real Bedrock mode.
 - **Schema versioned** — `app.schema_version: "0.1.0"`. Pydantic models in `schemas.py` enforce all metadata contracts. JSON Schemas are in `schemas/`.
 
 ## Key Components

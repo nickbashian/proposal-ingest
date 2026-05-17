@@ -13,7 +13,7 @@ run_YYYYMMDD_HHMMSS_<short_random>
 Write:
 
 ```text
-processed_output/run_manifest.json
+logs/run_YYYYMMDD_HHMMSS_<short_random>/run_manifest.json
 ```
 
 The manifest records:
@@ -50,9 +50,9 @@ Behavior:
 Outputs:
 
 ```text
-inventory/file_inventory.csv
-inventory/file_inventory.jsonl
-inventory/stray_files_ignored.csv
+logs/run_YYYYMMDD_HHMMSS_<short_random>/inventory/file_inventory.csv
+logs/run_YYYYMMDD_HHMMSS_<short_random>/inventory/file_inventory.jsonl
+logs/run_YYYYMMDD_HHMMSS_<short_random>/inventory/stray_files_ignored.csv
 reports/excluded_files.csv
 ```
 

@@ -1,33 +1,55 @@
-"""Placeholder tests for file filtering logic.
-
-Implement these tests in Phase 1 alongside file_filters.py.
-See docs/11_copilot_agent_prompts.md (Prompt 3) for acceptance criteria.
-"""
+"""Tests for inventory-time file classification rules."""
 
 from __future__ import annotations
 
-import pytest
+from pathlib import Path
+
+from proposal_ingest.file_filters import classify_path
 
 
-@pytest.mark.skip(reason="file_filters not yet implemented — Phase 1")
 def test_supported_extensions_are_processable() -> None:
     """PDF, DOCX, XLSX, etc. should be marked as pending_analysis."""
-    pass
+    for file_name in [
+        "file.pdf",
+        "file.docx",
+        "file.doc",
+        "file.xlsx",
+        "file.xls",
+        "file.csv",
+        "file.txt",
+        "file.md",
+    ]:
+        classification = classify_path(Path(file_name))
+        assert classification.eligible_for_processing is True
+        assert classification.processing_status == "pending_analysis"
 
 
-@pytest.mark.skip(reason="file_filters not yet implemented — Phase 1")
 def test_images_are_ignored() -> None:
     """PNG, JPG, TIFF, etc. should be ignored (inventory_only with skip reason)."""
-    pass
+    classification = classify_path(Path("figure.png"))
+    assert classification.eligible_for_processing is False
+    assert classification.processing_strategy == "inventory_only"
+    assert classification.skip_reason == "ignored_image"
 
 
-@pytest.mark.skip(reason="file_filters not yet implemented — Phase 1")
 def test_zip_files_are_inventory_only() -> None:
     """ZIP archives should be inventory-only."""
-    pass
+    classification = classify_path(Path("archive.zip"))
+    assert classification.eligible_for_processing is False
+    assert classification.processing_status == "inventory_only"
+    assert classification.skip_reason == "zip_inventory_only"
 
 
-@pytest.mark.skip(reason="file_filters not yet implemented — Phase 1")
+def test_powerpoints_are_inventory_only_with_review_question() -> None:
+    """PowerPoints should remain inventory-only and carry a review note."""
+    classification = classify_path(Path("slides.pptx"))
+    assert classification.eligible_for_processing is False
+    assert classification.processing_status == "inventory_only"
+    assert classification.review_question is not None
+
+
 def test_unsupported_types_get_skip_reason() -> None:
     """Unsupported file types should have a skip reason recorded."""
-    pass
+    classification = classify_path(Path("notes.exe"))
+    assert classification.eligible_for_processing is False
+    assert classification.skip_reason == "unsupported_file_type"

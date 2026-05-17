@@ -11,14 +11,14 @@ import pytest
 
 @pytest.mark.skip(reason="question_loop not yet implemented — Phase 8")
 def test_questions_export_produces_csv() -> None:
-    pass
+    """The question export step should produce a review CSV."""
 
 
 @pytest.mark.skip(reason="question_loop not yet implemented — Phase 8")
 def test_apply_answers_updates_metadata() -> None:
-    pass
+    """Applying answers should update stored metadata deterministically."""
 
 
 @pytest.mark.skip(reason="question_loop not yet implemented — Phase 8")
 def test_question_ids_are_stable_across_runs() -> None:
-    pass
+    """Question IDs should remain stable across repeated exports."""

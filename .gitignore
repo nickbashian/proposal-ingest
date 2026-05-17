@@ -23,6 +23,10 @@ raw_model_responses/
 logs/
 *.log
 
+# Pipeline run output directories (written to output-root at runtime)
+run_*/
+tmp/
+
 # OS/editor
 .DS_Store
 Thumbs.db

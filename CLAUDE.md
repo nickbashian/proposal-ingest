@@ -43,6 +43,8 @@ This is a **local-first batch pipeline** — Python owns orchestration, state, v
 
 **Config resolution order** (later wins): `config/default_config.yaml` → `.env` → CLI flags.
 
+**Run output layout:** each run writes under `output_root/logs/run_YYYYMMDD_HHMMSS_<short_random>/`.
+
 **Source module map** (`src/proposal_ingest/`):
 
 | Module | Responsibility |
