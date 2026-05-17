@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 import pandas as pd
+from pandas.api.types import is_scalar
 
 from proposal_ingest.path_utils import short_hash
 from proposal_ingest.schemas import DocumentMetadata, ProposalStatus, TrackerMatchStatus
@@ -333,10 +334,9 @@ def _normalize_column_name(raw: str) -> str:
 def _is_missing_column_key(key: Any) -> bool:
     if isinstance(key, str):
         return key.strip() == ""
-    try:
-        return bool(pd.isna(key))
-    except TypeError:
+    if not is_scalar(key):
         return False
+    return bool(pd.isna(key))
 
 
 def _normalize_dataframe_columns(dataframe: pd.DataFrame) -> pd.DataFrame:
