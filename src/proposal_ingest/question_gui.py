@@ -258,6 +258,7 @@ def _parse_suggested_options(raw_options: str) -> list[str]:
 
 
 def _sync_answer_draft(row: dict[str, str], answer: str) -> bool:
+    """Copy the entry-field answer into a row in place and return whether it changed."""
     normalized_answer = answer.strip()
     if normalized_answer == (row.get("user_answer") or ""):
         return False

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import csv
+from datetime import datetime
 from pathlib import Path
 
 from typer.testing import CliRunner
@@ -66,6 +67,7 @@ def test_question_gui_helpers_answer_and_rewrite_csv(tmp_path: Path) -> None:
     assert reloaded[0]["user_answer"] == "final"
     assert reloaded[0]["status"] == QuestionStatus.answered.value
     assert reloaded[0]["updated_at"]
+    datetime.fromisoformat(reloaded[0]["updated_at"])
     assert list(reloaded[0].keys()) == REVIEW_COLUMNS
 
 
@@ -96,6 +98,7 @@ def test_question_gui_helpers_sync_answer_draft() -> None:
     assert changed is True
     assert row["user_answer"] == "final"
     assert row["updated_at"]
+    datetime.fromisoformat(row["updated_at"])
 
 
 def test_question_gui_helpers_sync_answer_draft_no_change() -> None:
