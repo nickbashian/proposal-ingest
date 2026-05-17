@@ -21,5 +21,6 @@
   ],
   "pylint.enabled": false,
   "ruff.enable": false,
-  "python.analysis.typeCheckingMode": "basic"
+  "python.analysis.typeCheckingMode": "basic",
+  "python-envs.defaultPackageManager": "ms-python.python:pip"
 }
