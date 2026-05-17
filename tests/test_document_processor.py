@@ -638,3 +638,63 @@ def test_process_single_file_bedrock_exception_saves_failure(tmp_path: Path) -> 
     assert "simulated Bedrock error" in (result.error_message or "")
     failure_file = run_dir / "document_metadata" / "failures" / f"{record.document_id}.json"
     assert failure_file.exists()
+
+
+# ---------------------------------------------------------------------------
+# analyze_inventory — batch behavior
+# ---------------------------------------------------------------------------
+
+
+def test_analyze_inventory_mock_writes_usage_and_respects_limit(tmp_path: Path) -> None:
+    from proposal_ingest.analyzer import analyze_inventory
+
+    records = [
+        _make_inventory_record("Technical Volume.pdf", ".pdf"),
+        _make_inventory_record("Support Letter.docx", ".docx"),
+    ]
+    for record in records:
+        file_path = tmp_path / record.file_name_original
+        file_path.write_bytes(b"fake content")
+        record.source_path = str(file_path)  # type: ignore[misc]
+        record.size_bytes = file_path.stat().st_size  # type: ignore[misc]
+    run_dir = tmp_path / "run_batch"
+    run_dir.mkdir()
+
+    results = analyze_inventory(
+        run_dir,
+        records,
+        "run_batch",
+        use_mock=True,
+        config=load_runtime_config(),
+        limit=1,
+    )
+
+    assert len(results) == 1
+    usage_lines = (
+        (run_dir / "usage" / "bedrock_usage.jsonl").read_text(encoding="utf-8").splitlines()
+    )
+    assert len(usage_lines) == 1
+    assert json.loads(usage_lines[0])["success"] is True
+
+
+def test_analyze_inventory_skips_existing_hash_unless_forced(tmp_path: Path) -> None:
+    from proposal_ingest.analyzer import analyze_inventory
+
+    record = _make_inventory_record("Technical Volume.pdf", ".pdf")
+    file_path = tmp_path / record.file_name_original
+    file_path.write_bytes(b"fake content")
+    record.source_path = str(file_path)  # type: ignore[misc]
+    record.size_bytes = file_path.stat().st_size  # type: ignore[misc]
+    run_dir = tmp_path / "run_batch_skip"
+    run_dir.mkdir()
+    cfg = load_runtime_config()
+
+    first = analyze_inventory(run_dir, [record], "run_batch_skip", use_mock=True, config=cfg)
+    second = analyze_inventory(run_dir, [record], "run_batch_skip", use_mock=True, config=cfg)
+    forced = analyze_inventory(
+        run_dir, [record], "run_batch_skip", use_mock=True, config=cfg, force=True
+    )
+
+    assert len(first) == 1
+    assert second == []
+    assert len(forced) == 1

@@ -281,9 +281,22 @@ def process_single_file(
 
     # ---- Mock path -------------------------------------------------------
     if use_mock:
+        start_time = datetime.now(UTC)
         metadata = analyze_document_mock(record, run_id)
+        end_time = datetime.now(UTC)
+        usage_rec = _build_usage_record(
+            record,
+            run_id,
+            config,
+            strategy,
+            start_time,
+            end_time,
+            usage_dict={},
+            success=True,
+        )
         store.write_document_metadata(metadata)
-        return SingleFileResult(record=record, metadata=metadata, success=True)
+        store.write_usage_record(usage_rec)
+        return SingleFileResult(record=record, metadata=metadata, success=True, usage=usage_rec)
 
     # ---- Real Bedrock path -----------------------------------------------
     system_prompt = load_system_prompt()
@@ -594,37 +607,108 @@ def analyze_inventory(
     run_id: str,
     *,
     use_mock: bool,
+    config: RuntimeConfig | None = None,
+    force: bool = False,
+    limit: int | None = None,
+    save_raw_responses: bool | None = None,
 ) -> list[DocumentMetadata]:
     """Analyze eligible inventory records and write metadata to run_dir.
 
-    Args:
-        run_dir: The run-scoped output directory (must already exist or be creatable).
-        inventory_records: All records from the scan inventory.
-        run_id: The run identifier to embed in each DocumentMetadata record.
-        use_mock: When True, calls ``analyze_document_mock``; when False, raises
-                  NotImplementedError (real Bedrock batch is Phase 7).
-
-    Returns:
-        List of DocumentMetadata objects produced (eligible documents only).
+    Per-file errors are logged to failure records and do not halt the batch.
+    Existing document metadata with the same content hash is skipped unless
+    ``force`` is true. ``limit`` applies to attempted, non-skipped documents.
     """
-    if not use_mock:
-        raise NotImplementedError(
-            "Real Bedrock batch analysis is not yet implemented. Use --mock-bedrock."
-        )
-
-    store = MetadataStore(run_dir)
+    runtime_config = config or RuntimeConfig()
+    save_raw = (
+        runtime_config.bedrock.save_raw_model_responses
+        if save_raw_responses is None
+        else save_raw_responses
+    )
     results: list[DocumentMetadata] = []
+    attempted = 0
 
+    existing_hashes = _processed_hashes(run_dir)
     eligible = [r for r in inventory_records if r.eligible_for_processing]
 
     for record in eligible:
-        metadata = analyze_document_mock(record, run_id)
-        store.write_document_metadata(metadata)
-        results.append(metadata)
+        if not force and record.sha256 in existing_hashes:
+            logger.info(
+                "Skipping already-processed file sha256=%s path=%s",
+                record.sha256,
+                record.source_path,
+            )
+            continue
+        if limit is not None and attempted >= limit:
+            break
+        attempted += 1
+        try:
+            result = process_single_file(
+                file_path=Path(record.source_path),
+                record=record,
+                run_dir=run_dir,
+                run_id=run_id,
+                config=runtime_config,
+                use_mock=use_mock,
+                save_raw_responses=save_raw,
+            )
+        except Exception as exc:  # defensive per-file isolation for batch mode
+            logger.exception("Unhandled analysis error for %s", record.source_path)
+            _write_unhandled_failure(run_dir, record, run_id, runtime_config, exc)
+            continue
+
+        if result.success and result.metadata is not None:
+            results.append(result.metadata)
+        else:
+            logger.error("Analysis failed for %s: %s", record.source_path, result.error_message)
 
     _finalize_run_manifest(run_dir, use_mock=use_mock)
 
     return results
+
+
+def _processed_hashes(run_dir: Path) -> set[str]:
+    """Return SHA-256 hashes already present in document metadata for this run."""
+    by_id_dir = run_dir / "document_metadata" / "by_document_id"
+    if not by_id_dir.exists():
+        return set()
+    hashes: set[str] = set()
+    for path in by_id_dir.glob("*.json"):
+        try:
+            metadata = DocumentMetadata.model_validate_json(path.read_text(encoding="utf-8"))
+        except Exception:
+            logger.warning("Ignoring unreadable metadata while checking skip cache: %s", path)
+            continue
+        hashes.add(metadata.system.sha256)
+    return hashes
+
+
+def _write_unhandled_failure(
+    run_dir: Path,
+    record: InventoryRecord,
+    run_id: str,
+    config: RuntimeConfig,
+    exc: Exception,
+) -> None:
+    store = MetadataStore(run_dir)
+    now = datetime.now(UTC)
+    usage_rec = _build_usage_record(
+        record,
+        run_id,
+        config,
+        str(record.processing_strategy),
+        now,
+        now,
+        usage_dict={},
+        success=False,
+        error_type=type(exc).__name__,
+        error_message=str(exc),
+    )
+    store.write_usage_record(usage_rec)
+    store.write_failure_record(
+        record.document_id,
+        "unhandled_analysis_error",
+        {"error_message": str(exc), "source_path": record.source_path},
+    )
 
 
 def _finalize_run_manifest(run_dir: Path, *, use_mock: bool) -> None:
@@ -643,6 +727,10 @@ def analyze_from_output_root(
     output_root: Path,
     *,
     use_mock: bool,
+    config: RuntimeConfig | None = None,
+    force: bool = False,
+    limit: int | None = None,
+    save_raw_responses: bool | None = None,
 ) -> tuple[Path, list[DocumentMetadata]]:
     """Locate the latest scan inventory under output_root and analyze it.
 
@@ -663,6 +751,15 @@ def analyze_from_output_root(
     run_id = run_dir.name
 
     records = load_inventory_jsonl(inventory_path)
-    results = analyze_inventory(run_dir, records, run_id, use_mock=use_mock)
+    results = analyze_inventory(
+        run_dir,
+        records,
+        run_id,
+        use_mock=use_mock,
+        config=config,
+        force=force,
+        limit=limit,
+        save_raw_responses=save_raw_responses,
+    )
 
     return run_dir, results
