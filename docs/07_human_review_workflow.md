@@ -97,6 +97,17 @@ field: sensitivity_labels
 suggested_options: public | internal | confidential | partner_confidential | financial_sensitive | export_control_review | personal_info | unknown
 ```
 
+
+## Optional question-answering GUI
+
+For operators who do not want to edit wide CSV rows directly, the CLI includes a small local GUI:
+
+```bash
+proposal-ingest answer-questions --output-root processed_output
+```
+
+The GUI opens `processed_output/review/questions_to_answer.csv` by default and shows one question at a time. It displays the branch/file context, field, priority, status, question text, and model guess; it provides previous/next navigation, controlled-choice buttons when `suggested_options` or a boolean `answer_type` is available, a text box for custom answers, a skip button, and an accept-suggestion button. Answers are written back to the same CSV as `status=answered`, so the existing `apply-answers` command remains the deterministic system of record for patching metadata.
+
 ## Apply answers behavior
 
 The MVP applies answers deterministically.

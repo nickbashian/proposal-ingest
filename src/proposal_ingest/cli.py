@@ -24,6 +24,7 @@ from proposal_ingest.file_filters import classify_path
 from proposal_ingest.hashing import document_id_from_sha256, sha256_file
 from proposal_ingest.logging_utils import configure_logging
 from proposal_ingest.metadata_store import MetadataStore
+from proposal_ingest.question_gui import launch_questions_gui
 from proposal_ingest.question_loop import apply_answers_from_csv, export_questions_to_csv
 from proposal_ingest.path_utils import proposal_id_from_branch, sanitize_filename
 from proposal_ingest.scanner import scan_proposal_branch, scan_source_root
@@ -204,6 +205,35 @@ def export_questions(
     console.print(f"Exported {result.exported_count} questions to {result.questions_csv}")
     if result.suppressed_count:
         console.print(f"Suppressed {result.suppressed_count} low-priority questions")
+
+
+@app.command(name="answer-questions")
+def answer_questions(
+    output_root: str = typer.Option(..., "--output-root", help="Path to the output directory."),
+    questions_csv: str | None = typer.Option(
+        None,
+        "--questions-csv",
+        help="Path to the questions CSV. Defaults to output_root/review/questions_to_answer.csv.",
+    ),
+) -> None:
+    """Open a simple GUI for answering one review CSV row at a time."""
+    csv_path = (
+        Path(questions_csv)
+        if questions_csv
+        else Path(output_root) / "review" / "questions_to_answer.csv"
+    )
+    if not csv_path.exists():
+        console.print(f"[red]Error: questions CSV not found: {csv_path}[/red]")
+        raise typer.Exit(code=1)
+    try:
+        launch_questions_gui(csv_path)
+    except ImportError as exc:
+        console.print("[red]Error: Tkinter is not available in this Python environment.[/red]")
+        raise typer.Exit(code=1) from exc
+    except ValueError as exc:
+        console.print(f"[red]Error: {exc}[/red]")
+        raise typer.Exit(code=1) from exc
+    console.print(f"Saved answers to {csv_path}")
 
 
 @app.command(name="apply-answers")

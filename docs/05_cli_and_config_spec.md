@@ -11,6 +11,7 @@ proposal-ingest analyze --output-root "C:\path\to\output"
 
 proposal-ingest export-questions --output-root "C:\path\to\output"
 
+proposal-ingest answer-questions --output-root "C:\path\to\output"
 proposal-ingest apply-answers --output-root "C:\path\to\output"
 
 proposal-ingest build-folders --output-root "C:\path\to\output"
@@ -85,6 +86,17 @@ Options:
 --max-questions-per-file 5
 ```
 
+### `answer-questions`
+
+Opens a small Tkinter GUI for answering one row of `review/questions_to_answer.csv` at a time. The GUI edits the CSV in place, supports previous/next navigation, choice buttons for controlled answers, a free-text answer field, a skip button, and an accept-suggestion button for `model_guess`.
+
+Options:
+
+```text
+--output-root PATH
+--questions-csv PATH  # optional; defaults to output_root/review/questions_to_answer.csv
+```
+
 ### `apply-answers`
 
 Applies manual answers from CSV.
@@ -93,8 +105,8 @@ Options:
 
 ```text
 --output-root PATH
---questions-csv PATH
---dry-run
+--answers-csv PATH
+--questions-csv PATH  # alias for --answers-csv
 ```
 
 ### `build-folders`
@@ -140,10 +152,11 @@ Target order:
 1. scan
 2. analyze
 3. export-questions
-4. stop if critical questions exist
-5. apply-answers if answered CSV exists and requested
-6. build-folders
-7. build-clean-set
+4. answer-questions when interactive review is needed
+5. stop if critical questions exist
+6. apply-answers if answered CSV exists and requested
+7. build-folders
+8. build-clean-set
 
 The current implementation runs through `build-clean-set`. By default, it stops
 before final clean output if critical questions remain open.
