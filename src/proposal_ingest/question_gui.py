@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import csv
+import json
 from functools import partial
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -217,9 +218,14 @@ def launch_questions_gui(csv_path: Path) -> None:
     def choose_option(selected: str, allow_multiple: bool) -> None:
         if allow_multiple:
             existing = _parse_suggested_options(answer_value.get())
-            if selected not in existing:
-                existing.append(selected)
-            answer_value.set(" | ".join(existing))
+            if selected in existing:
+                return
+            existing.append(selected)
+            new_answer = " | ".join(existing)
+            answer_value.set(new_answer)
+            answer_row(current_row(), new_answer)
+            write_question_rows(csv_path, rows)
+            refresh()
             return
         answer_value.set(selected)
         answer_row(current_row(), selected)
@@ -255,10 +261,19 @@ def _parse_suggested_options(raw_options: str) -> list[str]:
     if not cleaned:
         return []
     if cleaned.startswith("[") and cleaned.endswith("]"):
-        # Keep parsing deliberately simple: exported review CSVs use pipe-delimited text.
-        cleaned = cleaned.removeprefix("[").removesuffix("]")
-    delimiter = "|" if "|" in cleaned else ","
-    return [option.strip().strip("\"'") for option in cleaned.split(delimiter) if option.strip()]
+        try:
+            loaded = json.loads(cleaned)
+        except json.JSONDecodeError:
+            cleaned = cleaned.removeprefix("[").removesuffix("]")
+        else:
+            if isinstance(loaded, list) and all(isinstance(item, str) for item in loaded):
+                return [item.strip() for item in loaded if item.strip()]
+            cleaned = cleaned.removeprefix("[").removesuffix("]")
+    return [
+        option.strip().strip("\"'")
+        for option in cleaned.replace("|", ",").split(",")
+        if option.strip()
+    ]
 
 
 def _sync_answer_draft(row: dict[str, str], answer: str) -> bool:

@@ -11,6 +11,7 @@ from typer.testing import CliRunner
 import proposal_ingest.cli
 from proposal_ingest.cli import app
 from proposal_ingest.question_gui import (
+    _parse_suggested_options,
     _sync_answer_draft,
     answer_row,
     choices_for_row,
@@ -78,10 +79,17 @@ def test_question_gui_helpers_parse_choices_and_boolean_defaults() -> None:
     enum_row = {"suggested_options": "final | draft | unknown", "answer_type": "enum"}
     bool_row = {"suggested_options": "", "answer_type": "boolean"}
     list_row = {"suggested_options": "public, internal", "answer_type": "list"}
+    mixed_list_row = {"suggested_options": "public | internal, restricted", "answer_type": "list"}
 
     assert choices_for_row(enum_row).choices == ("final", "draft", "unknown")
     assert choices_for_row(bool_row).choices == ("true", "false")
+    assert choices_for_row(mixed_list_row).choices == ("public", "internal", "restricted")
     assert choices_for_row(list_row).allow_multiple is True
+
+
+def test_question_gui_helpers_parse_json_list_options() -> None:
+    parsed = _parse_suggested_options('["alpha, beta", "gamma"]')
+    assert parsed == ["alpha, beta", "gamma"]
 
 
 def test_question_gui_helpers_skip_row() -> None:
