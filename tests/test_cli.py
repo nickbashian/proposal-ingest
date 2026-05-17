@@ -8,6 +8,7 @@ import pandas as pd
 from typer.testing import CliRunner
 
 import proposal_ingest.cli
+import proposal_ingest.folder_builder
 from proposal_ingest.bedrock_client import BedrockSmokeTestResult
 from proposal_ingest.cli import app
 from proposal_ingest.scanner import ScanArtifacts
@@ -285,6 +286,34 @@ def test_process_file_without_mock_bedrock_exits_nonzero() -> None:
     """process-file without --mock-bedrock must fail because real Bedrock is not yet wired."""
     result = runner.invoke(app, ["process-file", "--file", "fake.pdf", "--output-root", "."])
     assert result.exit_code != 0
+
+
+def test_build_folders_uses_latest_run_directory(tmp_path: Path, monkeypatch) -> None:
+    output_root = tmp_path / "output"
+    old_run = output_root / "logs" / "run_001"
+    new_run = output_root / "logs" / "run_002"
+    old_run.mkdir(parents=True)
+    new_run.mkdir(parents=True)
+
+    captured: dict[str, object] = {}
+
+    def _fake_build_all_folders(store, **kwargs):
+        captured["run_dir"] = store.run_dir
+        captured["use_mock"] = kwargs["use_mock"]
+        return []
+
+    monkeypatch.setattr(
+        proposal_ingest.folder_builder, "build_all_folders", _fake_build_all_folders
+    )
+
+    result = runner.invoke(
+        app, ["build-folders", "--output-root", str(output_root), "--mock-bedrock"]
+    )
+
+    assert result.exit_code == 0
+    assert captured["run_dir"] == new_run
+    assert captured["use_mock"] is True
+    assert "build-folders complete: 0 folder(s) synthesized (mock mode)" in result.output
 
 
 def test_bedrock_smoke_test_prints_result(monkeypatch) -> None:

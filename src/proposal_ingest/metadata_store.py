@@ -78,6 +78,34 @@ class MetadataStore:
         self._write_json(path, metadata)
         return path
 
+    def write_folder_summary(self, proposal_id: str, summary_text: str) -> Path:
+        self.folder_metadata_dir.mkdir(parents=True, exist_ok=True)
+        path = self.folder_metadata_dir / f"{proposal_id}.md"
+        path.write_text(summary_text, encoding="utf-8")
+        return path
+
+    def mirror_branch_dir(self, year_folder: str, proposal_branch: str) -> Path:
+        return self.run_dir / "mirror" / year_folder / proposal_branch
+
+    def write_mirror_folder_metadata(self, metadata: FolderMetadata) -> Path:
+        branch_dir = self.mirror_branch_dir(metadata.year_folder, metadata.proposal_branch)
+        branch_dir.mkdir(parents=True, exist_ok=True)
+        path = branch_dir / "folder_metadata.json"
+        self._write_json(path, metadata)
+        return path
+
+    def write_mirror_folder_summary(
+        self,
+        year_folder: str,
+        proposal_branch: str,
+        summary_text: str,
+    ) -> Path:
+        branch_dir = self.mirror_branch_dir(year_folder, proposal_branch)
+        branch_dir.mkdir(parents=True, exist_ok=True)
+        path = branch_dir / "folder_summary.md"
+        path.write_text(summary_text, encoding="utf-8")
+        return path
+
     def write_run_manifest(self, manifest: RunManifest) -> Path:
         self.run_dir.mkdir(parents=True, exist_ok=True)
         self._write_json(self.run_manifest_path, manifest)
