@@ -140,3 +140,5 @@ def test_rows_from_dataframe_skips_missing_headers_and_uniquifies_duplicates() -
     assert rows[0].values["proposal_name"] == "Proposal A"
     assert rows[0].values["proposal_name_2"] == "Proposal A duplicate"
     assert set(rows[0].values.keys()) == {"proposal_name", "proposal_name_2"}
+    assert "ignored" not in rows[0].values.values()
+    assert "blank" not in rows[0].values.values()
