@@ -20,21 +20,48 @@ _DOCUMENT_METADATA_TEMPLATE = {
         "document_role": "unknown",
         "origin_type": "unknown",
         "version_status": "unknown",
+        "draft_or_final_evidence": "",
+        "language": "unknown",
+        "document_date": None,
     },
     "proposal_context": {
         "canonical_proposal_name": "unknown",
+        "proposal_short_name": None,
         "agency": "unknown",
+        "agency_subunit": None,
         "program": "unknown",
+        "phase": None,
+        "topic_number": None,
+        "topic_title": None,
+        "solicitation_number": None,
+        "submission_date": None,
+        "response_date": None,
         "status": "unknown",
         "award_status": "unknown",
+        "award_amount": None,
+        "lead_organization": None,
+        "prime_or_sub": "unknown",
+        "partners": [],
+        "customer_or_sponsor": None,
     },
     "content": {
         "summary_short": "",
+        "summary_detailed": "",
         "primary_topics": [],
+        "technical_keywords": [],
+        "technologies": [],
+        "applications": [],
+        "performance_metrics": [],
+        "technical_claims": [],
+        "risks": [],
+        "milestones": [],
+        "deliverables": [],
     },
     "opportunity_treatment": {
         "opportunity_context_useful": False,
         "boilerplate_heavy": False,
+        "useful_context_summary": "",
+        "boilerplate_summary": "",
         "recommended_rag_treatment": "metadata_only",
     },
     "inclusion": {
@@ -43,9 +70,16 @@ _DOCUMENT_METADATA_TEMPLATE = {
         "rag_priority": "exclude",
         "include_reason": None,
         "exclude_reason": "Set this when both inclusion booleans are false.",
+        "recommended_chunking_strategy": None,
     },
     "sensitivity": {
+        "sensitivity_labels": [],
+        "contains_budget_or_rates": False,
+        "contains_personal_info": False,
+        "contains_partner_confidential": False,
+        "contains_export_control_flags": False,
         "manual_review_required": False,
+        "manual_review_reasons": [],
     },
     "tracker_matching": {
         "tracker_match_status": "not_attempted",
@@ -65,6 +99,7 @@ _DOCUMENT_METADATA_TEMPLATE = {
         "rag_priority": 0.0,
     },
     "questions_for_user": [],
+    "fields_needing_review": [],
     "processing_notes": [],
 }
 
@@ -95,6 +130,47 @@ def load_repair_prompt_template() -> str:
 def load_pass2_system_prompt() -> str:
     """Return the system prompt for Phase 9 contextual review."""
     return _load_prompt("pass2_contextual_review_system.md")
+
+
+def load_pass2_user_prompt_template() -> str:
+    """Return the raw Phase 9 contextual-review user prompt template."""
+    return _load_prompt("pass2_contextual_review_user.md")
+
+
+def load_folder_summary_system_prompt() -> str:
+    """Return the system prompt for folder-level narrative summarization."""
+    return _load_prompt("folder_metadata_system.md")
+
+
+def load_folder_summary_user_prompt_template() -> str:
+    """Return the raw folder-summary user prompt template."""
+    return _load_prompt("folder_metadata_user.md")
+
+
+def load_smoke_test_prompt() -> str:
+    """Return the Bedrock connectivity smoke-test prompt."""
+    return _load_prompt("bedrock_smoke_test.md")
+
+
+def render_folder_summary_user_prompt(
+    *,
+    proposal_name: str,
+    agency: str,
+    program: str,
+    status: str,
+    included_doc_count: int,
+    included_document_lines: str,
+) -> str:
+    """Render the folder-summary user prompt with proposal context substituted."""
+    return (
+        load_folder_summary_user_prompt_template()
+        .replace("{{PROPOSAL_NAME}}", proposal_name)
+        .replace("{{AGENCY}}", agency)
+        .replace("{{PROGRAM}}", program)
+        .replace("{{STATUS}}", status)
+        .replace("{{INCLUDED_DOC_COUNT}}", str(included_doc_count))
+        .replace("{{INCLUDED_DOCUMENT_LINES}}", included_document_lines)
+    )
 
 
 def _document_metadata_template_json() -> str:
@@ -131,13 +207,9 @@ def render_pass2_user_prompt(
         extracted_document_text.strip() or "(No text could be extracted from this file.)"
     )
     return (
-        "Re-evaluate this document using branch context and return one strict JSON object only.\n\n"
-        "Current Pass 1 metadata:\n"
-        f"{current_metadata_json}\n\n"
-        "Branch context packet:\n"
-        f"{branch_context_json}\n\n"
-        "Current document text or extracted representation:\n"
-        f"{document_text}\n\n"
-        "Return a full document metadata object matching this template:\n"
-        f"{_document_metadata_template_json()}"
+        load_pass2_user_prompt_template()
+        .replace("{{CURRENT_PASS1_METADATA_JSON}}", current_metadata_json)
+        .replace("{{BRANCH_CONTEXT_JSON}}", branch_context_json)
+        .replace("{{DOCUMENT_TEXT}}", document_text)
+        .replace("{{DOCUMENT_METADATA_TEMPLATE_JSON}}", _document_metadata_template_json())
     )

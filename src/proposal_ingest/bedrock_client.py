@@ -11,8 +11,8 @@ from pydantic import BaseModel
 
 from proposal_ingest.config import RuntimeConfig
 from proposal_ingest.logging_utils import get_logger
+from proposal_ingest.prompts import load_smoke_test_prompt
 
-DEFAULT_SMOKE_TEST_PROMPT = "Reply with one short sentence confirming Bedrock connectivity."
 logger = get_logger("bedrock_client")
 
 # Document formats accepted by the Bedrock Converse DocumentBlock.
@@ -71,9 +71,10 @@ def create_bedrock_runtime_client(config: RuntimeConfig) -> Any:
 def smoke_test_bedrock(
     config: RuntimeConfig,
     *,
-    prompt: str = DEFAULT_SMOKE_TEST_PROMPT,
+    prompt: str | None = None,
 ) -> BedrockSmokeTestResult:
     """Send a minimal text-only Converse request to validate Bedrock access."""
+    prompt = prompt if prompt is not None else load_smoke_test_prompt()
     logger.info(
         "Starting Bedrock smoke test model_id=%s region=%s model_label=%s",
         config.bedrock.model_id,

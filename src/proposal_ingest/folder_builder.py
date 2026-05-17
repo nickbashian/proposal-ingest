@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import textwrap
 from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
@@ -706,6 +705,10 @@ def _build_bedrock_summaries(
         create_bedrock_runtime_client,
     )
     from proposal_ingest.config import load_runtime_config
+    from proposal_ingest.prompts import (
+        load_folder_summary_system_prompt,
+        render_folder_summary_user_prompt,
+    )
 
     doc_lines: list[str] = []
     for i, doc in enumerate(included_docs[:20], start=1):
@@ -714,23 +717,14 @@ def _build_bedrock_summaries(
         short = doc.content.summary_short.strip() or "(no summary)"
         doc_lines.append(f"{i}. [{role}] {fname}: {short}")
 
-    prompt = textwrap.dedent(f"""
-        You are summarizing a proposal folder for an internal RAG system.
-
-        Proposal: {canonical_proposal_name}
-        Agency: {agency}, Program: {program}, Status: {status_str}
-        Included documents ({len(included_docs)}):
-        {chr(10).join(doc_lines)}
-
-        Return a JSON object with exactly these keys:
-        {{
-          "folder_summary_short": "2-3 sentence summary of this proposal folder.",
-          "folder_summary_detailed": "3-5 paragraph detailed summary.",
-          "opportunity_context_summary": "Brief summary of the opportunity/RFP if documents describe it, else empty string.",
-          "generated_response_summary": "Brief summary of the proposal response content, else empty string."
-        }}
-        Return only the JSON object with no other text.
-    """).strip()
+    prompt = render_folder_summary_user_prompt(
+        proposal_name=canonical_proposal_name,
+        agency=agency,
+        program=program,
+        status=status_str,
+        included_doc_count=len(included_docs),
+        included_document_lines="\n".join(doc_lines),
+    )
 
     runtime_config = config or load_runtime_config()
     model_id = runtime_config.bedrock.model_id
@@ -740,7 +734,7 @@ def _build_bedrock_summaries(
         raw_text, _ = call_converse_with_text(
             client,
             model_id=model_id,
-            system_prompt="You are a proposal archive summarization assistant.",
+            system_prompt=load_folder_summary_system_prompt(),
             user_prompt=prompt,
             max_tokens=1024,
             temperature=0.0,

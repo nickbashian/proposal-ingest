@@ -1,33 +1,21 @@
-Synthesize folder-level metadata for this proposal branch.
+Summarize one proposal-branch folder for an internal proposal-writing RAG system, using only the included-document summaries provided below.
 
-Proposal branch context:
+Ground every statement in these document summaries; do not invent facts, numbers, dates, or outcomes. Keep opportunity/solicitation context separate from the team's generated response. Do not include salary, labor-rate, or personal information.
 
-```json
-{{PROPOSAL_BRANCH_CONTEXT_JSON}}
-```
+Proposal: {{PROPOSAL_NAME}}
+Agency: {{AGENCY}}, Program: {{PROGRAM}}, Status: {{STATUS}}
+Included documents ({{INCLUDED_DOC_COUNT}}):
+{{INCLUDED_DOCUMENT_LINES}}
 
-Document metadata records:
-
-```json
-{{DOCUMENT_METADATA_JSON_ARRAY}}
-```
-
-Tracker candidate or matched metadata, if available:
+Return one JSON object with exactly these string keys and no others:
 
 ```json
-{{TRACKER_CONTEXT_JSON}}
+{
+  "folder_summary_short": "2-3 sentence overview of this proposal and its outcome.",
+  "folder_summary_detailed": "3-5 paragraph summary of the technical approach, scope, and status grounded in the documents above.",
+  "opportunity_context_summary": "Reusable opportunity/RFP context if any document describes it, else an empty string.",
+  "generated_response_summary": "What the team proposed (technical and commercial response content), else an empty string."
+}
 ```
 
-Return strict JSON matching the folder metadata schema. Include:
-
-- canonical proposal identity if known
-- agency/program/topic information if known
-- tracker disagreements
-- short and detailed summaries
-- separate opportunity context summary and generated-response summary
-- key documents
-- counts of included/excluded/manual-review documents
-- open critical question count
-- readiness flags
-
-Return strict JSON only.
+Return only the JSON object: no Markdown, no code fences, no text before or after it.
