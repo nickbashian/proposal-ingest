@@ -118,15 +118,24 @@ Options:
 ```text
 --output-root PATH
 --allow-critical-open
+--allow-manual-review
 --dry-run
 --force
 ```
+
+The command writes run-scoped outputs under the latest
+`output_root/logs/run_*/` directory:
+
+- `mirror/<year>/<proposal_branch>/documents/`
+- `mirror/<year>/<proposal_branch>/metadata/`
+- `reports/excluded_files.csv`
+- `manifests/s3_manifest.jsonl`
 
 ### `run-all`
 
 Runs the main pipeline.
 
-Target order once Phase 12 is implemented:
+Target order:
 
 1. scan
 2. analyze
@@ -136,8 +145,8 @@ Target order once Phase 12 is implemented:
 6. build-folders
 7. build-clean-set
 
-Current Phase 11 implementation runs through `build-folders`. Phase 12 will add
-the clean-set step and the critical-question stop before final output.
+The current implementation runs through `build-clean-set`. By default, it stops
+before final clean output if critical questions remain open.
 
 ### `process-folder`
 

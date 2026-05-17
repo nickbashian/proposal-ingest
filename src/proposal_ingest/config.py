@@ -66,6 +66,22 @@ class QuestionsConfig(BaseModel):
     max_questions_per_file: int = Field(default=5, ge=1)
 
 
+class CleanSetConfig(BaseModel):
+    """Clean-set copy behavior."""
+
+    sanitize_filenames: bool = True
+    flatten_documents_folder: bool = True
+    copy_excluded_files: bool = False
+    require_manual_review_clearance: bool = True
+
+
+class S3ManifestConfig(BaseModel):
+    """Local S3 manifest generation settings."""
+
+    enabled: bool = True
+    base_prefix: str = "proposal-history"
+
+
 class TrackerConfig(BaseModel):
     """Grants tracker ingestion settings."""
 
@@ -84,6 +100,8 @@ class RuntimeConfig(BaseModel):
     tracker: TrackerConfig = Field(default_factory=TrackerConfig)
     processing: ProcessingConfig = Field(default_factory=ProcessingConfig)
     questions: QuestionsConfig = Field(default_factory=QuestionsConfig)
+    clean_set: CleanSetConfig = Field(default_factory=CleanSetConfig)
+    s3_manifest: S3ManifestConfig = Field(default_factory=S3ManifestConfig)
 
 
 def load_runtime_config(

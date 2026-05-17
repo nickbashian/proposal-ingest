@@ -15,6 +15,10 @@ from proposal_ingest.analyzer import (
     process_single_file,
 )
 from proposal_ingest.bedrock_client import BedrockSmokeTestResult, smoke_test_bedrock
+from proposal_ingest.clean_set_builder import (
+    CleanSetBlockedError,
+    build_clean_set as build_clean_set_outputs,
+)
 from proposal_ingest.config import load_runtime_config
 from proposal_ingest.file_filters import classify_path
 from proposal_ingest.hashing import document_id_from_sha256, sha256_file
@@ -282,10 +286,62 @@ def build_folders(
 @app.command(name="build-clean-set")
 def build_clean_set(
     output_root: str = typer.Option(..., "--output-root", help="Path to the output directory."),
+    allow_critical_open: bool = typer.Option(
+        False,
+        "--allow-critical-open",
+        help="Build the clean set even when critical review questions remain open.",
+    ),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="Plan the clean set without copying files or writing manifests."
+    ),
+    force: bool = typer.Option(
+        False, "--force", help="Rebuild generated clean-set directories for the latest run."
+    ),
+    allow_manual_review: bool = typer.Option(
+        False,
+        "--allow-manual-review",
+        help="Copy included files even if manual_review_required is true.",
+    ),
+    config: str | None = typer.Option(None, "--config", help="Path to a YAML config file."),
 ) -> None:
     """Build the clean mirrored document output and S3 manifest."""
-    console.print("[yellow]build-clean-set: not yet implemented[/yellow]")
-    console.print(f"  output_root = {output_root}")
+    runtime_cfg = load_runtime_config(config)
+    try:
+        result = build_clean_set_outputs(
+            Path(output_root),
+            allow_critical_open=allow_critical_open,
+            dry_run=dry_run,
+            force=force,
+            sanitize_filenames=runtime_cfg.clean_set.sanitize_filenames,
+            flatten_documents_folder=runtime_cfg.clean_set.flatten_documents_folder,
+            require_manual_review_clearance=(
+                runtime_cfg.clean_set.require_manual_review_clearance and not allow_manual_review
+            ),
+            s3_manifest_enabled=runtime_cfg.s3_manifest.enabled,
+            s3_base_prefix=runtime_cfg.s3_manifest.base_prefix,
+        )
+    except CleanSetBlockedError as exc:
+        console.print(f"[red]{exc}[/red]")
+        for question in exc.questions[:10]:
+            console.print(
+                "  "
+                f"{question.get('question_id')}: "
+                f"{question.get('file_name_original') or question.get('document_id')} "
+                f"{question.get('field')}"
+            )
+        raise typer.Exit(code=3) from exc
+    except FileNotFoundError as exc:
+        console.print(f"[red]Error: {exc}[/red]")
+        raise typer.Exit(code=1) from exc
+
+    label = "build-clean-set dry run" if dry_run else "build-clean-set complete"
+    console.print(
+        f"{label}: {result.copied_count} copied, "
+        f"{result.excluded_count} excluded, {result.manifest_count} manifest rows"
+    )
+    console.print(f"  run_dir = {result.run_dir}")
+    console.print(f"  excluded = {result.excluded_report_path}")
+    console.print(f"  manifest = {result.manifest_path}")
 
 
 @app.command(name="run-all")
@@ -299,7 +355,7 @@ def run_all(
     ),
     config: str | None = typer.Option(None, "--config", help="Path to a YAML config file."),
 ) -> None:
-    """Run the implemented pipeline end-to-end through folder synthesis."""
+    """Run the implemented pipeline end-to-end through clean-set output."""
     from proposal_ingest.folder_builder import build_all_folders
     from proposal_ingest.tracker import load_tracker_rows_jsonl
 
@@ -370,6 +426,31 @@ def run_all(
     console.print(
         f"build-folders complete: {len(folder_results)} folder(s) synthesized"
         f"{' (mock mode)' if mock_bedrock else ''}"
+    )
+
+    # Stage 5: clean-set and S3 manifest
+    try:
+        clean_result = build_clean_set_outputs(
+            Path(output_root),
+            allow_critical_open=not runtime_cfg.processing.stop_before_clean_set_if_critical_questions,
+            dry_run=False,
+            force=True,
+            sanitize_filenames=runtime_cfg.clean_set.sanitize_filenames,
+            flatten_documents_folder=runtime_cfg.clean_set.flatten_documents_folder,
+            require_manual_review_clearance=runtime_cfg.clean_set.require_manual_review_clearance,
+            s3_manifest_enabled=runtime_cfg.s3_manifest.enabled,
+            s3_base_prefix=runtime_cfg.s3_manifest.base_prefix,
+        )
+    except CleanSetBlockedError as exc:
+        console.print(f"[red]{exc}[/red]")
+        console.print(
+            "Resolve critical questions with apply-answers or rerun with the gate disabled."
+        )
+        raise typer.Exit(code=3) from exc
+    console.print(
+        f"build-clean-set complete: {clean_result.copied_count} copied, "
+        f"{clean_result.excluded_count} excluded, "
+        f"{clean_result.manifest_count} manifest rows"
     )
     console.print(f"  run_dir = {artifacts.run_dir}")
 

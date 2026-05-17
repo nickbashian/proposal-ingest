@@ -276,8 +276,8 @@ def test_analyze_without_mock_bedrock_exits_nonzero() -> None:
     assert result.exit_code != 0
 
 
-def test_run_all_mock_builds_folder_outputs(tmp_path: Path) -> None:
-    """run-all --mock-bedrock should execute through Phase 11 folder synthesis."""
+def test_run_all_mock_builds_clean_set_outputs(tmp_path: Path) -> None:
+    """run-all --mock-bedrock should execute through Phase 12 clean-set output."""
     source_root = tmp_path / "source"
     output_root = tmp_path / "output"
     proposal_branch = source_root / "2025" / "Demo Proposal"
@@ -300,8 +300,11 @@ def test_run_all_mock_builds_folder_outputs(tmp_path: Path) -> None:
     assert "Analyze complete:" in result.output
     assert "Exported" in result.output
     assert "build-folders complete: 1 folder(s) synthesized (mock mode)" in result.output
+    assert "build-clean-set complete: 1 copied" in result.output
     run_dir = next((output_root / "logs").glob("run_*"))
     assert list((run_dir / "folder_metadata").glob("*.json"))
+    assert list((run_dir / "mirror" / "2025").glob("*/documents/Technical_Volume.pdf"))
+    assert (run_dir / "manifests" / "s3_manifest.jsonl").exists()
     assert (output_root / "review" / "questions_to_answer.csv").exists()
 
 

@@ -190,35 +190,37 @@ proposal-ingest build-clean-set --output-root /path/to/output
 
 ```
 processed_output/
-  run_manifest.json
-  inventory/
-    file_inventory.csv
-    file_inventory.jsonl
-    stray_files_ignored.csv
-  document_metadata/
-    all_documents.jsonl
-    by_document_id/<document_id>.json
-  folder_metadata/<proposal_id>.json
   review/
     questions_to_answer.csv
     answered_questions_archive.csv
-  reports/
-    excluded_files.csv
-    processing_errors.csv
-    bedrock_usage.csv
-  manifests/
-    s3_manifest.jsonl
-  mirror/
-    <year>/<proposal_branch>/
-      folder_metadata.json
-      folder_summary.md
-      documents/
-      metadata/
+  logs/
+    run_YYYYMMDD_HHMMSS_<id>/
+      run_manifest.json
+      inventory/
+        file_inventory.csv
+        file_inventory.jsonl
+        stray_files_ignored.csv
+      document_metadata/
+        all_document_metadata.jsonl
+        by_document_id/<document_id>.json
+      folder_metadata/<proposal_id>.json
+      reports/
+        excluded_files.csv
+        processing_errors.csv
+        bedrock_usage.csv
+      manifests/
+        s3_manifest.jsonl
+      mirror/
+        <year>/<proposal_branch>/
+          folder_metadata.json
+          folder_summary.md
+          documents/
+          metadata/
 ```
 
 ## Implementation status
 
-Phases 1 through 11 are complete:
+Phases 1 through 12 are complete:
 
 - Phase 1 — scanner and inventory
 - Phase 2 — file rules and PowerPoint handling
@@ -231,12 +233,13 @@ Phases 1 through 11 are complete:
 - Phase 9 — two-pass contextual analysis
 - Phase 10 — grants tracker ingestion and overrides
 - Phase 11 — folder metadata synthesis and Markdown summaries
+- Phase 12 — clean document set, excluded-files report, and S3 manifest
 
 Current implementation boundary:
 
-- `scan`, `process-file`, `analyze`, `export-questions`, `apply-answers`, `build-folders`, `process-folder`, `run-all`, and `bedrock-smoke-test` are wired.
+- `scan`, `process-file`, `analyze`, `export-questions`, `apply-answers`, `build-folders`, `build-clean-set`, `process-folder`, `run-all`, and `bedrock-smoke-test` are wired.
 - Use `--mock-bedrock` for local and CI-safe runs; real Bedrock paths require valid AWS credentials and model access.
-- `build-clean-set` is still a Phase 12 placeholder.
+- `run-all` now finishes by building the clean set and manifest unless critical review questions remain open.
 
 See `docs/10_implementation_plan.md` for the phase-by-phase status and `docs/11_copilot_agent_prompts.md`
 for the ready-to-use Copilot/agent prompts for later phases.

@@ -18,7 +18,7 @@ Use small, testable increments. Avoid starting with Bedrock. Build the local sta
 - Phase 9 — complete
 - Phase 10 — complete
 - Phase 11 — complete
-- Phase 12 — not started
+- Phase 12 — complete
 - Phase 13 — not started
 
 ## Phase 0 — Repo bootstrap
