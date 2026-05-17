@@ -14,6 +14,8 @@ from proposal_ingest.path_utils import short_hash
 from proposal_ingest.schemas import DocumentMetadata, ProposalStatus, TrackerMatchStatus
 
 _NON_ALNUM_RE = re.compile(r"[^a-z0-9]+")
+_TRACKER_MATCH_MIN_CONFIDENCE = 0.35
+_TRACKER_MATCH_AMBIGUITY_DELTA = 0.05
 
 _COLUMN_ALIASES = {
     "grant_org": {
@@ -149,7 +151,11 @@ def load_tracker_rows(
     sheet_name: str | None = None,
     header_row: int = 0,
 ) -> list[TrackerRow]:
-    """Load and normalize tracker rows from an Excel workbook."""
+    """Load and normalize tracker rows from an Excel workbook.
+
+    When ``sheet_name`` is provided, only that sheet is read.
+    When ``sheet_name`` is ``None``, all sheets are read and concatenated.
+    """
     path = Path(tracker_path).resolve()
     dataframe = pd.read_excel(path, sheet_name=sheet_name, header=header_row, dtype=object)
     if isinstance(dataframe, dict):
@@ -216,10 +222,12 @@ def match_tracker_row(
 
     scored.sort(key=lambda item: item[0], reverse=True)
     best_score, best_row = scored[0]
-    if best_score < 0.35:
+    if best_score < _TRACKER_MATCH_MIN_CONFIDENCE:
         return TrackerMatchResult(status=TrackerMatchStatus.unmatched, confidence=best_score)
 
-    contenders = [row for score, row in scored if abs(score - best_score) < 0.05]
+    contenders = [
+        row for score, row in scored if abs(score - best_score) < _TRACKER_MATCH_AMBIGUITY_DELTA
+    ]
     if len(contenders) > 1:
         return TrackerMatchResult(
             status=TrackerMatchStatus.ambiguous,
@@ -300,13 +308,15 @@ def _rows_from_dataframe(path: Path, sheet_name: str, dataframe: pd.DataFrame) -
     normalized_columns = [_normalize_column_name(str(column)) for column in dataframe.columns]
     dataframe.columns = normalized_columns
     rows: list[TrackerRow] = []
-    for idx, row in dataframe.iterrows():
+    for row_number, (_, row) in enumerate(dataframe.iterrows(), start=1):
         normalized_row = {
-            key: _normalize_value(value) for key, value in row.to_dict().items() if key and key != "nan"
+            str(key): _normalize_value(value)
+            for key, value in row.to_dict().items()
+            if not _is_missing_column_key(key) and str(key)
         }
         if not any(value not in (None, "") for value in normalized_row.values()):
             continue
-        row_id = _build_row_id(path, sheet_name, int(idx), normalized_row)
+        row_id = _build_row_id(sheet_name, row_number, normalized_row)
         rows.append(TrackerRow(row_id=row_id, values=normalized_row))
     return rows
 
@@ -321,22 +331,32 @@ def _normalize_column_name(raw: str) -> str:
     return compact
 
 
+def _is_missing_column_key(key: Any) -> bool:
+    if key is None:
+        return True
+    if isinstance(key, float):
+        return pd.isna(key)
+    return False
+
+
 def _normalize_value(value: Any) -> Any:
     if value is None or (isinstance(value, float) and pd.isna(value)):
         return None
+    if isinstance(value, pd.Timestamp):
+        return value.date().isoformat()
     if hasattr(value, "isoformat"):
-        try:
-            return value.date().isoformat()  # pandas Timestamp
-        except Exception:
-            return value.isoformat()
+        return value.isoformat()
     if isinstance(value, str):
         stripped = value.strip()
         return stripped or None
     return value
 
 
-def _build_row_id(path: Path, sheet_name: str, row_index: int, values: dict[str, Any]) -> str:
-    anchor = f"{path}:{sheet_name}:{row_index}:{values.get('proposal_name') or values.get('grant_number') or ''}"
+def _build_row_id(sheet_name: str, row_index: int, values: dict[str, Any]) -> str:
+    anchor = (
+        f"{sheet_name}:{row_index}:"
+        f"{values.get('proposal_name') or values.get('grant_number') or ''}"
+    )
     return f"trk_{short_hash(anchor, length=12)}"
 
 

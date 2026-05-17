@@ -33,6 +33,7 @@ from proposal_ingest.schemas import (
     SystemMetadata,
 )
 from proposal_ingest.tracker import (
+    TrackerRow,
     apply_tracker_overrides,
     load_tracker_rows_jsonl,
     match_tracker_row,
@@ -668,8 +669,6 @@ def analyze_inventory(
 
         if result.success and result.metadata is not None:
             metadata = _apply_tracker_match_to_metadata(result.metadata, tracker_rows)
-            if metadata.document_id != result.metadata.document_id:
-                logger.warning("Tracker override changed document id unexpectedly")
             if metadata != result.metadata:
                 MetadataStore(run_dir).write_document_metadata(metadata, append_jsonl=False)
             results.append(metadata)
@@ -753,7 +752,7 @@ def _finalize_run_manifest(run_dir: Path, *, use_mock: bool) -> None:
     manifest_path.write_text(json.dumps(raw, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
-def _load_tracker_rows_for_run(run_dir: Path) -> list[Any]:
+def _load_tracker_rows_for_run(run_dir: Path) -> list[TrackerRow]:
     tracker_rows_path = run_dir / "tracker" / "tracker_rows.jsonl"
     if not tracker_rows_path.exists():
         return []
@@ -764,7 +763,9 @@ def _load_tracker_rows_for_run(run_dir: Path) -> list[Any]:
         return []
 
 
-def _apply_tracker_match_to_metadata(metadata: DocumentMetadata, tracker_rows: list[Any]) -> DocumentMetadata:
+def _apply_tracker_match_to_metadata(
+    metadata: DocumentMetadata, tracker_rows: list[TrackerRow]
+) -> DocumentMetadata:
     if not tracker_rows:
         return metadata
     match_result = match_tracker_row(

@@ -118,7 +118,10 @@ def test_scan_and_analyze_apply_tracker_rows(tmp_path: Path) -> None:
     assert results[0].tracker_matching.tracker_match_status == "matched"
 
     by_id_path = (
-        artifacts.run_dir / "document_metadata" / "by_document_id" / f"{results[0].document_id}.json"
+        artifacts.run_dir
+        / "document_metadata"
+        / "by_document_id"
+        / f"{results[0].document_id}.json"
     )
     saved = json.loads(by_id_path.read_text(encoding="utf-8"))
     assert saved["tracker_matching"]["tracker_match_status"] == "matched"
