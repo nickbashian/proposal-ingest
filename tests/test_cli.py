@@ -7,6 +7,7 @@ from pathlib import Path
 from typer.testing import CliRunner
 
 import proposal_ingest.cli
+from proposal_ingest.bedrock_client import BedrockSmokeTestResult
 from proposal_ingest.cli import app
 
 runner = CliRunner()
@@ -157,8 +158,56 @@ def test_process_file_without_mock_bedrock_exits_nonzero() -> None:
     assert result.exit_code != 0
 
 
-def test_bedrock_smoke_test_placeholder() -> None:
-    """The smoke-test placeholder should still execute successfully."""
+def test_bedrock_smoke_test_prints_result(monkeypatch) -> None:
+    """The smoke test should print the selected model, region, and response."""
+
+    class _Config:
+        class app:
+            log_level = "INFO"
+
+    monkeypatch.setattr(
+        proposal_ingest.cli, "load_runtime_config", lambda *_args, **_kwargs: _Config()
+    )
+    monkeypatch.setattr(proposal_ingest.cli, "configure_logging", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        proposal_ingest.cli,
+        "smoke_test_bedrock",
+        lambda *_args, **_kwargs: BedrockSmokeTestResult(
+            model_id="anthropic.claude-opus-4-6-v1",
+            model_label="opus-4.6",
+            region="us-east-1",
+            response_text="Bedrock connectivity is working.",
+            input_tokens=12,
+            output_tokens=7,
+            total_tokens=19,
+        ),
+    )
+
     result = runner.invoke(app, ["bedrock-smoke-test"])
     assert result.exit_code == 0
-    assert "not yet implemented" in result.output
+    assert "Model ID: anthropic.claude-opus-4-6-v1" in result.output
+    assert "Region: us-east-1" in result.output
+    assert "Response: Bedrock connectivity is working." in result.output
+    assert "Usage: input=12 output=7 total=19" in result.output
+
+
+def test_bedrock_smoke_test_failure_exits_with_code_4(monkeypatch) -> None:
+    """Bedrock call failures should map to the documented smoke-test exit code."""
+
+    class _Config:
+        class app:
+            log_level = "INFO"
+
+    monkeypatch.setattr(
+        proposal_ingest.cli, "load_runtime_config", lambda *_args, **_kwargs: _Config()
+    )
+    monkeypatch.setattr(proposal_ingest.cli, "configure_logging", lambda *_args, **_kwargs: None)
+
+    def _raise(*_args, **_kwargs):
+        raise RuntimeError("access denied")
+
+    monkeypatch.setattr(proposal_ingest.cli, "smoke_test_bedrock", _raise)
+
+    result = runner.invoke(app, ["bedrock-smoke-test"])
+    assert result.exit_code == 4
+    assert "Bedrock smoke test failed: access denied" in result.output

@@ -14,8 +14,11 @@ import typer
 from rich.console import Console
 
 from proposal_ingest.analyzer import analyze_from_output_root, analyze_inventory
+from proposal_ingest.bedrock_client import BedrockSmokeTestResult, smoke_test_bedrock
+from proposal_ingest.config import load_runtime_config
 from proposal_ingest.file_filters import classify_path
 from proposal_ingest.hashing import document_id_from_sha256, sha256_file
+from proposal_ingest.logging_utils import configure_logging
 from proposal_ingest.metadata_store import MetadataStore
 from proposal_ingest.mock_bedrock import analyze_document_mock
 from proposal_ingest.path_utils import proposal_id_from_branch, sanitize_filename
@@ -270,10 +273,46 @@ def process_file(
     console.print(f"  run_dir = {run_dir}")
 
 
+def _shorten_console_text(text: str, *, limit: int = 200) -> str:
+    compact = " ".join(text.split())
+    if len(compact) <= limit:
+        return compact
+    return f"{compact[: limit - 3]}..."
+
+
 @app.command(name="bedrock-smoke-test")
-def bedrock_smoke_test() -> None:
+def bedrock_smoke_test(
+    config: str | None = typer.Option(None, "--config", help="Path to a YAML config file."),
+) -> None:
     """Run a minimal Bedrock connectivity and authentication smoke test."""
-    console.print("[yellow]bedrock-smoke-test: not yet implemented[/yellow]")
+    try:
+        runtime_config = load_runtime_config(config)
+    except (FileNotFoundError, ValueError) as exc:
+        console.print(f"[red]Configuration error: {exc}[/red]")
+        raise typer.Exit(code=1) from exc
+
+    configure_logging(runtime_config.app.log_level)
+
+    try:
+        result = smoke_test_bedrock(runtime_config)
+    except Exception as exc:
+        console.print(f"[red]Bedrock smoke test failed: {exc}[/red]")
+        raise typer.Exit(code=4) from exc
+
+    _print_bedrock_smoke_test_result(result)
+
+
+def _print_bedrock_smoke_test_result(result: BedrockSmokeTestResult) -> None:
+    console.print(f"Model ID: {result.model_id}")
+    console.print(f"Region: {result.region}")
+    console.print(f"Response: {_shorten_console_text(result.response_text)}")
+    if result.total_tokens is not None:
+        console.print(
+            "Usage: "
+            f"input={result.input_tokens or 0} "
+            f"output={result.output_tokens or 0} "
+            f"total={result.total_tokens}"
+        )
 
 
 if __name__ == "__main__":
