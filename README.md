@@ -174,15 +174,18 @@ proposal-ingest analyze \
 # 3. Export questions for human review
 proposal-ingest export-questions --output-root /path/to/output
 
-# 4. Edit output/review/questions_to_answer.csv, then apply answers
+# 4. Answer output/review/questions_to_answer.csv in the simple GUI
+proposal-ingest answer-questions --output-root /path/to/output
+
+# 5. Apply answers
 proposal-ingest apply-answers \
   --output-root /path/to/output \
   --answers-csv /path/to/output/review/questions_to_answer.csv
 
-# 5. Build folder metadata and summaries
+# 6. Build folder metadata and summaries
 proposal-ingest build-folders --output-root /path/to/output
 
-# 6. Build clean document set and S3 manifest
+# 7. Build clean document set and S3 manifest
 proposal-ingest build-clean-set --output-root /path/to/output
 ```
 
@@ -237,7 +240,7 @@ Phases 1 through 12 are complete:
 
 Current implementation boundary:
 
-- `scan`, `process-file`, `analyze`, `export-questions`, `apply-answers`, `build-folders`, `build-clean-set`, `process-folder`, `run-all`, and `bedrock-smoke-test` are wired.
+- `scan`, `process-file`, `analyze`, `export-questions`, `answer-questions`, `apply-answers`, `build-folders`, `build-clean-set`, `process-folder`, `run-all`, and `bedrock-smoke-test` are wired.
 - Use `--mock-bedrock` for local and CI-safe runs; real Bedrock paths require valid AWS credentials and model access.
 - `run-all` now finishes by building the clean set and manifest unless critical review questions remain open.
 
