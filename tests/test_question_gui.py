@@ -11,6 +11,7 @@ from typer.testing import CliRunner
 import proposal_ingest.cli
 from proposal_ingest.cli import app
 from proposal_ingest.question_gui import (
+    _next_index,
     _parse_suggested_options,
     _sync_answer_draft,
     answer_row,
@@ -122,6 +123,12 @@ def test_question_gui_helpers_sync_answer_draft_no_change() -> None:
 
     assert changed is False
     assert row["updated_at"] == "keep"
+
+
+def test_question_gui_helpers_next_index_advances_and_stops_at_end() -> None:
+    assert _next_index(0, 3) == 1
+    assert _next_index(1, 3) == 2
+    assert _next_index(2, 3) == 2
 
 
 def test_answer_questions_cli_uses_default_csv_path(tmp_path: Path, monkeypatch) -> None:

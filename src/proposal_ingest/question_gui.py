@@ -202,8 +202,14 @@ def launch_questions_gui(csv_path: Path) -> None:
     def move(delta: int) -> None:
         if _sync_answer_draft(current_row(), answer_value.get()):
             write_question_rows(csv_path, rows)
-        next_index = min(max(current_index.get() + delta, 0), len(rows) - 1)
+        next_index = _clamp_index(current_index.get() + delta, len(rows))
         current_index.set(next_index)
+        refresh()
+
+    def advance_to_next() -> None:
+        next_index = _next_index(current_index.get(), len(rows))
+        if next_index != current_index.get():
+            current_index.set(next_index)
         refresh()
 
     def accept_guess() -> None:
@@ -213,7 +219,7 @@ def launch_questions_gui(csv_path: Path) -> None:
             return
         answer_row(current_row(), guess)
         write_question_rows(csv_path, rows)
-        refresh()
+        advance_to_next()
 
     def choose_option(selected: str, allow_multiple: bool) -> None:
         if allow_multiple:
@@ -225,12 +231,12 @@ def launch_questions_gui(csv_path: Path) -> None:
             answer_value.set(new_answer)
             answer_row(current_row(), new_answer)
             write_question_rows(csv_path, rows)
-            refresh()
+            advance_to_next()
             return
         answer_value.set(selected)
         answer_row(current_row(), selected)
         write_question_rows(csv_path, rows)
-        refresh()
+        advance_to_next()
 
     def save_answer() -> None:
         answer = answer_value.get().strip()
@@ -239,12 +245,12 @@ def launch_questions_gui(csv_path: Path) -> None:
             return
         answer_row(current_row(), answer)
         write_question_rows(csv_path, rows)
-        refresh()
+        advance_to_next()
 
     def skip_current() -> None:
         skip_row(current_row())
         write_question_rows(csv_path, rows)
-        refresh()
+        advance_to_next()
 
     def close() -> None:
         if _sync_answer_draft(current_row(), answer_value.get()):
@@ -284,6 +290,16 @@ def _sync_answer_draft(row: dict[str, str], answer: str) -> bool:
     row["user_answer"] = normalized_answer
     row["updated_at"] = datetime.now(UTC).isoformat()
     return True
+
+
+def _clamp_index(index: int, total_rows: int) -> int:
+    if total_rows <= 0:
+        return 0
+    return min(max(index, 0), total_rows - 1)
+
+
+def _next_index(current: int, total_rows: int) -> int:
+    return _clamp_index(current + 1, total_rows)
 
 
 def _fieldnames_for_rows(rows: list[dict[str, str]]) -> list[str]:
