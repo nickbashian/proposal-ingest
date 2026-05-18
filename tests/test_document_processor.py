@@ -208,6 +208,27 @@ def test_normalize_metadata_output_maps_common_enum_aliases() -> None:
     assert normalized["proposal_context"]["status"] == "drafted"
 
 
+def test_normalize_metadata_output_flattens_partner_objects() -> None:
+    record = _make_inventory_record()
+    payload = analyze_document_mock(record, "run_norm_002").model_dump(mode="json")
+    payload["proposal_context"]["partners"] = [
+        {"name": "The Ohio State University", "role": "Subaward"},
+        {"organization": "Current Chemicals", "location": "Ohio"},
+        "LaunchTown",
+        {"notes": "No usable partner name"},
+    ]
+
+    normalized = normalize_metadata_output(payload)
+    validated = DocumentMetadata.model_validate(normalized)
+
+    assert validated.proposal_context.partners == [
+        "The Ohio State University",
+        "Current Chemicals",
+        "LaunchTown",
+        "No usable partner name",
+    ]
+
+
 def test_build_local_extract_prompt_truncates_large_extraction() -> None:
     user_prompt = "Analyze this document"
     extracted = "A" * 80

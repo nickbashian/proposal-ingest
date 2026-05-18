@@ -54,6 +54,7 @@ def normalize_metadata_output(data: dict[str, Any]) -> dict[str, Any]:
             _set_nested(normalized, path, alias)
 
     _normalize_program(normalized)
+    _normalize_partners(normalized)
     return normalized
 
 
@@ -71,6 +72,36 @@ def _normalize_program(payload: dict[str, Any]) -> None:
         _set_nested(payload, path, "FOA")
     elif token.startswith("baa"):
         _set_nested(payload, path, "BAA")
+
+
+def _normalize_partners(payload: dict[str, Any]) -> None:
+    path = ("proposal_context", "partners")
+    current = _get_nested(payload, path)
+    if not isinstance(current, list):
+        return
+
+    normalized_partners: list[str] = []
+    for item in current:
+        partner = _coerce_partner_name(item)
+        if partner:
+            normalized_partners.append(partner)
+    _set_nested(payload, path, normalized_partners)
+
+
+def _coerce_partner_name(value: Any) -> str | None:
+    if isinstance(value, str):
+        cleaned = value.strip()
+        return cleaned or None
+    if isinstance(value, dict):
+        preferred_keys = ("name", "organization", "partner_name", "institution", "company")
+        for key in preferred_keys:
+            candidate = value.get(key)
+            if isinstance(candidate, str) and candidate.strip():
+                return candidate.strip()
+        for candidate in value.values():
+            if isinstance(candidate, str) and candidate.strip():
+                return candidate.strip()
+    return None
 
 
 def _canonical_token(value: str) -> str:
