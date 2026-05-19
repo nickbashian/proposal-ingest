@@ -4,7 +4,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from proposal_ingest.bedrock_client import call_converse_with_document, smoke_test_bedrock
+from proposal_ingest.bedrock_client import (
+    call_converse_with_document,
+    is_daily_bedrock_token_limit_error,
+    smoke_test_bedrock,
+)
 from proposal_ingest.config import load_runtime_config
 
 
@@ -128,3 +132,10 @@ def test_call_converse_with_document_sanitizes_document_name() -> None:
     document_block = captured["converse_kwargs"]["messages"][0]["content"][0]["document"]
     assert document_block["name"] == "Quad Chart v2 [Final]"
     assert response_text == "ok"
+
+
+def test_daily_token_limit_detector_matches_bedrock_quota_message() -> None:
+    assert is_daily_bedrock_token_limit_error(
+        "ThrottlingException: Too many tokens per day, please wait before trying again."
+    )
+    assert not is_daily_bedrock_token_limit_error("ThrottlingException: rate exceeded")

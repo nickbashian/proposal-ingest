@@ -15,6 +15,7 @@ from proposal_ingest.bedrock_client import (
     call_converse_with_document,
     call_converse_with_text,
     create_bedrock_runtime_client,
+    is_daily_bedrock_token_limit_error,
 )
 from proposal_ingest.config import RuntimeConfig
 from proposal_ingest.extractors import count_excel_nonempty_cells, extract_text
@@ -61,6 +62,31 @@ class SingleFileResult:
     error_message: str | None = None
     raw_response: str | None = None
     usage: BedrockUsageRecord | None = None
+
+
+@dataclass(frozen=True)
+class AnalysisBatchResult:
+    """Summary of one batch analysis attempt."""
+
+    documents: list[DocumentMetadata]
+    eligible_count: int
+    skipped_existing_count: int
+    attempted_count: int
+    failed_count: int
+    halted_reason: str | None = None
+
+
+@dataclass(frozen=True)
+class AnalysisResumeStatus:
+    """Current analysis progress for one run directory."""
+
+    run_dir: Path
+    inventory_path: Path
+    total_count: int
+    eligible_count: int
+    processed_count: int
+    pending_count: int
+    failed_pending_count: int
 
 
 # ---------------------------------------------------------------------------
@@ -248,6 +274,20 @@ def _build_local_extract_prompt(user_prompt: str, extracted_text: str, *, max_ch
     return f"{user_prompt}\n\n---\nExtracted document text:\n\n{payload_text}"
 
 
+def _should_retry_with_local_extract(strategy: str, error_message: str) -> bool:
+    """Return True when Bedrock rejected direct upload but text fallback may work."""
+    if strategy != "direct_bedrock":
+        return False
+    normalized = error_message.lower()
+    return any(
+        marker in normalized
+        for marker in (
+            "maximum document size",
+            "maximum of 100 pdf pages",
+        )
+    )
+
+
 # ---------------------------------------------------------------------------
 # Public single-file processor
 # ---------------------------------------------------------------------------
@@ -329,34 +369,89 @@ def process_single_file(
             client, file_path, record, system_prompt, user_prompt, strategy, config
         )
     except Exception as exc:
-        end_time = datetime.now(UTC)
         error_msg = str(exc)
-        logger.error("Bedrock call failed for %s: %s", file_path.name, error_msg)
-        usage_rec = _build_usage_record(
-            record,
-            run_id,
-            config,
-            strategy,
-            start_time,
-            end_time,
-            usage_dict={},
-            success=False,
-            error_type=type(exc).__name__,
-            error_message=error_msg,
-        )
-        store.write_usage_record(usage_rec)
-        store.write_failure_record(
-            record.document_id,
-            "bedrock_call_failed",
-            {"file": str(file_path), "error": error_msg},
-        )
-        return SingleFileResult(
-            record=record,
-            metadata=None,
-            success=False,
-            error_message=error_msg,
-            usage=usage_rec,
-        )
+        if _should_retry_with_local_extract(strategy, error_msg):
+            logger.warning(
+                "Direct Bedrock upload failed for %s; retrying with local extraction: %s",
+                file_path.name,
+                error_msg,
+            )
+            strategy = "local_extract_then_bedrock"
+            try:
+                raw_text, usage_dict = _call_bedrock(
+                    client,
+                    file_path,
+                    record,
+                    system_prompt,
+                    user_prompt,
+                    strategy,
+                    config,
+                )
+            except Exception as fallback_exc:
+                end_time = datetime.now(UTC)
+                fallback_error = str(fallback_exc)
+                logger.error(
+                    "Local-extract fallback failed for %s: %s",
+                    file_path.name,
+                    fallback_error,
+                )
+                usage_rec = _build_usage_record(
+                    record,
+                    run_id,
+                    config,
+                    strategy,
+                    start_time,
+                    end_time,
+                    usage_dict={},
+                    success=False,
+                    error_type=type(fallback_exc).__name__,
+                    error_message=fallback_error,
+                )
+                store.write_usage_record(usage_rec)
+                store.write_failure_record(
+                    record.document_id,
+                    "bedrock_call_failed",
+                    {
+                        "file": str(file_path),
+                        "error": fallback_error,
+                        "direct_upload_error": error_msg,
+                    },
+                )
+                return SingleFileResult(
+                    record=record,
+                    metadata=None,
+                    success=False,
+                    error_message=fallback_error,
+                    usage=usage_rec,
+                )
+        else:
+            end_time = datetime.now(UTC)
+            logger.error("Bedrock call failed for %s: %s", file_path.name, error_msg)
+            usage_rec = _build_usage_record(
+                record,
+                run_id,
+                config,
+                strategy,
+                start_time,
+                end_time,
+                usage_dict={},
+                success=False,
+                error_type=type(exc).__name__,
+                error_message=error_msg,
+            )
+            store.write_usage_record(usage_rec)
+            store.write_failure_record(
+                record.document_id,
+                "bedrock_call_failed",
+                {"file": str(file_path), "error": error_msg},
+            )
+            return SingleFileResult(
+                record=record,
+                metadata=None,
+                success=False,
+                error_message=error_msg,
+                usage=usage_rec,
+            )
 
     end_time = datetime.now(UTC)
 
@@ -629,6 +724,32 @@ def analyze_inventory(
     Existing document metadata with the same content hash is skipped unless
     ``force`` is true. ``limit`` applies to attempted, non-skipped documents.
     """
+    return analyze_inventory_with_summary(
+        run_dir,
+        inventory_records,
+        run_id,
+        use_mock=use_mock,
+        config=config,
+        force=force,
+        limit=limit,
+        save_raw_responses=save_raw_responses,
+        final_command=final_command,
+    ).documents
+
+
+def analyze_inventory_with_summary(
+    run_dir: Path,
+    inventory_records: list[InventoryRecord],
+    run_id: str,
+    *,
+    use_mock: bool,
+    config: RuntimeConfig | None = None,
+    force: bool = False,
+    limit: int | None = None,
+    save_raw_responses: bool | None = None,
+    final_command: str = "analyze",
+) -> AnalysisBatchResult:
+    """Analyze eligible inventory records and return resume-friendly batch counts."""
     runtime_config = config or RuntimeConfig()
     save_raw = (
         runtime_config.bedrock.save_raw_model_responses
@@ -637,6 +758,9 @@ def analyze_inventory(
     )
     results: list[DocumentMetadata] = []
     attempted = 0
+    failed = 0
+    skipped_existing = 0
+    halted_reason: str | None = None
 
     existing_ids = _processed_document_ids(run_dir)
     eligible = [r for r in inventory_records if r.eligible_for_processing]
@@ -644,6 +768,7 @@ def analyze_inventory(
 
     for record in eligible:
         if not force and record.document_id in existing_ids:
+            skipped_existing += 1
             logger.info(
                 "Skipping already-processed file document_id=%s path=%s",
                 record.document_id,
@@ -666,6 +791,11 @@ def analyze_inventory(
         except Exception as exc:  # defensive per-file isolation for batch mode
             logger.exception("Unhandled analysis error for %s", record.source_path)
             _write_unhandled_failure(run_dir, record, run_id, runtime_config, exc)
+            failed += 1
+            if is_daily_bedrock_token_limit_error(str(exc)):
+                halted_reason = str(exc)
+                logger.error("Halting analysis after Bedrock daily token limit: %s", exc)
+                break
             continue
 
         if result.success and result.metadata is not None:
@@ -674,9 +804,17 @@ def analyze_inventory(
                 MetadataStore(run_dir).write_document_metadata(metadata, append_jsonl=False)
             results.append(metadata)
         else:
+            failed += 1
             logger.error("Analysis failed for %s: %s", record.source_path, result.error_message)
+            if is_daily_bedrock_token_limit_error(result.error_message):
+                halted_reason = result.error_message
+                logger.error(
+                    "Halting analysis after Bedrock daily token limit: %s",
+                    result.error_message,
+                )
+                break
 
-    if runtime_config.processing.pass2_enabled:
+    if runtime_config.processing.pass2_enabled and halted_reason is None:
         pass2_result = run_two_pass_review(
             run_dir,
             run_id,
@@ -695,12 +833,45 @@ def analyze_inventory(
     _rewrite_all_document_metadata_jsonl(run_dir)
     _finalize_run_manifest(run_dir, use_mock=use_mock, command=final_command)
 
-    return results
+    return AnalysisBatchResult(
+        documents=results,
+        eligible_count=len(eligible),
+        skipped_existing_count=skipped_existing,
+        attempted_count=attempted,
+        failed_count=failed,
+        halted_reason=halted_reason,
+    )
 
 
 def _processed_document_ids(run_dir: Path) -> set[str]:
     """Return document IDs already present in document metadata for this run."""
     return MetadataStore(run_dir).document_metadata_ids()
+
+
+def summarize_analysis_resume(run_dir: Path) -> AnalysisResumeStatus:
+    """Return processed/pending counts for a run's inventory and metadata store."""
+    inventory_path = run_dir / "inventory" / "file_inventory.jsonl"
+    if not inventory_path.exists():
+        raise FileNotFoundError(f"No inventory found for run: {inventory_path}")
+
+    records = load_inventory_jsonl(inventory_path)
+    eligible_ids = {record.document_id for record in records if record.eligible_for_processing}
+    processed_ids = _processed_document_ids(run_dir)
+    pending_ids = eligible_ids - processed_ids
+    failures_dir = MetadataStore(run_dir).failures_dir
+    failure_ids = (
+        {path.stem for path in failures_dir.glob("*.json")} if failures_dir.exists() else set()
+    )
+
+    return AnalysisResumeStatus(
+        run_dir=run_dir,
+        inventory_path=inventory_path,
+        total_count=len(records),
+        eligible_count=len(eligible_ids),
+        processed_count=len(eligible_ids & processed_ids),
+        pending_count=len(pending_ids),
+        failed_pending_count=len(pending_ids & failure_ids),
+    )
 
 
 def _rewrite_all_document_metadata_jsonl(run_dir: Path) -> None:

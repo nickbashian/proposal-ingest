@@ -555,6 +555,50 @@ def test_process_single_file_real_bedrock_uses_bedrock_safe_document_name(
     assert request_document["name"] == "Quad Chart v2 [Final]"
 
 
+def test_process_single_file_retries_direct_upload_limits_with_local_extract(
+    tmp_path: Path,
+) -> None:
+    """Direct-upload validation limits should fall back to text-only extraction."""
+    f = tmp_path / "Large Abstract.docx"
+    f.write_bytes(b"fake docx content")
+    record = _make_inventory_record(f.name, ".docx", size_bytes=f.stat().st_size)
+    run_dir = tmp_path / "run_direct_fallback"
+    run_dir.mkdir()
+    cfg = load_runtime_config()
+
+    valid_payload = json.dumps(_make_valid_bedrock_response(record))
+    good_response = _fake_converse_response(valid_payload)
+    mock_client = MagicMock()
+    mock_client.converse.side_effect = [
+        RuntimeError(
+            "An error occurred (ValidationException) when calling the Converse operation: "
+            "The maximum document size is 4.5 MB."
+        ),
+        good_response,
+    ]
+
+    with (
+        patch("proposal_ingest.analyzer.create_bedrock_runtime_client", return_value=mock_client),
+        patch("proposal_ingest.analyzer.extract_text", return_value="Locally extracted text"),
+    ):
+        result = process_single_file(
+            file_path=f,
+            record=record,
+            run_dir=run_dir,
+            run_id="run_direct_fallback_001",
+            config=cfg,
+            use_mock=False,
+            save_raw_responses=False,
+        )
+
+    assert result.success is True, result.error_message
+    assert mock_client.converse.call_count == 2
+    assert result.metadata is not None
+    assert result.metadata.system.processing_strategy == "local_extract_then_bedrock"
+    text_content = mock_client.converse.call_args.kwargs["messages"][0]["content"][0]["text"]
+    assert "Locally extracted text" in text_content
+
+
 def test_process_single_file_repair_path(tmp_path: Path) -> None:
     """Bad JSON on first call → repair prompt → valid JSON on second call."""
     f = tmp_path / "Budget.pdf"
@@ -749,6 +793,47 @@ def test_analyze_inventory_skips_existing_hash_unless_forced(tmp_path: Path) -> 
     lines = [line for line in jsonl_path.read_text(encoding="utf-8").splitlines() if line.strip()]
     assert len(lines) == 1
     assert json.loads(lines[0])["document_id"] == record.document_id
+
+
+def test_analyze_inventory_halts_on_daily_token_quota(tmp_path: Path) -> None:
+    from proposal_ingest.analyzer import SingleFileResult, analyze_inventory_with_summary
+
+    records = [
+        _make_inventory_record("First.pdf", ".pdf"),
+        _make_inventory_record("Second.pdf", ".pdf"),
+    ]
+    for record in records:
+        file_path = tmp_path / record.file_name_original
+        file_path.write_bytes(b"fake content")
+        record.source_path = str(file_path)  # type: ignore[misc]
+        record.size_bytes = file_path.stat().st_size  # type: ignore[misc]
+    run_dir = tmp_path / "run_quota"
+    run_dir.mkdir()
+    cfg = load_runtime_config()
+
+    quota_message = "ThrottlingException: Too many tokens per day, please wait before trying again."
+
+    with patch(
+        "proposal_ingest.analyzer.process_single_file",
+        return_value=SingleFileResult(
+            record=records[0],
+            metadata=None,
+            success=False,
+            error_message=quota_message,
+        ),
+    ) as process_mock:
+        result = analyze_inventory_with_summary(
+            run_dir,
+            records,
+            "run_quota",
+            use_mock=False,
+            config=cfg,
+        )
+
+    assert process_mock.call_count == 1
+    assert result.attempted_count == 1
+    assert result.failed_count == 1
+    assert result.halted_reason == quota_message
 
 
 def test_analyze_inventory_runs_pass2_for_ambiguous_mock_letter(tmp_path: Path) -> None:

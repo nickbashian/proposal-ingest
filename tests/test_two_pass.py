@@ -117,3 +117,23 @@ def test_run_two_pass_review_improves_ambiguous_letter_in_mock_mode(tmp_path: Pa
         )
     )
     assert len(metadata_json["metadata_history"]) == 3
+
+
+def test_run_two_pass_review_does_not_repeat_processed_pass2(tmp_path: Path) -> None:
+    run_dir, _tech_id, _support_id = _write_metadata_run(tmp_path / "run_pass2_idempotent")
+
+    first = run_two_pass_review(
+        run_dir,
+        run_dir.name,
+        load_runtime_config(),
+        use_mock=True,
+    )
+    second = run_two_pass_review(
+        run_dir,
+        run_dir.name,
+        load_runtime_config(),
+        use_mock=True,
+    )
+
+    assert first.reviewed_count >= 1
+    assert second.reviewed_count == 0

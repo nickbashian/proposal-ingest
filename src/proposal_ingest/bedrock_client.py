@@ -31,6 +31,11 @@ BEDROCK_DOCUMENT_FORMATS: dict[str, str] = {
 
 _BEDROCK_DOC_NAME_DISALLOWED_RE = re.compile(r"[^A-Za-z0-9\-\(\)\[\] ]+")
 _BEDROCK_DOC_NAME_WHITESPACE_RE = re.compile(r"\s+")
+_DAILY_TOKEN_LIMIT_MARKERS = (
+    "too many tokens per day",
+    "tokens per day",
+    "daily token",
+)
 
 
 class BedrockSmokeTestResult(BaseModel):
@@ -56,6 +61,16 @@ def sanitize_bedrock_document_name(filename: str) -> str:
     sanitized = _BEDROCK_DOC_NAME_DISALLOWED_RE.sub(" ", stem)
     sanitized = _BEDROCK_DOC_NAME_WHITESPACE_RE.sub(" ", sanitized).strip()
     return sanitized or "document"
+
+
+def is_daily_bedrock_token_limit_error(error_message: str | None) -> bool:
+    """Return True for Bedrock daily token quota errors that should pause a run."""
+    if not error_message:
+        return False
+    normalized = error_message.lower()
+    return "throttlingexception" in normalized and any(
+        marker in normalized for marker in _DAILY_TOKEN_LIMIT_MARKERS
+    )
 
 
 def create_bedrock_runtime_client(config: RuntimeConfig) -> Any:

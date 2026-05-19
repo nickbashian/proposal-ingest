@@ -12,7 +12,11 @@ from rich.console import Console
 from proposal_ingest.analyzer import (
     analyze_from_output_root,
     analyze_inventory,
+    analyze_inventory_with_summary,
+    find_latest_inventory_jsonl,
+    load_inventory_jsonl,
     process_single_file,
+    summarize_analysis_resume,
 )
 from proposal_ingest.bedrock_client import BedrockSmokeTestResult, smoke_test_bedrock
 from proposal_ingest.clean_set_builder import (
@@ -185,6 +189,87 @@ def analyze(
         f"{' (mock mode)' if mock_bedrock else ''}"
     )
     console.print(f"  run_dir = {run_dir}")
+
+
+@app.command(name="resume-analysis")
+def resume_analysis(
+    output_root: str = typer.Option(..., "--output-root", help="Path to the output directory."),
+    run_dir: str | None = typer.Option(
+        None,
+        "--run-dir",
+        help="Specific run directory to resume. Defaults to the latest inventory under output_root.",
+    ),
+    mock_bedrock: bool = typer.Option(
+        False, "--mock-bedrock", help="Use mock Bedrock instead of real AWS calls."
+    ),
+    limit: int | None = typer.Option(
+        None, "--limit", min=1, help="Process at most this many pending eligible files."
+    ),
+    save_raw_responses: bool = typer.Option(
+        False, "--save-raw-responses", help="Save raw model responses to disk."
+    ),
+    skip_pass2: bool = typer.Option(
+        False,
+        "--skip-pass2",
+        help="Resume Pass 1 only; leave contextual Pass 2 for a later analyze/resume run.",
+    ),
+    config: str | None = typer.Option(None, "--config", help="Path to a YAML config file."),
+) -> None:
+    """Resume analysis for a partially completed run without reprocessing completed documents."""
+    try:
+        if run_dir is not None:
+            selected_run_dir = Path(run_dir)
+        else:
+            inventory_path = find_latest_inventory_jsonl(Path(output_root))
+            if inventory_path is None:
+                raise FileNotFoundError(
+                    f"No file_inventory.jsonl found under {Path(output_root) / 'logs'}."
+                )
+            selected_run_dir = inventory_path.parent.parent
+
+        before = summarize_analysis_resume(selected_run_dir)
+        runtime_cfg = load_runtime_config(
+            config,
+            overrides={"bedrock": {"mock_bedrock": mock_bedrock}},
+        )
+        if skip_pass2:
+            runtime_cfg.processing.pass2_enabled = False
+        records = load_inventory_jsonl(before.inventory_path)
+        result = analyze_inventory_with_summary(
+            selected_run_dir,
+            records,
+            selected_run_dir.name,
+            use_mock=mock_bedrock,
+            config=runtime_cfg,
+            force=False,
+            limit=limit,
+            save_raw_responses=save_raw_responses,
+            final_command="resume-analysis",
+        )
+        after = summarize_analysis_resume(selected_run_dir)
+    except FileNotFoundError as exc:
+        console.print(f"[red]Error: {exc}[/red]")
+        raise typer.Exit(code=1) from exc
+
+    console.print(
+        "Resume analysis: "
+        f"{before.processed_count}/{before.eligible_count} eligible already complete, "
+        f"{before.pending_count} pending"
+    )
+    if before.failed_pending_count:
+        console.print(f"  retrying {before.failed_pending_count} previously failed pending docs")
+    console.print(
+        f"Attempted {result.attempted_count}, processed {len(result.documents)}, "
+        f"failed {result.failed_count}, skipped {result.skipped_existing_count}"
+    )
+    console.print(
+        f"After resume: {after.processed_count}/{after.eligible_count} eligible complete, "
+        f"{after.pending_count} pending"
+    )
+    console.print(f"  run_dir = {selected_run_dir}")
+    if result.halted_reason:
+        console.print(f"[yellow]Paused after Bedrock quota limit: {result.halted_reason}[/yellow]")
+        raise typer.Exit(code=2)
 
 
 @app.command(name="export-questions")

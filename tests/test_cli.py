@@ -9,8 +9,11 @@ from typer.testing import CliRunner
 
 import proposal_ingest.cli
 import proposal_ingest.folder_builder
+from proposal_ingest.analyzer import load_inventory_jsonl
 from proposal_ingest.bedrock_client import BedrockSmokeTestResult
 from proposal_ingest.cli import app
+from proposal_ingest.metadata_store import MetadataStore
+from proposal_ingest.mock_bedrock import analyze_document_mock
 from proposal_ingest.scanner import ScanArtifacts
 
 runner = CliRunner()
@@ -306,6 +309,48 @@ def test_run_all_mock_builds_clean_set_outputs(tmp_path: Path) -> None:
     assert list((run_dir / "mirror" / "2025").glob("*/documents/Technical_Volume.pdf"))
     assert (run_dir / "manifests" / "s3_manifest.jsonl").exists()
     assert (output_root / "review" / "questions_to_answer.csv").exists()
+
+
+def test_resume_analysis_skips_existing_metadata_and_processes_pending(tmp_path: Path) -> None:
+    source_root = tmp_path / "source"
+    output_root = tmp_path / "output"
+    proposal_branch = source_root / "2025" / "Demo Proposal"
+    proposal_branch.mkdir(parents=True)
+    (proposal_branch / "Technical Volume.pdf").write_text("pdf content", encoding="utf-8")
+    (proposal_branch / "Budget.pdf").write_text("budget content", encoding="utf-8")
+
+    scan_result = runner.invoke(
+        app,
+        ["scan", "--source-root", str(source_root), "--output-root", str(output_root)],
+    )
+    assert scan_result.exit_code == 0, scan_result.output
+
+    run_dir = next((output_root / "logs").glob("run_*"))
+    records = load_inventory_jsonl(run_dir / "inventory" / "file_inventory.jsonl")
+    existing = records[0]
+    store = MetadataStore(run_dir)
+    store.write_document_metadata(analyze_document_mock(existing, run_dir.name), append_jsonl=False)
+    store.write_document_metadata_jsonl([analyze_document_mock(existing, run_dir.name)])
+
+    result = runner.invoke(
+        app,
+        [
+            "resume-analysis",
+            "--output-root",
+            str(output_root),
+            "--mock-bedrock",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "1/2 eligible already complete, 1 pending" in result.output
+    assert "After resume: 2/2 eligible complete, 0 pending" in result.output
+    lines = (
+        (run_dir / "document_metadata" / "all_document_metadata.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()
+    )
+    assert len([line for line in lines if line.strip()]) == 2
 
 
 def test_process_file_without_mock_bedrock_exits_nonzero() -> None:

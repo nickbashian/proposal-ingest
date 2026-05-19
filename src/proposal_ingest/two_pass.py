@@ -10,7 +10,11 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from proposal_ingest.bedrock_client import call_converse_with_text, create_bedrock_runtime_client
+from proposal_ingest.bedrock_client import (
+    call_converse_with_text,
+    create_bedrock_runtime_client,
+    is_daily_bedrock_token_limit_error,
+)
 from proposal_ingest.config import RuntimeConfig
 from proposal_ingest.extractors import extract_text
 from proposal_ingest.logging_utils import get_logger
@@ -109,6 +113,9 @@ def run_two_pass_review(
                     "source_path": failed_metadata.system.source_path,
                 },
             )
+            if is_daily_bedrock_token_limit_error(error_message):
+                logger.error("Halting Pass 2 after Bedrock daily token limit: %s", error_message)
+                break
             continue
 
         merged_metadata, changes = _merge_pass2_candidate(
@@ -204,6 +211,8 @@ def build_branch_context_packet(
 
 
 def _needs_context_pass2(metadata: DocumentMetadata, threshold: float) -> bool:
+    if metadata.system.processing_status == ProcessingStatus.processed_pass2:
+        return False
     extra = getattr(metadata, "__pydantic_extra__", {}) or {}
     return any(
         (
