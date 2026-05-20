@@ -55,6 +55,7 @@ def normalize_metadata_output(data: dict[str, Any]) -> dict[str, Any]:
 
     _normalize_program(normalized)
     _normalize_partners(normalized)
+    _normalize_content_string_lists(normalized)
     return normalized
 
 
@@ -102,6 +103,51 @@ def _coerce_partner_name(value: Any) -> str | None:
             if isinstance(candidate, str) and candidate.strip():
                 return candidate.strip()
     return None
+
+
+def _normalize_content_string_lists(payload: dict[str, Any]) -> None:
+    content = payload.get("content")
+    if not isinstance(content, dict):
+        return
+
+    for field_name in ("risks", "milestones", "deliverables"):
+        current = content.get(field_name)
+        if not isinstance(current, list):
+            continue
+        normalized_items = [_coerce_content_list_item(item) for item in current]
+        content[field_name] = [item for item in normalized_items if item]
+
+
+def _coerce_content_list_item(value: Any) -> str | None:
+    if isinstance(value, str):
+        cleaned = value.strip()
+        return cleaned or None
+    if not isinstance(value, dict):
+        return None
+
+    text_parts: list[str] = []
+    preferred_keys = (
+        "milestone",
+        "deliverable",
+        "risk",
+        "name",
+        "title",
+        "description",
+        "date",
+    )
+    for key in preferred_keys:
+        candidate = value.get(key)
+        if isinstance(candidate, str) and candidate.strip():
+            text_parts.append(candidate.strip())
+    if text_parts:
+        return " - ".join(text_parts)
+
+    fallback_parts = [
+        candidate.strip()
+        for candidate in value.values()
+        if isinstance(candidate, str) and candidate.strip()
+    ]
+    return " - ".join(fallback_parts) if fallback_parts else None
 
 
 def _canonical_token(value: str) -> str:

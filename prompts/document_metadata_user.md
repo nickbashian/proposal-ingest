@@ -43,7 +43,7 @@ Confidence scores are floats from 0.0 to 1.0. `document_date`, `submission_date`
 
 Only ask questions whose answers change downstream behavior. Aim for 3, never exceed 5.
 
-`suggested_options` must be a JSON array of strings and `model_guess` must be a string — even for yes/no or numeric answers (use `"true"`/`"false"`, never JSON booleans or numbers). When the `field` is a boolean schema field (for example `inclusion.include_in_future_rag` or `sensitivity.manual_review_required`), use exactly `["true", "false"]` as the options and a `"true"`/`"false"` string as the guess. When the `field` is an enum, the options must be values from that field's allowed list above.
+`suggested_options` must be a JSON array of strings and `model_guess` must be a string — even for yes/no or numeric answers (use `"true"`/`"false"`, never JSON booleans or numbers). When the `field` is a boolean schema field (for example `inclusion.include_in_future_rag` or `sensitivity.manual_review_required`), use exactly `["true", "false"]` as the options and a `"true"`/`"false"` string as the guess. Boolean question wording must make the mapping unambiguous: ask whether the target field should be set to true, and explain what true and false mean in the question text. Do not ask "A or B" choice questions for boolean fields unless A clearly means true and B clearly means false. When the reviewer must choose among multiple treatments (for example full document vs summary-only vs exclude), target the appropriate enum/text field instead of a boolean field. When the `field` is an enum, the options must be values from that field's allowed list above.
 
 Each item in `questions_for_user` must use this shape:
 

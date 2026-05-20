@@ -219,8 +219,127 @@ Additional direct-upload validation limits were observed:
 
 The analyzer now falls back from direct Bedrock upload to local text extraction for those validation-limit cases, so they can be retried after the quota resets without repeating direct-upload failures.
 
+## 2026-05-20 Resume Attempt
+
+AWS identity validation succeeded for account `676096976643`, and `resume-analysis` was run again against the same 2024 pilot run.
+
+Updated run state:
+
+- Unique eligible documents: `162`
+- Document metadata JSON files: `161`
+- Pending unique eligible documents: `1`
+- Raw Bedrock responses: `162`
+- Bedrock usage rows: `334`
+- Successful Bedrock calls: `192`
+- Failed Bedrock calls: `142`
+- Successful total tokens recorded: `3,319,088`
+- Processing statuses: `113` processed pass 1, `35` still needing context pass 2, `13` processed pass 2
+- Folder metadata generated: `0`
+- Clean-set files copied: `0`
+- S3 manifest generated: no
+
+The resume processed `7` of the `8` remaining pending documents, then halted during Pass 2 after the Bedrock daily token quota was reached again:
+
+```text
+ThrottlingException: Too many tokens per day, please wait before trying again.
+```
+
+The one remaining Pass 1 document is:
+
+```text
+2024/2024 VTO 3248 Na-ion High Power (d)/Amendment_000002_FOA_DOE-NETL-EERE-DE-FOA-0003248_Final.pdf
+```
+
+That file is a long FOA amendment PDF. Direct Bedrock upload is rejected by the 100-page PDF limit, and the local-extract fallback produced a model response whose `content.milestones` values were shaped as objects rather than strings. The normalizer has been hardened to flatten object-shaped `risks`, `milestones`, and `deliverables` into strings before schema validation, with test coverage added. Verification passed via:
+
+```powershell
+.\.venv\Scripts\python.exe -m black --check src tests
+.\.venv\Scripts\python.exe -m ruff check src tests
+.\.venv\Scripts\python.exe -m codespell_lib
+.\.venv\Scripts\python.exe -m mypy src
+.\.venv\Scripts\python.exe -m pytest --basetemp tmp\pytest-basetemp-full-20260520
+```
+
+The literal `make check` command could not be run in this PowerShell environment because `make` is not installed, but the equivalent Makefile commands above passed.
+
+## 2026-05-20 Question GUI Pilot
+
+The question export stage was run against the current 2024 pilot metadata set despite the single low-importance pending FOA amendment document.
+
+Question export result:
+
+- Questions exported: `273`
+- Suppressed low-priority questions: `56`
+- High-priority questions: `60`
+- Medium-priority questions: `213`
+
+The local `answer-questions` GUI launched successfully against:
+
+```text
+C:\Users\nbashian\OneDrive - Empower Battery Technology\Documents\Empower Proposal Database\review\questions_to_answer.csv
+```
+
+After the first GUI review batch, CSV plumbing was validated:
+
+- Non-empty user answers: `34`
+- Rows with `status=answered`: `34`
+- Rows still open: `239`
+- Answered rows with empty answers: `0`
+- Non-answered rows with non-empty answers: `0`
+
+Observed GUI/question-design issue: several model-generated Boolean questions were worded as two-choice prose questions, which made the `true` / `false` buttons ambiguous. Example pattern:
+
+```text
+Should the full document be indexed for RAG, or only the topic description?
+```
+
+This question targets `inclusion.include_in_future_rag`, so `true` and `false` do not cleanly represent the human choices. In the exported question set, `48` Boolean questions contained "or" choice wording, mostly on `inclusion.include_in_future_rag`.
+
+The prompt has been tightened for future runs: Boolean questions must explicitly ask whether the target field should be set to true and explain what true and false mean; multi-treatment questions should target an enum/text field instead of a Boolean field.
+
+One answered row initially saved free text into a Boolean field:
+
+```text
+question_id: q_84178f020d31
+field: inclusion.include_in_future_rag
+answer: Only topic description (pg 37-40)
+```
+
+This was corrected deterministically before applying answers:
+
+- `user_answer` was changed to `true`.
+- The original free-text answer was preserved in `notes`.
+- A CSV backup was written at `review/questions_to_answer.pre_bool_note_fix_20260520_1229.csv`.
+- Re-check result: `0` invalid Boolean answers among answered rows.
+
+Planned GUI update after more pilot review:
+
+1. For Boolean fields, prevent arbitrary free-text from becoming `user_answer`.
+   - The answer value should be chosen from `true` / `false` controls only.
+   - Existing `Accept suggestion` behavior should still work, but only if the suggestion is parseable as Boolean.
+
+2. Add or clarify a separate reviewer note field in the GUI.
+   - Free-text nuance should be saved to `notes`, not to the typed answer value for Boolean fields.
+   - Example: `include_in_future_rag=true`, with note `Only topic description pages 37-40`.
+
+3. Add pre-apply validation feedback in the GUI or CLI.
+   - Detect invalid answers by field type before `apply-answers`.
+   - Show a concise list of blocking rows with question ID, field, and invalid answer.
+
+4. Consider changing Boolean question display text.
+   - For Boolean rows, show labels such as `Set include_in_future_rag to true` and `Set include_in_future_rag to false`.
+   - Keep the generated question visible, but make the actual patch value unmistakable.
+
+Schema/question-design refinement needed after the current GUI review pass:
+
+- Review whether `include_in_future_rag` is too coarse for opportunity documents and boilerplate-heavy source documents.
+- Consider adding a field for RAG scope, such as `rag_scope_notes`, `included_page_ranges`, or an enum/value that captures partial extraction.
+- Consider extending `recommended_rag_treatment` or adding a companion field to represent `full_document`, `summary_only`, `metadata_only`, `exclude`, and `partial_extract`.
+- Tune prompts so multi-treatment questions target the right field rather than forcing nuanced decisions into Boolean fields.
+- Use additional patterns found during the remaining GUI review before deciding on the final schema change.
+
 ## Phase 13 Status
 
 Current status: in progress.
 
-The pipeline has moved beyond single-folder validation and into the full-year 2024 pilot. The year pilot is partially complete and paused due to Bedrock daily token limits. Continue after the quota resets, then review metadata quality before attempting the whole archive.
+The pipeline has moved beyond single-folder validation and into the full-year 2024 pilot. The year pilot is nearly through document analysis, with `161/162` eligible documents complete, but it is still paused due to Bedrock daily token limits. Continue after the quota resets by retrying the final Pass 1 document, then finish Pass 2, export questions, and review metadata quality before attempting the whole archive.

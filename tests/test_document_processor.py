@@ -229,6 +229,31 @@ def test_normalize_metadata_output_flattens_partner_objects() -> None:
     ]
 
 
+def test_normalize_metadata_output_flattens_content_list_objects() -> None:
+    record = _make_inventory_record()
+    payload = analyze_document_mock(record, "run_norm_003").model_dump(mode="json")
+    payload["content"]["milestones"] = [
+        {"milestone": "Concept Paper Due", "date": "2024-05-02"},
+        "Full application",
+    ]
+    payload["content"]["deliverables"] = [
+        {"deliverable": "Final report", "description": "Submit to DOE"},
+    ]
+    payload["content"]["risks"] = [
+        {"risk": "Eligibility uncertainty", "description": "Topic fit unclear"},
+    ]
+
+    normalized = normalize_metadata_output(payload)
+    validated = DocumentMetadata.model_validate(normalized)
+
+    assert validated.content.milestones == [
+        "Concept Paper Due - 2024-05-02",
+        "Full application",
+    ]
+    assert validated.content.deliverables == ["Final report - Submit to DOE"]
+    assert validated.content.risks == ["Eligibility uncertainty - Topic fit unclear"]
+
+
 def test_build_local_extract_prompt_truncates_large_extraction() -> None:
     user_prompt = "Analyze this document"
     extracted = "A" * 80
