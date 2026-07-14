@@ -107,6 +107,12 @@ def build_folder_metadata(
     ) + sum(1 for d in documents for u in d.uncertainties if str(u.downstream_impact) == "critical")
 
     key_documents = _identify_key_documents(documents)
+    technical_focus = union_lists(
+        [d.content.primary_topics + d.content.technologies for d in documents]
+    )[:_MAX_TECHNICAL_FOCUS]
+    commercial_focus = union_lists([d.content.applications for d in documents])[
+        :_MAX_COMMERCIAL_FOCUS
+    ]
 
     if proposal is not None:
         canonical = _canonical_fields_from_proposal(proposal)
@@ -127,12 +133,6 @@ def build_folder_metadata(
         partners = canonical["partners"]
         tracker_match_status = canonical["tracker_match_status"]
         tracker_disagreements = canonical["tracker_disagreements"]
-        technical_focus = union_lists(
-            [d.content.primary_topics + d.content.technologies for d in documents]
-        )[:_MAX_TECHNICAL_FOCUS]
-        commercial_focus = union_lists([d.content.applications for d in documents])[
-            :_MAX_COMMERCIAL_FOCUS
-        ]
         (
             folder_summary_short,
             folder_summary_detailed,
@@ -181,12 +181,6 @@ def build_folder_metadata(
             ignore={"unknown", ""},
         )
         partners = union_lists([d.proposal_context.partners for d in documents])
-        technical_focus = union_lists(
-            [d.content.primary_topics + d.content.technologies for d in documents]
-        )[:_MAX_TECHNICAL_FOCUS]
-        commercial_focus = union_lists([d.content.applications for d in documents])[
-            :_MAX_COMMERCIAL_FOCUS
-        ]
 
         tracker_match_status = TrackerMatchStatus.not_attempted
         tracker_disagreements = []

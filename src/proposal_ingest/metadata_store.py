@@ -92,10 +92,22 @@ class MetadataStore:
         self.proposal_by_id_dir.mkdir(parents=True, exist_ok=True)
         path = self.proposal_metadata_path(metadata.proposal_id)
         self._write_json(path, metadata)
+        return path
+
+    def write_proposal_metadata_jsonl(self, proposals: Iterable[ProposalMetadata]) -> Path:
+        """Overwrite the consolidated proposal-metadata JSONL from a full set of records.
+
+        Unlike document metadata (appended incrementally as each file is
+        analyzed), all proposal records for a run are recomputed together on
+        every ``synthesize-proposals`` invocation, so this rewrites the file
+        cleanly rather than appending — otherwise reruns would duplicate rows.
+        """
         self.proposal_metadata_dir.mkdir(parents=True, exist_ok=True)
-        with self.all_proposal_metadata_jsonl.open("a", encoding="utf-8") as handle:
-            handle.write(json.dumps(metadata.model_dump(mode="json"), sort_keys=True))
-            handle.write("\n")
+        path = self.all_proposal_metadata_jsonl
+        with path.open("w", encoding="utf-8") as handle:
+            for proposal in proposals:
+                handle.write(json.dumps(proposal.model_dump(mode="json"), sort_keys=True))
+                handle.write("\n")
         return path
 
     def load_proposal_metadata_by_id(self) -> dict[str, ProposalMetadata]:

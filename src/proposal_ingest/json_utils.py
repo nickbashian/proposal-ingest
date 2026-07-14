@@ -39,14 +39,20 @@ def parse_json_object_response(raw_text: str) -> dict[str, Any]:
         except json.JSONDecodeError:
             pass
 
-        start = candidate.find("{")
-        if start < 0:
-            continue
-        try:
-            parsed, _ = decoder.raw_decode(candidate[start:])
-        except json.JSONDecodeError:
-            continue
-        if isinstance(parsed, dict):
-            return parsed
+        # Retry from every '{' in turn, not just the first: stray braces in
+        # leading commentary would otherwise make raw_decode fail immediately
+        # even when a valid JSON object follows later in the text.
+        start = 0
+        while True:
+            start = candidate.find("{", start)
+            if start < 0:
+                break
+            try:
+                parsed, _ = decoder.raw_decode(candidate[start:])
+                if isinstance(parsed, dict):
+                    return parsed
+            except json.JSONDecodeError:
+                pass
+            start += 1
 
     raise ValueError("Model response did not contain a JSON object")

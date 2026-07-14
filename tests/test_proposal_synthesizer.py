@@ -404,6 +404,36 @@ def test_budget_document_gets_budget_policy() -> None:
     assert treatment.policy_applied == "budgets_excluded_from_rag"
 
 
+def test_budget_flagged_document_treatment_is_excluded_even_with_high_priority() -> None:
+    docs = [
+        _make_doc(
+            document_id="doc_001",
+            role="budget",
+            version_status="final",
+            contains_budget_or_rates=True,
+            rag_priority="high",
+        )
+    ]
+    metadata = build_deterministic_proposal_metadata(docs)
+    treatment = metadata.knowledge_base_treatment[0]
+    assert str(treatment.recommended_rag_treatment) == "exclude"
+
+
+def test_personal_info_flagged_document_treatment_is_excluded() -> None:
+    docs = [
+        _make_doc(
+            document_id="doc_001",
+            role="technical_volume",
+            version_status="final",
+            contains_personal_info=True,
+            rag_priority="high",
+        )
+    ]
+    metadata = build_deterministic_proposal_metadata(docs)
+    treatment = metadata.knowledge_base_treatment[0]
+    assert str(treatment.recommended_rag_treatment) == "exclude"
+
+
 def test_draft_retained_policy_without_unique_reasoning() -> None:
     docs = [
         _make_doc(document_id="doc_final", role="technical_volume", version_status="final"),
@@ -564,6 +594,46 @@ def test_context_packet_low_value_role_never_gets_full_text() -> None:
     assert packet["documents"][0]["full_text_included"] is False
 
 
+def test_context_packet_budget_flagged_document_never_gets_full_text() -> None:
+    docs = [
+        _make_doc(
+            document_id="doc_001",
+            role="technical_volume",
+            version_status="final",
+            contains_budget_or_rates=True,
+        )
+    ]
+    preliminary = build_deterministic_proposal_metadata(docs)
+    packet = build_proposal_context_packet(
+        docs,
+        tracker_rows=None,
+        policies=_POLICIES,
+        preliminary=preliminary,
+        max_full_text_documents=8,
+    )
+    assert packet["documents"][0]["full_text_included"] is False
+
+
+def test_context_packet_personal_info_flagged_document_never_gets_full_text() -> None:
+    docs = [
+        _make_doc(
+            document_id="doc_001",
+            role="technical_volume",
+            version_status="final",
+            contains_personal_info=True,
+        )
+    ]
+    preliminary = build_deterministic_proposal_metadata(docs)
+    packet = build_proposal_context_packet(
+        docs,
+        tracker_rows=None,
+        policies=_POLICIES,
+        preliminary=preliminary,
+        max_full_text_documents=8,
+    )
+    assert packet["documents"][0]["full_text_included"] is False
+
+
 def test_context_packet_high_value_role_falls_back_to_summary_when_file_missing() -> None:
     docs = [
         _make_doc(
@@ -597,6 +667,41 @@ def test_synthesize_mock_mode_matches_deterministic() -> None:
     deterministic = build_deterministic_proposal_metadata(docs)
     assert mock_result.canonical_identity == deterministic.canonical_identity
     assert mock_result.synthesis_source == "mock"
+
+
+def test_synthesize_real_mode_resolves_policies_from_configured_path(monkeypatch) -> None:
+    docs = [_make_doc(document_id="doc_001")]
+    captured: dict[str, object] = {}
+
+    def _fake_load_policies(path=None):
+        captured["path"] = path
+        return _POLICIES
+
+    def _fake_load_runtime_config() -> RuntimeConfig:
+        return RuntimeConfig()
+
+    def _fake_create_client(config: RuntimeConfig) -> object:
+        return object()
+
+    def _fake_call(*_args, **kwargs):
+        return ('{"canonical_identity": {"proposal_name": "unknown"}}', {})
+
+    monkeypatch.setattr(
+        "proposal_ingest.proposal_synthesizer.load_knowledge_base_policies",
+        _fake_load_policies,
+    )
+    monkeypatch.setattr("proposal_ingest.config.load_runtime_config", _fake_load_runtime_config)
+    monkeypatch.setattr(
+        "proposal_ingest.bedrock_client.create_bedrock_runtime_client", _fake_create_client
+    )
+    monkeypatch.setattr("proposal_ingest.bedrock_client.call_converse_with_text", _fake_call)
+
+    config = RuntimeConfig()
+    config.synthesis.policies_path = "/custom/knowledge_base_policies.yaml"
+
+    synthesize_proposal_metadata(docs, use_mock=False, config=config)
+
+    assert captured["path"] == "/custom/knowledge_base_policies.yaml"
 
 
 def test_synthesize_real_mode_calls_bedrock_and_merges_system_fields(monkeypatch) -> None:
@@ -697,3 +802,43 @@ def test_synthesize_all_proposals_writes_loadable_json(tmp_path: Path) -> None:
     assert "prop_aaa" in loaded
     assert isinstance(loaded["prop_aaa"], ProposalMetadata)
     assert loaded["prop_aaa"].document_count == 1
+
+
+def test_synthesize_all_proposals_rerun_does_not_duplicate_jsonl(tmp_path: Path) -> None:
+    store = MetadataStore(tmp_path / "run_001")
+    doc_a = _make_doc(document_id="doc_a", proposal_id="prop_aaa")
+    doc_b = _make_doc(document_id="doc_b", proposal_id="prop_bbb")
+    store.write_document_metadata(doc_a, append_jsonl=False)
+    store.write_document_metadata(doc_b, append_jsonl=False)
+
+    synthesize_all_proposals(store, use_mock=True, policies=_POLICIES)
+    synthesize_all_proposals(store, use_mock=True, policies=_POLICIES)
+
+    lines = store.all_proposal_metadata_jsonl.read_text(encoding="utf-8").splitlines()
+    assert len(lines) == 2
+
+
+def test_synthesize_all_proposals_resolves_policies_from_configured_path(
+    tmp_path: Path, monkeypatch
+) -> None:
+    store = MetadataStore(tmp_path / "run_001")
+    doc = _make_doc(document_id="doc_001", proposal_id="prop_aaa")
+    store.write_document_metadata(doc, append_jsonl=False)
+
+    captured: dict[str, object] = {}
+
+    def _fake_load_policies(path=None):
+        captured["path"] = path
+        return _POLICIES
+
+    monkeypatch.setattr(
+        "proposal_ingest.proposal_synthesizer.load_knowledge_base_policies",
+        _fake_load_policies,
+    )
+
+    config = RuntimeConfig()
+    config.synthesis.policies_path = "/custom/knowledge_base_policies.yaml"
+
+    synthesize_all_proposals(store, use_mock=True, config=config)
+
+    assert captured["path"] == "/custom/knowledge_base_policies.yaml"

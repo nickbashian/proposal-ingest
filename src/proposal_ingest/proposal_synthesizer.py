@@ -152,7 +152,11 @@ def synthesize_proposal_metadata(
     if use_mock:
         return deterministic
 
-    resolved_policies = policies if policies is not None else load_knowledge_base_policies()
+    resolved_policies = (
+        policies
+        if policies is not None
+        else load_knowledge_base_policies(config.synthesis.policies_path if config else None)
+    )
     try:
         return _call_bedrock_for_proposal_synthesis(
             documents,
@@ -184,7 +188,11 @@ def synthesize_all_proposals(
     for doc in store.load_document_metadata_by_id().values():
         docs_by_proposal.setdefault(doc.proposal_id, []).append(doc)
 
-    resolved_policies = policies if policies is not None else load_knowledge_base_policies()
+    resolved_policies = (
+        policies
+        if policies is not None
+        else load_knowledge_base_policies(config.synthesis.policies_path if config else None)
+    )
 
     results: list[ProposalSynthesisResult] = []
     for proposal_id in sorted(docs_by_proposal):
@@ -207,6 +215,8 @@ def synthesize_all_proposals(
         results.append(
             ProposalSynthesisResult(proposal_id=proposal_id, metadata=metadata, json_path=json_path)
         )
+
+    store.write_proposal_metadata_jsonl([result.metadata for result in results])
     return results
 
 
@@ -620,6 +630,10 @@ def _policy_label_for(
 
 
 def _recommended_treatment_for(doc: DocumentMetadata) -> RecommendedRagTreatment:
+    # The budgets/PII-excluded-from-RAG policy always wins: a high rag_priority
+    # (e.g. a mis-classified document) must never surface budget/PII text.
+    if doc.sensitivity.contains_budget_or_rates or doc.sensitivity.contains_personal_info:
+        return RecommendedRagTreatment.exclude
     if (
         doc.opportunity_treatment.opportunity_context_useful
         or doc.opportunity_treatment.boilerplate_heavy
@@ -873,8 +887,12 @@ def _select_full_text(
     """Select a bounded set of documents to include full/extracted text for.
 
     Low-value roles (long opportunity/legal boilerplate) never receive full
-    text, regardless of budget; everything else falls back to the
-    document's own summary when extraction is unavailable or fails.
+    text, regardless of budget. Documents flagged as containing budget/rate
+    or personal information never receive full text either, matching the
+    budgets/PII-excluded-from-RAG standing policy — only their existing,
+    already-reviewed summary is exposed to the synthesis prompt. Everything
+    else falls back to the document's own summary when extraction is
+    unavailable or fails.
     """
     from proposal_ingest.extractors import extract_text
 
@@ -884,6 +902,8 @@ def _select_full_text(
         if len(selected) >= max_documents:
             break
         if _document_value_priority(doc)[0] == 2:
+            continue
+        if doc.sensitivity.contains_budget_or_rates or doc.sensitivity.contains_personal_info:
             continue
 
         text = ""
