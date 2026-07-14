@@ -1,4 +1,11 @@
-"""Tests for the Phase 8 human review question loop."""
+"""Tests for the Phase 8 human review question loop.
+
+Document analysis records material uncertainties for later proposal-level
+reconciliation instead of exporting user-facing questions directly, so these
+tests confirm the exporter ignores document-level `uncertainties` and legacy
+`questions_for_user` entries, and only surfaces explicitly generated
+operational questions (for example, unsupported PowerPoint handling).
+"""
 
 from __future__ import annotations
 
@@ -9,11 +16,12 @@ from pathlib import Path
 
 from proposal_ingest.mock_bedrock import analyze_document_mock
 from proposal_ingest.question_loop import (
+    REVIEW_COLUMNS,
     apply_answers_from_csv,
     export_questions_to_csv,
     stable_question_id,
 )
-from proposal_ingest.schemas import InventoryRecord, QuestionForUser
+from proposal_ingest.schemas import DocumentMetadata, InventoryRecord, QuestionForUser, Uncertainty
 
 
 def _record(file_name: str = "Technical Volume.pdf") -> InventoryRecord:
@@ -37,7 +45,11 @@ def _record(file_name: str = "Technical Volume.pdf") -> InventoryRecord:
     )
 
 
-def _write_run_with_metadata(output_root: Path) -> tuple[Path, InventoryRecord]:
+def _write_run_with_metadata(
+    output_root: Path,
+    *,
+    metadata_overrides: dict[str, object] | None = None,
+) -> tuple[Path, InventoryRecord, DocumentMetadata]:
     run_dir = output_root / "logs" / "run_20260517_120000_abcdef"
     inventory_dir = run_dir / "inventory"
     by_id_dir = run_dir / "document_metadata" / "by_document_id"
@@ -49,33 +61,8 @@ def _write_run_with_metadata(output_root: Path) -> tuple[Path, InventoryRecord]:
         json.dumps(record.model_dump(mode="json")) + "\n", encoding="utf-8"
     )
     metadata = analyze_document_mock(record, run_id=run_dir.name)
-    metadata.questions_for_user = [
-        QuestionForUser(
-            question_id="model_supplied_unstable_id",
-            field="version_status",
-            question="Is this the final submitted version?",
-            priority="high",
-            suggested_options=["final", "draft", "unknown"],
-            model_guess="unknown",
-            answer_type="enum",
-        ),
-        QuestionForUser(
-            question_id="low_priority_id",
-            field="topic_title",
-            question="What is the exact topic title?",
-            priority="low",
-            answer_type="string",
-        ),
-        QuestionForUser(
-            question_id="duplicate_id",
-            field="version_status",
-            question="Is this the final submitted version?",
-            priority="high",
-            suggested_options=["final", "draft", "unknown"],
-            model_guess="unknown",
-            answer_type="enum",
-        ),
-    ]
+    if metadata_overrides:
+        metadata = metadata.model_copy(update=metadata_overrides)
     (by_id_dir / f"{metadata.document_id}.json").write_text(
         json.dumps(metadata.model_dump(mode="json"), indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
@@ -84,7 +71,24 @@ def _write_run_with_metadata(output_root: Path) -> tuple[Path, InventoryRecord]:
         json.dumps(metadata.model_dump(mode="json"), sort_keys=True) + "\n",
         encoding="utf-8",
     )
-    return run_dir, record
+    return run_dir, record, metadata
+
+
+def _write_powerpoint_question(run_dir: Path, record: InventoryRecord) -> None:
+    path = run_dir / "inventory" / "powerpoint_review_questions.jsonl"
+    payload = {
+        "document_id": record.document_id,
+        "proposal_id": record.proposal_id,
+        "source_path": record.source_path,
+        "relative_path": record.relative_path,
+        "question_type": "powerpoint_special_processing",
+        "priority": "medium",
+        "question_text": (
+            "PowerPoint file has no same-stem PDF. Review whether it needs special "
+            "processing before later pipeline stages."
+        ),
+    }
+    path.write_text(json.dumps(payload) + "\n", encoding="utf-8")
 
 
 def _read_rows(path: Path) -> list[dict[str, str]]:
@@ -92,40 +96,110 @@ def _read_rows(path: Path) -> list[dict[str, str]]:
         return [dict(row) for row in csv.DictReader(handle)]
 
 
-def test_questions_export_produces_csv_dedupes_and_suppresses_low(tmp_path: Path) -> None:
-    _run_dir, record = _write_run_with_metadata(tmp_path)
+def _write_manual_answers_csv(path: Path, row: dict[str, str]) -> None:
+    full_row = {column: "" for column in REVIEW_COLUMNS}
+    full_row.update(row)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=REVIEW_COLUMNS)
+        writer.writeheader()
+        writer.writerow(full_row)
+
+
+def test_export_ignores_document_uncertainties(tmp_path: Path) -> None:
+    """A clear document with a proposal-scoped uncertainty produces zero CSV rows."""
+    _write_run_with_metadata(
+        tmp_path,
+        metadata_overrides={
+            "uncertainties": [
+                Uncertainty(
+                    field="proposal_context.award_status",
+                    scope="proposal",
+                    current_guess="awarded",
+                    confidence=0.6,
+                    evidence=["Folder path contains AWD"],
+                    downstream_impact="critical",
+                    reason_unresolved="No award notice present in this document.",
+                )
+            ]
+        },
+    )
+
+    result = export_questions_to_csv(tmp_path)
+
+    assert result.exported_count == 0
+    assert result.suppressed_count == 0
+    assert _read_rows(result.questions_csv) == []
+
+
+def test_export_ignores_legacy_questions_for_user(tmp_path: Path) -> None:
+    """Legacy Pass 1 questions_for_user output must not leak into the review CSV."""
+    _write_run_with_metadata(
+        tmp_path,
+        metadata_overrides={
+            "questions_for_user": [
+                QuestionForUser(
+                    question_id="legacy_q_1",
+                    field="version_status",
+                    question="Is this the final submitted version?",
+                    priority="critical",
+                    answer_type="enum",
+                )
+            ]
+        },
+    )
+
+    result = export_questions_to_csv(tmp_path)
+
+    assert result.exported_count == 0
+    assert _read_rows(result.questions_csv) == []
+
+
+def test_export_still_surfaces_powerpoint_operational_questions(tmp_path: Path) -> None:
+    """Explicitly generated operational questions (e.g. PowerPoint review) still export."""
+    run_dir, record, _metadata = _write_run_with_metadata(tmp_path)
+    _write_powerpoint_question(run_dir, record)
 
     result = export_questions_to_csv(tmp_path)
 
     rows = _read_rows(result.questions_csv)
     assert result.exported_count == 1
-    assert result.suppressed_count == 1
-    assert rows[0]["field"] == "version_status"
-    assert rows[0]["question_id"] == stable_question_id(
-        record.document_id, "version_status", "Is this the final submitted version?"
-    )
+    assert rows[0]["field"] == "needs_powerpoint_processing"
 
 
 def test_question_ids_are_stable_across_runs(tmp_path: Path) -> None:
-    _write_run_with_metadata(tmp_path)
+    run_dir, record, _metadata = _write_run_with_metadata(tmp_path)
+    _write_powerpoint_question(run_dir, record)
 
     first = _read_rows(export_questions_to_csv(tmp_path).questions_csv)[0]["question_id"]
     second = _read_rows(export_questions_to_csv(tmp_path).questions_csv)[0]["question_id"]
 
     assert first == second
+    assert first == stable_question_id(
+        record.document_id,
+        "needs_powerpoint_processing",
+        "PowerPoint file has no same-stem PDF. Review whether it needs special "
+        "processing before later pipeline stages.",
+    )
 
 
 def test_apply_answers_updates_metadata_and_archives(tmp_path: Path) -> None:
-    run_dir, record = _write_run_with_metadata(tmp_path)
-    export_result = export_questions_to_csv(tmp_path)
-    rows = _read_rows(export_result.questions_csv)
-    rows[0]["user_answer"] = "final"
-    with export_result.questions_csv.open("w", encoding="utf-8", newline="") as handle:
-        writer = csv.DictWriter(handle, fieldnames=list(rows[0].keys()))
-        writer.writeheader()
-        writer.writerows(rows)
+    run_dir, record, _metadata = _write_run_with_metadata(tmp_path)
+    answers_csv = tmp_path / "review" / "questions_to_answer.csv"
+    _write_manual_answers_csv(
+        answers_csv,
+        {
+            "question_id": "q_manual_1",
+            "document_id": record.document_id,
+            "proposal_id": record.proposal_id,
+            "field": "version_status",
+            "answer_type": "enum",
+            "user_answer": "final",
+            "status": "open",
+        },
+    )
 
-    result = apply_answers_from_csv(tmp_path, export_result.questions_csv)
+    result = apply_answers_from_csv(tmp_path, answers_csv)
 
     metadata_path = run_dir / "document_metadata" / "by_document_id" / f"{record.document_id}.json"
     metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
@@ -136,16 +210,22 @@ def test_apply_answers_updates_metadata_and_archives(tmp_path: Path) -> None:
 
 
 def test_apply_answers_logs_invalid_answers(tmp_path: Path) -> None:
-    run_dir, record = _write_run_with_metadata(tmp_path)
-    export_result = export_questions_to_csv(tmp_path)
-    rows = _read_rows(export_result.questions_csv)
-    rows[0]["user_answer"] = "not_a_version"
-    with export_result.questions_csv.open("w", encoding="utf-8", newline="") as handle:
-        writer = csv.DictWriter(handle, fieldnames=list(rows[0].keys()))
-        writer.writeheader()
-        writer.writerows(rows)
+    run_dir, record, _metadata = _write_run_with_metadata(tmp_path)
+    answers_csv = tmp_path / "review" / "questions_to_answer.csv"
+    _write_manual_answers_csv(
+        answers_csv,
+        {
+            "question_id": "q_manual_2",
+            "document_id": record.document_id,
+            "proposal_id": record.proposal_id,
+            "field": "version_status",
+            "answer_type": "enum",
+            "user_answer": "not_a_version",
+            "status": "open",
+        },
+    )
 
-    result = apply_answers_from_csv(tmp_path, export_result.questions_csv)
+    result = apply_answers_from_csv(tmp_path, answers_csv)
 
     metadata_path = run_dir / "document_metadata" / "by_document_id" / f"{record.document_id}.json"
     metadata = json.loads(metadata_path.read_text(encoding="utf-8"))

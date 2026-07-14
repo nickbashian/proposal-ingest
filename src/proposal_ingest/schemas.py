@@ -180,6 +180,19 @@ class QuestionPriority(StrEnum):
     critical = "critical"
 
 
+class UncertaintyScope(StrEnum):
+    document = "document"
+    document_family = "document_family"
+    proposal = "proposal"
+
+
+class UncertaintyImpact(StrEnum):
+    low = "low"
+    medium = "medium"
+    high = "high"
+    critical = "critical"
+
+
 class QuestionStatus(StrEnum):
     open = "open"
     answered = "answered"
@@ -387,6 +400,19 @@ class QuestionForUser(BaseModel):
     notes: str | None = None
 
 
+class Uncertainty(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    field: str
+    scope: UncertaintyScope = UncertaintyScope.document
+    current_guess: str | None = None
+    confidence: ConfidenceValue
+    evidence: list[str] = Field(default_factory=list)
+    missing_evidence: str | None = None
+    downstream_impact: UncertaintyImpact = UncertaintyImpact.low
+    reason_unresolved: str
+
+
 class DocumentMetadata(BaseModel):
     model_config = ConfigDict(extra="allow")
 
@@ -403,6 +429,8 @@ class DocumentMetadata(BaseModel):
     sensitivity: SensitivityMetadata
     tracker_matching: TrackerMatchingMetadata = Field(default_factory=TrackerMatchingMetadata)
     confidence: DocumentConfidence
+    uncertainties: list[Uncertainty] = Field(default_factory=list)
+    # Legacy Pass 1 output kept so pre-uncertainty-model runs stay loadable; no longer populated.
     questions_for_user: list[QuestionForUser] = Field(default_factory=list)
     fields_needing_review: list[str] = Field(default_factory=list)
     processing_notes: list[str] = Field(default_factory=list)
