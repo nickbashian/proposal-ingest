@@ -88,12 +88,17 @@ def arbitrate_all_proposals(
     policies: list[dict[str, str]] | None = None,
 ) -> ArbitrationResult:
     """Arbitrate unresolved decisions for every synthesized proposal into review questions."""
-    from proposal_ingest.config import load_runtime_config
+    from proposal_ingest.config import load_knowledge_base_policies, load_runtime_config
 
     runtime_config = config or load_runtime_config()
     max_per_proposal = runtime_config.review.max_questions_per_proposal
     max_per_run = runtime_config.review.max_questions_per_run
     include_low_priority = runtime_config.review.include_low_priority
+    resolved_policies = (
+        policies
+        if policies is not None
+        else load_knowledge_base_policies(runtime_config.synthesis.policies_path)
+    )
 
     output_root = output_root_from_run_dir(store.run_dir)
     overrides = load_human_overrides(output_root)
@@ -112,7 +117,7 @@ def arbitrate_all_proposals(
             max_questions=max_per_proposal,
             include_low_priority=include_low_priority,
             use_mock=use_mock,
-            policies=policies,
+            policies=resolved_policies,
             config=runtime_config,
         )
         all_questions.extend(questions)

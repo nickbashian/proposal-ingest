@@ -26,6 +26,31 @@ def _run_dir(tmp_path: Path, name: str = "run_001") -> Path:
 # ---------------------------------------------------------------------------
 
 
+def test_arbitrate_all_proposals_resolves_policies_from_configured_path(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Real-mode arbitration must load configured knowledge-base policies, not silently drop them."""
+    store = MetadataStore(_run_dir(tmp_path))
+    doc = _make_doc(document_id="doc_001", proposal_id="prop_aaa")
+    store.write_document_metadata(doc, append_jsonl=False)
+    synthesize_all_proposals(store, use_mock=True, policies=_POLICIES)
+
+    captured: dict[str, object] = {}
+
+    def _fake_load_policies(path=None):
+        captured["path"] = path
+        return _POLICIES
+
+    monkeypatch.setattr("proposal_ingest.config.load_knowledge_base_policies", _fake_load_policies)
+
+    config = RuntimeConfig()
+    config.synthesis.policies_path = "/custom/knowledge_base_policies.yaml"
+
+    arbitrate_all_proposals(store, use_mock=True, config=config)
+
+    assert captured["path"] == "/custom/knowledge_base_policies.yaml"
+
+
 def test_no_unresolved_decisions_yields_zero_questions(tmp_path: Path) -> None:
     store = MetadataStore(_run_dir(tmp_path))
     doc = _make_doc(document_id="doc_001", proposal_id="prop_aaa")

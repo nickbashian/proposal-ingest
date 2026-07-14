@@ -496,10 +496,10 @@ def _apply_proposal_scoped_answer(
 
     record = HumanOverrideRecord(
         question_id=question_id,
-        scope=scope,
+        scope=UncertaintyScope(scope),
         proposal_id=proposal_id,
         field=field,
-        decision_type=decision_type,
+        decision_type=UnresolvedDecisionType(decision_type),
         affected_document_ids=affected_document_ids,
         previous_value=previous_value,
         applied_value=applied_value,

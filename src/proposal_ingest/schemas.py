@@ -497,10 +497,10 @@ class HumanOverrideRecord(BaseModel):
     model_config = ConfigDict(extra="allow")
 
     question_id: str
-    scope: str
+    scope: UncertaintyScope
     proposal_id: str
     field: str
-    decision_type: str = "proposal_fact"
+    decision_type: UnresolvedDecisionType = UnresolvedDecisionType.proposal_fact
     affected_document_ids: list[str] = Field(default_factory=list)
     previous_value: Any = None
     applied_value: Any = None
