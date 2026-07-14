@@ -1,0 +1,5 @@
+Technical Volume (Final) - Fake Sensitive Info Proposal
+
+This is the final, submitted technical volume for a fake proposal used to
+exercise sensitivity/restriction handling. It proposes a lightweight sensor
+package for environmental monitoring.

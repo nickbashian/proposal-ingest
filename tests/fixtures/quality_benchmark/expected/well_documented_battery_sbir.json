@@ -1,0 +1,10 @@
+{
+  "proposal_branch": "Well Documented Battery SBIR",
+  "fields": {
+    "question_count": 0,
+    "document_count": 8
+  },
+  "max_question_count": 0,
+  "authoritative_document_roles": ["technical_volume"],
+  "excluded_from_rag_document_roles": ["budget"]
+}

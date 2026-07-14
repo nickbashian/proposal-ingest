@@ -1,0 +1,5 @@
+Team Biosketch - Fake Sensitive Info Proposal
+
+Fake personal biographical detail for a proposed team member: education
+history, prior employment, and other personal information. Restricted from
+general-purpose knowledge-base retrieval and clean-set copying by default.

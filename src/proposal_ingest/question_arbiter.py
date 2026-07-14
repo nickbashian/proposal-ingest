@@ -131,6 +131,14 @@ def arbitrate_all_proposals(
         all_questions = all_questions[:max_per_run]
 
     output_path = store.write_arbitrated_questions(all_questions)
+    store.write_arbitration_summary(
+        {
+            "proposal_count": len(proposals),
+            "question_count": len(all_questions),
+            "suppressed_count": suppressed_count,
+            "resolved_by_override_count": resolved_by_override_count,
+        }
+    )
     return ArbitrationResult(
         run_dir=store.run_dir,
         output_path=output_path,

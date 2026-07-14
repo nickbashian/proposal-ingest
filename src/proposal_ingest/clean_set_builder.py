@@ -5,7 +5,7 @@ from __future__ import annotations
 import csv
 import json
 import shutil
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -14,11 +14,23 @@ from proposal_ingest.human_overrides import load_human_overrides
 from proposal_ingest.metadata_store import MetadataStore
 from proposal_ingest.path_utils import sanitize_filename
 from proposal_ingest.question_loop import stable_question_id
-from proposal_ingest.s3_manifest import build_s3_manifest_row, write_s3_manifest
+from proposal_ingest.retrieval_builder import (
+    build_document_manifest_rows,
+    build_proposal_provenance_report,
+    build_proposal_retrieval_record,
+    build_run_provenance_report,
+)
+from proposal_ingest.s3_manifest import (
+    build_proposal_lineage_index,
+    build_proposal_manifest_row,
+    build_s3_manifest_row,
+    write_s3_manifest,
+)
 from proposal_ingest.schemas import (
     DocumentMetadata,
     FolderMetadata,
     InventoryRecord,
+    ProposalMetadata,
     QuestionPriority,
     QuestionStatus,
     S3ManifestRow,
@@ -66,6 +78,8 @@ class CleanSetBuildResult:
     manifest_path: Path
     manifest_rows: list[S3ManifestRow]
     dry_run: bool = False
+    proposal_retrieval_paths: dict[str, Path] = field(default_factory=dict)
+    quality_report_path: Path | None = None
 
     @property
     def copied_count(self) -> int:
@@ -78,6 +92,10 @@ class CleanSetBuildResult:
     @property
     def manifest_count(self) -> int:
         return len(self.manifest_rows)
+
+    @property
+    def proposal_record_count(self) -> int:
+        return len(self.proposal_retrieval_paths)
 
 
 class CleanSetBlockedError(RuntimeError):
@@ -115,6 +133,16 @@ def build_clean_set(
     documents_by_id = store.load_document_metadata_by_id()
     documents = sorted(documents_by_id.values(), key=_document_sort_key)
     inventory_records = _load_inventory(run_dir)
+    proposals_by_id = store.load_proposal_metadata_by_id()
+    docs_by_proposal: dict[str, list[DocumentMetadata]] = {}
+    for metadata in documents:
+        docs_by_proposal.setdefault(metadata.proposal_id, []).append(metadata)
+    # Pre-indexed once per proposal so building a manifest row per document
+    # stays O(1) per lookup instead of re-scanning each proposal's lineage.
+    lineage_index_by_proposal = {
+        proposal_id: build_proposal_lineage_index(proposal)
+        for proposal_id, proposal in proposals_by_id.items()
+    }
 
     open_critical = _find_open_critical_questions(output_root, documents, store)
     if open_critical and not allow_critical_open:
@@ -131,12 +159,16 @@ def build_clean_set(
 
     excluded_report_path = run_dir / "reports" / "excluded_files.csv"
     manifest_path = run_dir / "manifests" / "s3_manifest.jsonl"
+    quality_report_path: Path | None = run_dir / "reports" / "quality_report.json"
     manifest_rows: list[S3ManifestRow] = []
+    proposal_retrieval_paths: dict[str, Path] = {}
 
     if not dry_run:
         _prepare_branch_clean_dirs(store, documents, force=force)
         _mirror_folder_outputs(store)
         copied_documents: list[CopiedDocument] = []
+        local_clean_paths_by_proposal: dict[str, dict[str, str]] = {}
+        metadata_paths_by_proposal: dict[str, dict[str, str]] = {}
         for metadata, clean_path, metadata_path, clean_filename in plans:
             source_path = Path(metadata.system.source_path)
             clean_path.parent.mkdir(parents=True, exist_ok=True)
@@ -152,7 +184,16 @@ def build_clean_set(
                 clean_filename=clean_filename,
             )
             copied_documents.append(copied)
+            local_clean_paths_by_proposal.setdefault(metadata.proposal_id, {})[
+                metadata.document_id
+            ] = str(clean_path)
+            metadata_paths_by_proposal.setdefault(metadata.proposal_id, {})[
+                metadata.document_id
+            ] = str(metadata_path)
             if s3_manifest_enabled:
+                lineage_by_id, treatment_by_id = lineage_index_by_proposal.get(
+                    metadata.proposal_id, (None, None)
+                )
                 manifest_rows.append(
                     build_s3_manifest_row(
                         metadata,
@@ -160,11 +201,51 @@ def build_clean_set(
                         metadata_path=metadata_path,
                         clean_filename=clean_filename,
                         base_prefix=s3_base_prefix,
+                        lineage_by_id=lineage_by_id,
+                        treatment_by_id=treatment_by_id,
                     )
                 )
 
         _write_excluded_report(excluded_report_path, excluded_rows)
+
+        overrides_by_proposal: dict[str, list[Any]] = {}
+        for override in load_human_overrides(output_root):
+            overrides_by_proposal.setdefault(override.proposal_id, []).append(override)
+
+        for proposal_id, proposal in sorted(proposals_by_id.items()):
+            proposal_docs = docs_by_proposal.get(proposal_id)
+            if not proposal_docs:
+                continue
+            retrieval_path, proposal_metadata_path = _write_proposal_retrieval_artifacts(
+                store,
+                proposal,
+                proposal_docs,
+                local_clean_paths=local_clean_paths_by_proposal.get(proposal_id, {}),
+                metadata_paths=metadata_paths_by_proposal.get(proposal_id, {}),
+                overrides=overrides_by_proposal.get(proposal_id, []),
+            )
+            proposal_retrieval_paths[proposal_id] = retrieval_path
+            if s3_manifest_enabled:
+                manifest_rows.append(
+                    build_proposal_manifest_row(
+                        proposal,
+                        retrieval_path=retrieval_path,
+                        metadata_path=proposal_metadata_path,
+                        base_prefix=s3_base_prefix,
+                    )
+                )
+
         write_s3_manifest(manifest_path, manifest_rows)
+        assert quality_report_path is not None
+        # Only count proposals that actually got a retrieval object above
+        # (i.e. have at least one currently loaded document), so this count
+        # can never diverge from the proposal_record rows in the manifest.
+        reported_proposals = {
+            proposal_id: proposal
+            for proposal_id, proposal in proposals_by_id.items()
+            if docs_by_proposal.get(proposal_id)
+        }
+        _write_run_quality_report(store, quality_report_path, reported_proposals)
     else:
         copied_documents = [
             CopiedDocument(
@@ -178,16 +259,38 @@ def build_clean_set(
             for metadata, clean_path, metadata_path, clean_filename in plans
         ]
         if s3_manifest_enabled:
-            manifest_rows = [
-                build_s3_manifest_row(
-                    metadata,
-                    local_clean_path=clean_path,
-                    metadata_path=metadata_path,
-                    clean_filename=clean_filename,
-                    base_prefix=s3_base_prefix,
+            manifest_rows = []
+            for metadata, clean_path, metadata_path, clean_filename in plans:
+                lineage_by_id, treatment_by_id = lineage_index_by_proposal.get(
+                    metadata.proposal_id, (None, None)
                 )
-                for metadata, clean_path, metadata_path, clean_filename in plans
-            ]
+                manifest_rows.append(
+                    build_s3_manifest_row(
+                        metadata,
+                        local_clean_path=clean_path,
+                        metadata_path=metadata_path,
+                        clean_filename=clean_filename,
+                        base_prefix=s3_base_prefix,
+                        lineage_by_id=lineage_by_id,
+                        treatment_by_id=treatment_by_id,
+                    )
+                )
+            for proposal_id, proposal in sorted(proposals_by_id.items()):
+                if proposal_id not in docs_by_proposal:
+                    continue
+                branch_dir = store.mirror_branch_dir(proposal.year_folder, proposal.proposal_branch)
+                retrieval_path = branch_dir / "retrieval" / "proposal_context.json"
+                proposal_metadata_path = branch_dir / "proposal_metadata.json"
+                proposal_retrieval_paths[proposal_id] = retrieval_path
+                manifest_rows.append(
+                    build_proposal_manifest_row(
+                        proposal,
+                        retrieval_path=retrieval_path,
+                        metadata_path=proposal_metadata_path,
+                        base_prefix=s3_base_prefix,
+                    )
+                )
+        quality_report_path = None
 
     return CleanSetBuildResult(
         run_dir=run_dir,
@@ -197,6 +300,8 @@ def build_clean_set(
         manifest_path=manifest_path,
         manifest_rows=manifest_rows,
         dry_run=dry_run,
+        proposal_retrieval_paths=proposal_retrieval_paths,
+        quality_report_path=quality_report_path,
     )
 
 
@@ -379,6 +484,72 @@ def _write_metadata_copy(path: Path, metadata: DocumentMetadata) -> None:
         json.dumps(metadata.model_dump(mode="json"), indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
     )
+
+
+def _write_json_dict(path: Path, payload: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def _write_proposal_retrieval_artifacts(
+    store: MetadataStore,
+    proposal: ProposalMetadata,
+    proposal_docs: list[DocumentMetadata],
+    *,
+    local_clean_paths: dict[str, str],
+    metadata_paths: dict[str, str],
+    overrides: list[Any],
+) -> tuple[Path, Path]:
+    """Write one proposal's first-class RAG retrieval object and provenance report.
+
+    Returns ``(retrieval_path, proposal_metadata_path)`` so the caller can
+    reference them from the S3/RAG manifest's proposal-record row.
+    """
+    branch_dir = store.mirror_branch_dir(proposal.year_folder, proposal.proposal_branch)
+    retrieval_dir = branch_dir / "retrieval"
+
+    retrieval_record = build_proposal_retrieval_record(proposal, proposal_docs)
+    retrieval_path = retrieval_dir / "proposal_context.json"
+    _write_json_dict(retrieval_path, retrieval_record.model_dump(mode="json"))
+
+    manifest_entries = build_document_manifest_rows(
+        proposal,
+        proposal_docs,
+        local_clean_paths=local_clean_paths,
+        metadata_paths=metadata_paths,
+    )
+    document_manifest_path = retrieval_dir / "document_manifest.jsonl"
+    document_manifest_path.parent.mkdir(parents=True, exist_ok=True)
+    with document_manifest_path.open("w", encoding="utf-8") as handle:
+        for entry in manifest_entries:
+            handle.write(json.dumps(entry.model_dump(mode="json"), sort_keys=True))
+            handle.write("\n")
+
+    proposal_metadata_path = branch_dir / "proposal_metadata.json"
+    _write_json_dict(proposal_metadata_path, proposal.model_dump(mode="json"))
+
+    provenance_report = build_proposal_provenance_report(
+        proposal, proposal_docs, overrides=overrides
+    )
+    _write_json_dict(branch_dir / "provenance_report.json", provenance_report)
+
+    return retrieval_path, proposal_metadata_path
+
+
+def _write_run_quality_report(
+    store: MetadataStore,
+    quality_report_path: Path,
+    proposals_by_id: dict[str, ProposalMetadata],
+) -> None:
+    arbitration_summary = store.load_arbitration_summary()
+    report = build_run_provenance_report(
+        list(proposals_by_id.values()),
+        arbitrated_questions=store.load_arbitrated_questions(),
+        suppressed_count=arbitration_summary.get("suppressed_count", 0),
+        resolved_by_override_count=arbitration_summary.get("resolved_by_override_count", 0),
+        usage_records=store.load_usage_records(),
+    )
+    _write_json_dict(quality_report_path, report)
 
 
 def _write_excluded_report(path: Path, rows: list[dict[str, Any]]) -> Path:

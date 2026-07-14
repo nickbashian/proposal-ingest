@@ -18,13 +18,68 @@ from proposal_ingest.schemas import (
     DocumentRole,
     InclusionMetadata,
     InventoryRecord,
+    OpportunityTreatment,
     OriginType,
     ProcessingStatus,
     ProposalContext,
     RagPriority,
+    RecommendedRagTreatment,
+    SensitivityLabel,
     SensitivityMetadata,
     SystemMetadata,
     VersionStatus,
+)
+
+# ---------------------------------------------------------------------------
+# Version-status / sensitivity keyword heuristics (filename only)
+# ---------------------------------------------------------------------------
+
+_VERSION_KEYWORDS: list[tuple[list[str], VersionStatus]] = [
+    (["superseded", "obsolete", "old version"], VersionStatus.superseded),
+    (["final"], VersionStatus.final),
+    (["submitted"], VersionStatus.submitted_version),
+    (["template", "blank"], VersionStatus.template),
+    (["draft", "working", "wip"], VersionStatus.draft),
+]
+
+# Multi-word phrases only: a bare "rate"/"rates" also matches ordinary words
+# like "Corporate" or "Separate" as a substring, which would wrongly flag an
+# unrelated document as budget-sensitive and exclude it from RAG.
+_BUDGET_KEYWORDS = [
+    "budget",
+    "cost",
+    "pricing",
+    "billing rate",
+    "labor rate",
+    "indirect rate",
+    "rate table",
+    "rate sheet",
+    "financial",
+]
+_PERSONAL_INFO_KEYWORDS = ["ssn", "social security", "personal", "pii", "biosketch", "salary"]
+
+_HIGH_VALUE_ROLES: frozenset[DocumentRole] = frozenset(
+    {
+        DocumentRole.technical_volume,
+        DocumentRole.project_description,
+        DocumentRole.statement_of_work,
+        DocumentRole.award_notice,
+        DocumentRole.review_feedback,
+        DocumentRole.final_report,
+        DocumentRole.milestone_report,
+        DocumentRole.commercialization_plan,
+    }
+)
+
+_LOW_VALUE_ROLES: frozenset[DocumentRole] = frozenset(
+    {
+        DocumentRole.rfp,
+        DocumentRole.foa,
+        DocumentRole.topic_description,
+        DocumentRole.submission_instructions,
+        DocumentRole.terms_and_conditions,
+        DocumentRole.dfars_clauses,
+    }
 )
 
 # ---------------------------------------------------------------------------
@@ -33,7 +88,7 @@ from proposal_ingest.schemas import (
 
 _CATEGORY_KEYWORDS: list[tuple[list[str], DocumentCategory]] = [
     (
-        ["budget", "cost", "price", "financial", "rates"],
+        ["budget", "cost", "price", "financial", "rate table", "rate sheet"],
         DocumentCategory.budget_financial,
     ),
     (
@@ -41,7 +96,17 @@ _CATEGORY_KEYWORDS: list[tuple[list[str], DocumentCategory]] = [
         DocumentCategory.proposal_response,
     ),
     (
-        ["rfp", "foa", "baa", "solicitation", "opportunity", "announcement", "topic"],
+        [
+            "rfp",
+            "foa",
+            "baa",
+            "nofo",
+            "solicitation",
+            "opportunity",
+            "announcement",
+            "topic",
+            "evaluation criteria",
+        ],
         DocumentCategory.opportunity_document,
     ),
     (
@@ -87,8 +152,12 @@ _ROLE_KEYWORDS: list[tuple[list[str], DocumentRole]] = [
     (["biosketch", "bio sketch", "cv", "resume"], DocumentRole.biosketch),
     (["data management", "dmp"], DocumentRole.data_management_plan),
     (["current and pending", "other support"], DocumentRole.current_pending_support),
-    (["rfp", "baa"], DocumentRole.rfp),
-    (["foa", "funding opportunity"], DocumentRole.foa),
+    (["evaluation criteria", "evaluation guidance"], DocumentRole.evaluation_criteria),
+    # Checked before the rfp/"solicitation" tuple below: a filename like
+    # "NOFO Solicitation" contains both keywords, and "nofo" is the more
+    # specific signal (Notice of Funding Opportunity == foa), so it must win.
+    (["foa", "funding opportunity", "nofo"], DocumentRole.foa),
+    (["rfp", "baa", "solicitation"], DocumentRole.rfp),
     (["topic description", "topic"], DocumentRole.topic_description),
     (["submission instructions", "instructions"], DocumentRole.submission_instructions),
     (["terms and conditions", "terms"], DocumentRole.terms_and_conditions),
@@ -168,6 +237,94 @@ def _infer_agency(branch_name: str) -> Agency:
     return Agency.unknown
 
 
+def _infer_version_status(stem: str) -> tuple[VersionStatus, str]:
+    """Return the best-guess version status and supporting evidence text.
+
+    Deliberately keyword-only (no content reading), matching the rest of
+    this module's mock heuristics: this is what lets file-based benchmark
+    fixtures exercise real draft/final/superseded standing policies through
+    ``--mock-bedrock`` without any AWS calls.
+    """
+    lower = stem.lower()
+    for keywords, version in _VERSION_KEYWORDS:
+        for keyword in keywords:
+            if keyword in lower:
+                return version, f"Filename contains '{keyword}' (mock mode)."
+    return VersionStatus.unknown, "No version keyword found in filename (mock mode)."
+
+
+def _infer_sensitivity(stem: str, category: DocumentCategory) -> SensitivityMetadata:
+    lower = stem.lower()
+    labels: list[SensitivityLabel] = []
+    contains_budget = category == DocumentCategory.budget_financial or any(
+        kw in lower for kw in _BUDGET_KEYWORDS
+    )
+    contains_personal = any(kw in lower for kw in _PERSONAL_INFO_KEYWORDS)
+
+    if contains_budget:
+        labels.append(SensitivityLabel.financial_sensitive)
+    if contains_personal:
+        labels.append(SensitivityLabel.personal_info)
+
+    reasons = []
+    if contains_personal:
+        reasons.append("Filename indicates personal information (mock mode).")
+
+    return SensitivityMetadata(
+        sensitivity_labels=labels,
+        contains_budget_or_rates=contains_budget,
+        contains_personal_info=contains_personal,
+        manual_review_required=contains_personal,
+        manual_review_reasons=reasons,
+    )
+
+
+def _infer_opportunity_treatment(stem: str, category: DocumentCategory) -> OpportunityTreatment:
+    if category != DocumentCategory.opportunity_document:
+        return OpportunityTreatment()
+
+    if "evaluation" in stem.lower():
+        return OpportunityTreatment(
+            opportunity_context_useful=True,
+            boilerplate_heavy=False,
+            useful_context_summary=(
+                "Filename indicates evaluation-criteria content, treated as useful "
+                "opportunity context rather than generic boilerplate (mock mode)."
+            ),
+            recommended_rag_treatment=RecommendedRagTreatment.summary_only,
+        )
+
+    return OpportunityTreatment(
+        opportunity_context_useful=False,
+        boilerplate_heavy=True,
+        boilerplate_summary="Generic opportunity/solicitation document (mock mode).",
+        recommended_rag_treatment=RecommendedRagTreatment.metadata_only,
+    )
+
+
+def _infer_rag_priority(
+    role: DocumentRole,
+    version: VersionStatus,
+    sensitivity: SensitivityMetadata,
+) -> RagPriority:
+    if sensitivity.contains_budget_or_rates or sensitivity.contains_personal_info:
+        return RagPriority.exclude
+    if role in _LOW_VALUE_ROLES:
+        return RagPriority.low
+    if version == VersionStatus.superseded:
+        return RagPriority.low
+    if version in (VersionStatus.draft, VersionStatus.working_version):
+        return RagPriority.low
+    if role in _HIGH_VALUE_ROLES and version in (
+        VersionStatus.final,
+        VersionStatus.submitted_version,
+    ):
+        return RagPriority.high
+    if role in _HIGH_VALUE_ROLES:
+        return RagPriority.medium
+    return RagPriority.medium
+
+
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
@@ -186,9 +343,15 @@ def analyze_document_mock(record: InventoryRecord, run_id: str) -> DocumentMetad
     origin = _infer_origin(category)
     program_str = _infer_program(record.proposal_branch)
     agency = _infer_agency(record.proposal_branch)
+    version, version_evidence = _infer_version_status(stem)
+    sensitivity = _infer_sensitivity(stem, category)
+    opportunity_treatment = _infer_opportunity_treatment(stem, category)
+    rag_priority = _infer_rag_priority(role, version, sensitivity)
 
     low_confidence = 0.30
     moderate_confidence = 0.45
+
+    include_in_future_rag = record.eligible_for_processing and rag_priority != RagPriority.exclude
 
     return DocumentMetadata(
         schema_version=APP_SCHEMA_VERSION,
@@ -214,8 +377,8 @@ def analyze_document_mock(record: InventoryRecord, run_id: str) -> DocumentMetad
             document_category=category,
             document_role=role,
             origin_type=origin,
-            version_status=VersionStatus.unknown,
-            draft_or_final_evidence="Inferred from filename only (mock mode).",
+            version_status=version,
+            draft_or_final_evidence=version_evidence,
             language="unknown",
             document_date=None,
         ),
@@ -235,10 +398,11 @@ def analyze_document_mock(record: InventoryRecord, run_id: str) -> DocumentMetad
             technologies=[],
             applications=[],
         ),
+        opportunity_treatment=opportunity_treatment,
         inclusion=InclusionMetadata(
             include_in_clean_set=record.eligible_for_processing,
-            include_in_future_rag=record.eligible_for_processing,
-            rag_priority=RagPriority.medium,
+            include_in_future_rag=include_in_future_rag,
+            rag_priority=rag_priority,
             include_reason=(
                 "Eligible document (mock mode)." if record.eligible_for_processing else None
             ),
@@ -246,10 +410,7 @@ def analyze_document_mock(record: InventoryRecord, run_id: str) -> DocumentMetad
                 None if record.eligible_for_processing else "Not eligible for processing."
             ),
         ),
-        sensitivity=SensitivityMetadata(
-            sensitivity_labels=[],
-            manual_review_required=False,
-        ),
+        sensitivity=sensitivity,
         confidence=DocumentConfidence(
             document_category=cat_conf,
             document_role=role_conf,

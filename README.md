@@ -198,6 +198,35 @@ proposal-ingest build-folders --output-root /path/to/output
 proposal-ingest build-clean-set --output-root /path/to/output
 ```
 
+## Quality benchmarks and proposal-aware RAG output
+
+`build-clean-set` writes a first-class RAG retrieval object for each proposal
+(`retrieval/proposal_context.json` + `retrieval/document_manifest.jsonl` under
+each proposal's mirror directory), a `proposal_metadata.json` copy of the
+synthesized proposal record, a per-proposal `provenance_report.json`
+explaining *why* documents were ranked and treated the way they were, and a
+run-level `reports/quality_report.json` summarizing question counts,
+document treatment, and Bedrock usage across the whole run. The S3/RAG
+manifest (`manifests/s3_manifest.jsonl`) carries one `proposal_record` row
+per proposal plus one `document` row per copied document, so a downstream
+retrieval client can list proposal overviews first and drill into
+authoritative or supporting documents from there. See
+`docs/14_quality_benchmarks.md` for the full field reference.
+
+Run the deterministic, mock-mode benchmark suite locally with:
+
+```bash
+proposal-ingest evaluate-quality \
+  --source-root sample_data/quality_benchmark \
+  --output-root tmp/quality_eval \
+  --mock-bedrock \
+  --expected tests/fixtures/quality_benchmark/expected
+```
+
+Add `--real-bedrock` (in place of `--mock-bedrock`) to compare real-model
+synthesis against the same structural expectations locally; this is opt-in
+and must never run in CI.
+
 ## Output structure
 
 ```
@@ -221,25 +250,33 @@ processed_output/
         by_proposal_id/<proposal_id>.json
       arbitration/
         arbitrated_questions.jsonl
+        arbitration_summary.json
       folder_metadata/<proposal_id>.json
       reports/
         excluded_files.csv
         processing_errors.csv
         bedrock_usage.csv
+        quality_report.json
       manifests/
         s3_manifest.jsonl
       mirror/
         <year>/<proposal_branch>/
           folder_metadata.json
           folder_summary.md
+          proposal_metadata.json
+          provenance_report.json
           documents/
           metadata/
+          retrieval/
+            proposal_context.json
+            document_manifest.jsonl
 ```
 
 ## Implementation status
 
-Phases 1 through 12, plus Phase 14 (proposal-level synthesis) and Phase 15
-(proposal-level question arbitration), are complete:
+Phases 1 through 12, plus Phase 14 (proposal-level synthesis), Phase 15
+(proposal-level question arbitration), and the issue #9 end-to-end quality
+benchmark / proposal-aware RAG output work, are complete:
 
 - Phase 1 — scanner and inventory
 - Phase 2 — file rules and PowerPoint handling
@@ -255,10 +292,12 @@ Phases 1 through 12, plus Phase 14 (proposal-level synthesis) and Phase 15
 - Phase 12 — clean document set, excluded-files report, and S3 manifest
 - Phase 14 — canonical proposal-level synthesis (`synthesize-proposals`), consumed by folder synthesis
 - Phase 15 — proposal-level question arbitration (`arbitrate-questions`), consumed by the human review loop
+- Issue #9 — end-to-end quality benchmark suite, proposal-first-class RAG retrieval objects,
+  enriched S3/RAG manifest relationships, provenance/quality reports, and `evaluate-quality`
 
 Current implementation boundary:
 
-- `scan`, `process-file`, `analyze`, `synthesize-proposals`, `arbitrate-questions`, `export-questions`, `answer-questions`, `apply-answers`, `build-folders`, `build-clean-set`, `process-folder`, `run-all`, and `bedrock-smoke-test` are wired.
+- `scan`, `process-file`, `analyze`, `synthesize-proposals`, `arbitrate-questions`, `export-questions`, `answer-questions`, `apply-answers`, `build-folders`, `build-clean-set`, `evaluate-quality`, `process-folder`, `run-all`, and `bedrock-smoke-test` are wired.
 - Use `--mock-bedrock` for local and CI-safe runs; real Bedrock paths require valid AWS credentials and model access.
 - `run-all` now finishes by building the clean set and manifest unless critical review questions remain open.
 

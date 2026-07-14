@@ -22,6 +22,7 @@ Use small, testable increments. Avoid starting with Bedrock. Build the local sta
 - Phase 13 — not started
 - Phase 14 — complete
 - Phase 15 — complete
+- Phase 16 — complete
 
 ## Phase 0 — Repo bootstrap
 
@@ -346,6 +347,51 @@ Acceptance criteria:
 - a previously applied proposal-scoped answer survives a `synthesize-proposals`
   rerun, and a question only reopens when fresh evidence conflicts with it
 - mock mode and CI never call Bedrock for question arbitration
+
+## Phase 16 — End-to-end quality benchmarks and proposal-aware RAG output (issue #9)
+
+Status: complete
+
+Deliverables:
+
+- `sample_data/quality_benchmark/`: a small, representative set of
+  synthetic multi-document proposal branches (well-documented/zero-question,
+  and personal-info/restricted), plus `tests/fixtures/quality_benchmark/expected/`
+  machine-readable expected-outcome fixtures keyed by proposal branch
+- `quality_benchmarks.py`: `load_expected_outcomes` / `evaluate_expected_outcomes`,
+  shared by the CLI and `tests/test_end_to_end_quality.py`
+- `evaluate-quality` CLI command: runs scan through `build-clean-set`
+  (mock by default, `--real-bedrock` opt-in and local-only), prints the
+  run-level quality report, and — with `--expected` — exits non-zero on any
+  structural mismatch against the expected-outcome fixtures
+- `mock_bedrock.py`: filename-keyword inference for `version_status`
+  (draft/final/submitted/superseded/working/template), sensitivity flags
+  (budget/rate, personal info), and opportunity-document treatment
+  (evaluation-criteria vs. generic boilerplate), so file-based mock-mode
+  fixtures exercise the real standing knowledge-base policies deterministically
+- `retrieval_builder.py`: builds `ProposalRetrievalRecord` (proposal-level
+  RAG retrieval entry point), per-proposal `DocumentManifestEntry` rows, a
+  per-proposal provenance/explainability report, and the run-level
+  provenance report — all from data the pipeline had already synthesized,
+  never by duplicating source document text
+- `clean_set_builder.py`: writes `proposal_metadata.json`,
+  `provenance_report.json`, and `retrieval/{proposal_context.json,
+  document_manifest.jsonl}` per proposal, plus `reports/quality_report.json`
+  at the run level
+- `s3_manifest.py` / `schemas.S3ManifestRow`: one `proposal_record` row per
+  proposal (`object_type` discriminator) plus enriched `document` rows
+  carrying `document_role`, `version_status`, `authority_rank`,
+  `recommended_rag_treatment`, `is_authoritative`,
+  `superseded_by_document_id`, `contains_unique_reasoning`,
+  `sensitivity_labels`, and `parent_proposal_record`
+- `metadata_store.py`: `write_arbitration_summary` / `load_arbitration_summary`
+  (arbitration counters not carried by any individual `ReviewQuestion`, so
+  `build-clean-set` can report them even as a separate CLI invocation from
+  `arbitrate-questions`) and `load_usage_records`
+
+Acceptance criteria: see `docs/14_quality_benchmarks.md`, which also records
+which existing unit tests already cover the cross-document conflict/dedup
+scenarios this phase does not duplicate.
 
 ## Suggested implementation chunks for AI coding agents
 

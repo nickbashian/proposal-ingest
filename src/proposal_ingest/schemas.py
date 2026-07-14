@@ -208,6 +208,11 @@ class AuthorityRank(StrEnum):
     excluded = "excluded"
 
 
+class ManifestObjectType(StrEnum):
+    proposal_record = "proposal_record"
+    document = "document"
+
+
 class UnresolvedDecisionType(StrEnum):
     proposal_fact = "proposal_fact"
     authoritative_document = "authoritative_document"
@@ -706,15 +711,111 @@ class ProposalMetadata(BaseModel):
 
 
 class S3ManifestRow(BaseModel):
+    """One row of the local S3/RAG manifest (issue #9).
+
+    ``object_type`` distinguishes a proposal-level retrieval entry point
+    (``proposal_record``, pointing at ``retrieval/proposal_context.json``)
+    from an individual document row, so downstream ingestion can list
+    proposal overviews first and drill into authoritative or supporting
+    documents. Document-relationship fields are populated for document rows
+    from the owning proposal's ``document_lineage``/``knowledge_base_treatment``
+    and are left unset on proposal-record rows.
+    """
+
     model_config = ConfigDict(extra="allow")
 
-    document_id: str
+    object_type: ManifestObjectType = ManifestObjectType.document
+    document_id: str | None = None
     proposal_id: str
     local_clean_path: str
     metadata_path: str
     recommended_s3_key: str
     include_in_future_rag: bool
     rag_priority: RagPriority
+    document_role: DocumentRole | None = None
+    version_status: VersionStatus | None = None
+    authority_rank: AuthorityRank | None = None
+    recommended_rag_treatment: RecommendedRagTreatment | None = None
+    is_authoritative: bool | None = None
+    superseded_by_document_id: str | None = None
+    contains_unique_reasoning: bool | None = None
+    sensitivity_labels: list[SensitivityLabel] = Field(default_factory=list)
+    parent_proposal_record: str | None = None
+
+
+class DocumentManifestEntry(BaseModel):
+    """One document's relationship/treatment row in a proposal's local retrieval manifest.
+
+    Written to ``retrieval/document_manifest.jsonl`` inside each proposal's
+    clean-set mirror directory (proposal-scoped, unlike the run-wide
+    ``manifests/s3_manifest.jsonl``), so a retrieval client that has already
+    loaded ``retrieval/proposal_context.json`` can enumerate that proposal's
+    documents and their treatment without re-deriving it from raw metadata.
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+    object_type: ManifestObjectType = ManifestObjectType.document
+    document_id: str
+    proposal_id: str
+    parent_proposal_record: str
+    file_name_original: str | None = None
+    document_role: DocumentRole = DocumentRole.unknown
+    version_status: VersionStatus = VersionStatus.unknown
+    authority_rank: AuthorityRank = AuthorityRank.supporting
+    is_authoritative: bool = False
+    superseded_by_document_id: str | None = None
+    contains_unique_reasoning: bool = False
+    rag_priority: RagPriority = RagPriority.medium
+    recommended_rag_treatment: RecommendedRagTreatment = RecommendedRagTreatment.metadata_only
+    sensitivity_labels: list[SensitivityLabel] = Field(default_factory=list)
+    local_clean_path: str | None = None
+    metadata_path: str | None = None
+
+
+class SensitivitySummary(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    labels_present: list[SensitivityLabel] = Field(default_factory=list)
+    manual_review_required_count: int = Field(default=0, ge=0)
+    restricted_document_ids: list[str] = Field(default_factory=list)
+
+
+class RagPrioritySummary(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    high: int = Field(default=0, ge=0)
+    medium: int = Field(default=0, ge=0)
+    low: int = Field(default=0, ge=0)
+    exclude: int = Field(default=0, ge=0)
+
+
+class ProposalRetrievalRecord(BaseModel):
+    """First-class RAG retrieval object for one proposal (issue #9).
+
+    Written to ``retrieval/proposal_context.json`` in the proposal's
+    clean-set mirror directory. This is the primary retrieval entry point:
+    it carries canonical identity, outcome, narrative summary, and
+    references to evidence and documents, but never duplicates full source
+    document text — callers drill into ``retrieval/document_manifest.jsonl``
+    or the mirrored ``documents/`` directory for that.
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+    schema_version: str = APP_SCHEMA_VERSION
+    proposal_id: str
+    canonical_identity: ProposalCanonicalIdentity
+    organizations: ProposalOrganizations = Field(default_factory=ProposalOrganizations)
+    proposal_summary: ProposalSummary = Field(default_factory=ProposalSummary)
+    document_lineage: list[DocumentLineageEntry] = Field(default_factory=list)
+    key_documents: list[ProposalKeyDocument] = Field(default_factory=list)
+    knowledge_base_treatment: list[KnowledgeBaseTreatment] = Field(default_factory=list)
+    evidence: list[ProposalEvidenceRef] = Field(default_factory=list)
+    unresolved_decisions: list[UnresolvedDecision] = Field(default_factory=list)
+    sensitivity_summary: SensitivitySummary = Field(default_factory=SensitivitySummary)
+    rag_priority_summary: RagPrioritySummary = Field(default_factory=RagPrioritySummary)
+    document_count: int = Field(default=0, ge=0)
 
 
 class RunManifest(BaseModel):

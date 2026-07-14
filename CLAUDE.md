@@ -45,7 +45,8 @@ This is a **local-first batch pipeline** — Python owns orchestration, state, v
 4. `arbitrate-questions` → proposal-level unresolved decisions reconciled into a small, budget-capped set of review questions
 5. `export-questions` / `apply-answers` → human CSV review loop (proposal- and document-scoped answers both apply here)
 6. `build-folders` → proposal-branch metadata and Markdown summaries
-7. `build-clean-set` → mirrored output directory + S3 manifest JSONL
+7. `build-clean-set` → mirrored output directory, per-proposal RAG retrieval objects, and S3/RAG manifest JSONL
+8. `evaluate-quality` → runs the pipeline against a benchmark corpus and checks it against expected-outcome fixtures (see `docs/14_quality_benchmarks.md`)
 
 **Config resolution order** (later wins): `config/default_config.yaml` → `.env` → CLI flags.
 
@@ -72,8 +73,10 @@ This is a **local-first batch pipeline** — Python owns orchestration, state, v
 | `question_loop.py` | Generates and applies `questions_to_answer.csv` |
 | `two_pass.py` | Low-confidence re-analysis with branch context |
 | `folder_builder.py` | Synthesizes folder metadata and Markdown summaries |
-| `clean_set_builder.py` | Copies selected docs into clean output tree |
-| `s3_manifest.py` | Generates `manifests/s3_manifest.jsonl` |
+| `clean_set_builder.py` | Copies selected docs into clean output tree; writes per-proposal retrieval/provenance artifacts and the run-level quality report |
+| `retrieval_builder.py` | Builds proposal RAG retrieval records, document manifest rows, and provenance reports |
+| `s3_manifest.py` | Generates `manifests/s3_manifest.jsonl` (proposal-record + document rows) |
+| `quality_benchmarks.py` | Compares synthesized proposals against expected-outcome fixtures (`evaluate-quality`, tests) |
 
 **ID conventions:**
 - `document_id = "doc_" + sha256(file_bytes)[0:16]` — content-stable, dedup-safe
@@ -93,7 +96,7 @@ This is a **local-first batch pipeline** — Python owns orchestration, state, v
 
 ## Implementation status
 
-**Phases 1-11 complete** — scanner, file rules, metadata store, mock/real Bedrock paths, question loop, two-pass review, tracker integration, and folder synthesis are implemented. Phase 12 clean-set/S3 manifest work remains. The suggested branch order is:
+**Phases 1-16 complete** — scanner, file rules, metadata store, mock/real Bedrock paths, question loop, two-pass review, tracker integration, folder synthesis, clean-set/S3 manifest, proposal-level synthesis and question arbitration, and the end-to-end quality benchmark suite / proposal-aware RAG output (issue #9, see `docs/14_quality_benchmarks.md`) are implemented. The suggested branch order below reflects the original phased plan; later phases (14-16) shipped directly against their linked issues instead:
 
 1. `feature/scanner-inventory` (Phase 1–2)
 2. `feature/metadata-models` (Phase 3)

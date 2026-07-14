@@ -1,0 +1,6 @@
+Evaluation Criteria - Fake DOE SBIR Program
+
+Describes how submitted technical volumes are scored: technical merit,
+commercialization potential, and team qualifications. Unlike the generic
+NOFO boilerplate, this document explains what reviewers actually look for
+and is useful context for shaping future proposals.
