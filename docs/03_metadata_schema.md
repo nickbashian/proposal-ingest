@@ -393,7 +393,10 @@ question quota. Proposal-wide unknowns (award status, submission status, version
 lineage, RAG treatment) should be recorded with `scope: proposal` rather than
 repeated as a document-specific entry on every file in the branch. Consolidating
 uncertainties across a proposal and turning them into user-facing questions is a
-later, separate stage — not part of document analysis.
+later, separate stage — not part of document analysis. Until that stage exists, a
+`downstream_impact: critical` uncertainty still blocks `build-clean-set` (the same
+safety gate that legacy critical `questions_for_user` entries triggered) unless the
+operator passes `--allow-critical-open`.
 
 ```json
 {

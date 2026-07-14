@@ -281,11 +281,10 @@ def export_questions(
     config: str | None = typer.Option(None, "--config", help="Path to a YAML config file."),
 ) -> None:
     """Export the questions-to-answer CSV for human review."""
-    runtime_cfg = load_runtime_config(config)
+    load_runtime_config(config)  # Validates --config; this command has no other use for it.
     result = export_questions_to_csv(
         Path(output_root),
         include_low_priority=include_low_priority,
-        max_questions_per_file=runtime_cfg.questions.max_questions_per_file,
     )
     console.print(f"Exported {result.exported_count} questions to {result.questions_csv}")
     if result.suppressed_count:
@@ -524,7 +523,6 @@ def run_all(
     questions_result = export_questions_to_csv(
         Path(output_root),
         include_low_priority=False,
-        max_questions_per_file=runtime_cfg.questions.max_questions_per_file,
     )
     console.print(
         f"Exported {questions_result.exported_count} questions to "
@@ -628,7 +626,6 @@ def process_folder(
     questions_result = export_questions_to_csv(
         Path(output_root),
         include_low_priority=False,
-        max_questions_per_file=runtime_cfg.questions.max_questions_per_file,
     )
     console.print(
         f"Exported {questions_result.exported_count} questions to "

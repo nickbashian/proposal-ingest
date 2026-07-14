@@ -145,14 +145,12 @@ def export_questions_to_csv(
     output_root: Path,
     *,
     include_low_priority: bool = False,
-    max_questions_per_file: int = 5,
 ) -> ExportQuestionsResult:
     """Export operational review questions; document analysis no longer feeds this CSV directly.
 
     Document-level uncertainties are recorded on metadata for later proposal-level
     reconciliation (a separate, not-yet-implemented stage) rather than exported here.
     """
-    del max_questions_per_file  # Reserved for future proposal-level question arbitration.
     run_dir = find_latest_run_dir(output_root)
     review_dir = Path(output_root) / "review"
     review_dir.mkdir(parents=True, exist_ok=True)

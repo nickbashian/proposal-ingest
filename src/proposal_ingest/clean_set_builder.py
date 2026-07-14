@@ -21,6 +21,7 @@ from proposal_ingest.schemas import (
     QuestionPriority,
     QuestionStatus,
     S3ManifestRow,
+    UncertaintyImpact,
 )
 
 EXCLUDED_FILES_COLUMNS = [
@@ -458,6 +459,27 @@ def _find_open_critical_questions(
                 "proposal_id": metadata.proposal_id,
                 "field": question.field or "",
                 "question": question.question,
+            }
+
+        for uncertainty in metadata.uncertainties:
+            if uncertainty.downstream_impact != UncertaintyImpact.critical:
+                continue
+            question_id = stable_question_id(
+                metadata.document_id,
+                uncertainty.field,
+                uncertainty.reason_unresolved,
+            )
+            if question_id in applied_question_ids:
+                continue
+            review_row = review_by_id.get(question_id)
+            if review_row and _review_row_resolved(review_row):
+                continue
+            blocked[question_id] = {
+                "question_id": question_id,
+                "document_id": metadata.document_id,
+                "proposal_id": metadata.proposal_id,
+                "field": uncertainty.field,
+                "question": uncertainty.reason_unresolved,
             }
 
     for row in review_rows:

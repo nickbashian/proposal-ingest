@@ -18,6 +18,8 @@ from proposal_ingest.schemas import (
     QuestionPriority,
     QuestionStatus,
     RagPriority,
+    Uncertainty,
+    UncertaintyImpact,
 )
 
 
@@ -142,6 +144,36 @@ def test_critical_open_questions_stop_clean_set(tmp_path: Path) -> None:
                     question="Should this critical document be included?",
                     priority=QuestionPriority.critical,
                     status=QuestionStatus.open,
+                )
+            ]
+        }
+    )
+    run_dir = _write_docs(output_root, docs)
+
+    with pytest.raises(CleanSetBlockedError):
+        build_clean_set(output_root)
+
+    result = build_clean_set(output_root, allow_critical_open=True)
+    assert result.copied_count == 1
+    assert (_branch_documents_dir(run_dir) / "Technical_Volume.pdf").exists()
+
+
+def test_critical_uncertainty_stops_clean_set(tmp_path: Path) -> None:
+    """A critical-impact uncertainty should block clean output just like a critical question."""
+    _source_root, output_root, docs = _build_metadata_run(
+        tmp_path,
+        {"Technical Volume.pdf": "include"},
+    )
+    metadata = docs[0]
+    docs[0] = metadata.model_copy(
+        update={
+            "uncertainties": [
+                Uncertainty(
+                    field="proposal_context.award_status",
+                    scope="proposal",
+                    confidence=0.5,
+                    downstream_impact=UncertaintyImpact.critical,
+                    reason_unresolved="Award status could not be confirmed from this document.",
                 )
             ]
         }

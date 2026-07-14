@@ -94,7 +94,16 @@ def _convert_legacy_questions_to_uncertainties(payload: dict[str, Any]) -> None:
             if isinstance(text, str) and text.strip()
         ]
         impact = _LEGACY_PRIORITY_TO_IMPACT.get(
-            str(question.get("priority", "")).strip().lower(), "low"
+            str(question.get("priority") or "").strip().lower(), "low"
+        )
+        suggested_options = question.get("suggested_options")
+        option_strings = (
+            [item for item in suggested_options if isinstance(item, str) and item.strip()]
+            if isinstance(suggested_options, list)
+            else []
+        )
+        evidence = (
+            [f"Legacy suggested options: {', '.join(option_strings)}"] if option_strings else []
         )
         uncertainties.append(
             {
@@ -102,7 +111,7 @@ def _convert_legacy_questions_to_uncertainties(payload: dict[str, Any]) -> None:
                 "scope": "document",
                 "current_guess": question.get("model_guess"),
                 "confidence": 0.5,
-                "evidence": [],
+                "evidence": evidence,
                 "missing_evidence": None,
                 "downstream_impact": impact,
                 "reason_unresolved": " ".join(reason_parts) or "Legacy Pass 1 question.",

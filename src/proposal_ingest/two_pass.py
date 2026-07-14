@@ -430,6 +430,22 @@ def _merge_pass2_candidate(
                 )
             )
 
+    pass1_uncertainties = pass1_data.get("uncertainties") or []
+    pass2_uncertainties = pass2_data.get("uncertainties") or []
+    if pass1_uncertainties != pass2_uncertainties:
+        merged["uncertainties"] = pass2_uncertainties
+        changes.append(
+            _change_row(
+                pass1_metadata.document_id,
+                "uncertainties",
+                pass1_uncertainties,
+                pass2_uncertainties,
+                0.0,
+                0.0,
+                "pass2_uncertainties_replaced",
+            )
+        )
+
     merged["system"]["processing_status"] = ProcessingStatus.processed_pass2
     merged_notes = list(
         dict.fromkeys(

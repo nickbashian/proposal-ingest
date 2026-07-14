@@ -411,17 +411,16 @@ def test_inject_system_fields_overrides_document_id() -> None:
     assert data["system"]["processing_status"] == ProcessingStatus.processed_pass1
 
 
-def test_inject_system_fields_auto_assigns_question_ids() -> None:
+def test_inject_system_fields_does_not_touch_questions_for_user() -> None:
+    """Legacy question_id assignment is normalize_metadata_output's job, not this function's.
+
+    normalize_metadata_output() always runs first and clears questions_for_user (converting
+    any legacy entries into uncertainties), so _inject_system_fields has nothing left to do here.
+    """
     record = _make_inventory_record()
-    data: dict = {
-        "questions_for_user": [
-            {"question": "What is this?", "priority": "high"},
-        ]
-    }
+    data: dict = {"questions_for_user": []}
     _inject_system_fields(data, record, "run_x", "direct_bedrock")
-    q = data["questions_for_user"][0]
-    assert "question_id" in q
-    assert q["question_id"].startswith("q_")
+    assert data["questions_for_user"] == []
 
 
 # ---------------------------------------------------------------------------

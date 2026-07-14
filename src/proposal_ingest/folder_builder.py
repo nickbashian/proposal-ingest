@@ -157,7 +157,7 @@ def build_folder_metadata(
         for d in documents
         for q in d.questions_for_user
         if str(q.priority) == "critical" and str(q.status) == "open"
-    )
+    ) + sum(1 for d in documents for u in d.uncertainties if str(u.downstream_impact) == "critical")
 
     key_documents = _identify_key_documents(documents)
 
