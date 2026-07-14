@@ -39,10 +39,23 @@ _VERSION_KEYWORDS: list[tuple[list[str], VersionStatus]] = [
     (["final"], VersionStatus.final),
     (["submitted"], VersionStatus.submitted_version),
     (["template", "blank"], VersionStatus.template),
-    (["draft", "working", "wip", "old draft"], VersionStatus.draft),
+    (["draft", "working", "wip"], VersionStatus.draft),
 ]
 
-_BUDGET_KEYWORDS = ["budget", "cost", "price", "pricing", "rate", "rates", "financial"]
+# Multi-word phrases only: a bare "rate"/"rates" also matches ordinary words
+# like "Corporate" or "Separate" as a substring, which would wrongly flag an
+# unrelated document as budget-sensitive and exclude it from RAG.
+_BUDGET_KEYWORDS = [
+    "budget",
+    "cost",
+    "pricing",
+    "billing rate",
+    "labor rate",
+    "indirect rate",
+    "rate table",
+    "rate sheet",
+    "financial",
+]
 _PERSONAL_INFO_KEYWORDS = ["ssn", "social security", "personal", "pii", "biosketch", "salary"]
 
 _HIGH_VALUE_ROLES: frozenset[DocumentRole] = frozenset(
@@ -75,7 +88,7 @@ _LOW_VALUE_ROLES: frozenset[DocumentRole] = frozenset(
 
 _CATEGORY_KEYWORDS: list[tuple[list[str], DocumentCategory]] = [
     (
-        ["budget", "cost", "price", "financial", "rates"],
+        ["budget", "cost", "price", "financial", "rate table", "rate sheet"],
         DocumentCategory.budget_financial,
     ),
     (
@@ -140,8 +153,11 @@ _ROLE_KEYWORDS: list[tuple[list[str], DocumentRole]] = [
     (["data management", "dmp"], DocumentRole.data_management_plan),
     (["current and pending", "other support"], DocumentRole.current_pending_support),
     (["evaluation criteria", "evaluation guidance"], DocumentRole.evaluation_criteria),
-    (["rfp", "baa", "solicitation"], DocumentRole.rfp),
+    # Checked before the rfp/"solicitation" tuple below: a filename like
+    # "NOFO Solicitation" contains both keywords, and "nofo" is the more
+    # specific signal (Notice of Funding Opportunity == foa), so it must win.
     (["foa", "funding opportunity", "nofo"], DocumentRole.foa),
+    (["rfp", "baa", "solicitation"], DocumentRole.rfp),
     (["topic description", "topic"], DocumentRole.topic_description),
     (["submission instructions", "instructions"], DocumentRole.submission_instructions),
     (["terms and conditions", "terms"], DocumentRole.terms_and_conditions),

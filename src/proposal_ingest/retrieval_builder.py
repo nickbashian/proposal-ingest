@@ -16,6 +16,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from proposal_ingest.schemas import (
+    AuthorityRank,
     BedrockUsageRecord,
     DocumentManifestEntry,
     DocumentMetadata,
@@ -23,7 +24,6 @@ from proposal_ingest.schemas import (
     ManifestObjectType,
     ProposalMetadata,
     ProposalRetrievalRecord,
-    RagPriority,
     RagPrioritySummary,
     RecommendedRagTreatment,
     ReviewQuestion,
@@ -91,43 +91,58 @@ def build_document_manifest_rows(
     local_clean_paths: dict[str, str] | None = None,
     metadata_paths: dict[str, str] | None = None,
 ) -> list[DocumentManifestEntry]:
-    """Build one proposal-scoped manifest row per document, in lineage order.
+    """Build one proposal-scoped manifest row per document, in document order.
+
+    Iterates ``documents`` (the currently loaded document set) rather than
+    ``proposal.document_lineage`` alone: if ``build-clean-set`` runs without a
+    fresh ``synthesize-proposals`` pass in between, a document analyzed since
+    the proposal's last synthesis won't have a lineage entry yet, and using
+    lineage as the iteration source would silently drop it from the manifest
+    even though it may still be physically copied to the clean set. Falling
+    back to the document's own metadata when no lineage entry exists keeps
+    every loaded document represented.
 
     ``local_clean_paths``/``metadata_paths`` are optional document_id-keyed
     lookups of where each document actually landed in the clean-set mirror;
     documents that were excluded (and so were never copied) simply omit
     those paths rather than pointing at a file that does not exist.
     """
-    documents_by_id = {doc.document_id: doc for doc in documents}
+    lineage_by_id = {entry.document_id: entry for entry in proposal.document_lineage}
     treatment_by_id = {t.document_id: t for t in proposal.knowledge_base_treatment}
     local_clean_paths = local_clean_paths or {}
     metadata_paths = metadata_paths or {}
 
     rows: list[DocumentManifestEntry] = []
-    for entry in proposal.document_lineage:
-        doc = documents_by_id.get(entry.document_id)
-        treatment = treatment_by_id.get(entry.document_id)
+    for doc in documents:
+        entry = lineage_by_id.get(doc.document_id)
+        treatment = treatment_by_id.get(doc.document_id)
         rows.append(
             DocumentManifestEntry(
-                document_id=entry.document_id,
+                document_id=doc.document_id,
                 proposal_id=proposal.proposal_id,
                 parent_proposal_record=proposal.proposal_id,
-                file_name_original=entry.file_name_original,
-                document_role=entry.document_role,
-                version_status=entry.version_status,
-                authority_rank=entry.authority_rank,
-                is_authoritative=entry.is_authoritative,
-                superseded_by_document_id=entry.superseded_by_document_id,
-                contains_unique_reasoning=entry.contains_unique_reasoning,
-                rag_priority=treatment.rag_priority if treatment else RagPriority.medium,
+                file_name_original=(
+                    entry.file_name_original if entry else doc.system.file_name_original
+                ),
+                document_role=(
+                    entry.document_role if entry else doc.document_identity.document_role
+                ),
+                version_status=(
+                    entry.version_status if entry else doc.document_identity.version_status
+                ),
+                authority_rank=entry.authority_rank if entry else AuthorityRank.supporting,
+                is_authoritative=entry.is_authoritative if entry else False,
+                superseded_by_document_id=entry.superseded_by_document_id if entry else None,
+                contains_unique_reasoning=entry.contains_unique_reasoning if entry else False,
+                rag_priority=(treatment.rag_priority if treatment else doc.inclusion.rag_priority),
                 recommended_rag_treatment=(
                     treatment.recommended_rag_treatment
                     if treatment
                     else RecommendedRagTreatment.metadata_only
                 ),
-                sensitivity_labels=doc.sensitivity.sensitivity_labels if doc else [],
-                local_clean_path=local_clean_paths.get(entry.document_id),
-                metadata_path=metadata_paths.get(entry.document_id),
+                sensitivity_labels=doc.sensitivity.sensitivity_labels,
+                local_clean_path=local_clean_paths.get(doc.document_id),
+                metadata_path=metadata_paths.get(doc.document_id),
             )
         )
     return rows

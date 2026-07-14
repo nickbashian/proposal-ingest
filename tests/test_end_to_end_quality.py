@@ -25,9 +25,13 @@ from proposal_ingest.clean_set_builder import build_clean_set
 from proposal_ingest.cli import app
 from proposal_ingest.folder_builder import build_all_folders
 from proposal_ingest.metadata_store import MetadataStore
-from proposal_ingest.proposal_synthesizer import synthesize_all_proposals
+from proposal_ingest.proposal_synthesizer import (
+    build_deterministic_proposal_metadata,
+    synthesize_all_proposals,
+)
 from proposal_ingest.question_arbiter import arbitrate_all_proposals
 from proposal_ingest.quality_benchmarks import evaluate_expected_outcomes, load_expected_outcomes
+from proposal_ingest.retrieval_builder import build_document_manifest_rows
 from proposal_ingest.scanner import scan_source_root
 from proposal_ingest.schemas import (
     DocumentManifestEntry,
@@ -36,7 +40,7 @@ from proposal_ingest.schemas import (
     ProposalRetrievalRecord,
 )
 
-from tests.test_proposal_synthesizer import _BASE_DOC
+from tests.test_proposal_synthesizer import _BASE_DOC, _make_doc
 
 _runner = CliRunner()
 _SAMPLE_ROOT = Path(__file__).resolve().parents[1] / "sample_data" / "quality_benchmark"
@@ -349,3 +353,52 @@ def test_evaluate_expected_outcomes_flags_question_count_regression(tmp_path: Pa
     )
     assert mismatches != []
     assert "question_count" in mismatches[0]
+
+
+def test_evaluate_quality_cli_fails_when_no_fixture_matches_a_proposal_branch(
+    tmp_path: Path,
+) -> None:
+    """A fixture directory that exists but names the wrong branch must not look like a pass."""
+    expected_dir = tmp_path / "expected"
+    expected_dir.mkdir()
+    (expected_dir / "nonexistent_branch.json").write_text(
+        json.dumps({"proposal_branch": "Nonexistent Branch", "max_question_count": 0}),
+        encoding="utf-8",
+    )
+
+    invoke_result = _runner.invoke(
+        app,
+        [
+            "evaluate-quality",
+            "--source-root",
+            str(_SAMPLE_ROOT),
+            "--output-root",
+            str(tmp_path / "output"),
+            "--mock-bedrock",
+            "--expected",
+            str(expected_dir),
+        ],
+    )
+
+    assert invoke_result.exit_code != 0
+    assert "none of the" in invoke_result.output
+
+
+# ---------------------------------------------------------------------------
+# Document manifest robustness against a stale proposal record
+# ---------------------------------------------------------------------------
+
+
+def test_document_manifest_includes_documents_missing_from_stale_lineage() -> None:
+    """A document analyzed after the proposal's last synthesis must still get a row."""
+    known_doc = _make_doc(document_id="doc_known_0001")
+    proposal = build_deterministic_proposal_metadata([known_doc])
+    assert len(proposal.document_lineage) == 1
+
+    new_doc = _make_doc(document_id="doc_new_0002", file_name="New Document.pdf")
+    rows = build_document_manifest_rows(proposal, [known_doc, new_doc])
+
+    assert len(rows) == 2
+    new_row = next(r for r in rows if r.document_id == "doc_new_0002")
+    assert new_row.file_name_original == "New Document.pdf"
+    assert new_row.document_role == new_doc.document_identity.document_role

@@ -817,6 +817,13 @@ def evaluate_quality(
         else:
             console.print(f"[green]PASS[/green] {proposal.proposal_branch}")
 
+    if checked == 0:
+        console.print(
+            f"[red]Error: none of the {len(expected_outcomes)} expected-outcome fixture(s) "
+            "matched a synthesized proposal_branch for this source root[/red]"
+        )
+        raise typer.Exit(code=1)
+
     console.print(f"Expected-outcome check: {checked - len(failures)}/{checked} proposal(s) passed")
     if failures:
         raise typer.Exit(code=1)

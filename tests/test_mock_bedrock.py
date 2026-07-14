@@ -21,6 +21,7 @@ from proposal_ingest.schemas import (
     DocumentRole,
     InventoryRecord,
     ProcessingStatus,
+    RagPriority,
 )
 
 _runner = CliRunner()
@@ -154,6 +155,23 @@ def test_mock_ineligible_record_excluded_from_rag() -> None:
     assert result.inclusion.include_in_clean_set is False
     assert result.inclusion.include_in_future_rag is False
     assert result.inclusion.exclude_reason is not None
+
+
+def test_mock_does_not_flag_ordinary_word_containing_rate_as_budget_sensitive() -> None:
+    """A bare 'rate' substring must not falsely flag e.g. 'Corporate' as budget-sensitive."""
+    record = _make_fake_inventory_record("Corporate Support Letter.pdf", extension=".pdf")
+    result = analyze_document_mock(record, "run_x")
+
+    assert result.sensitivity.contains_budget_or_rates is False
+    assert result.inclusion.rag_priority != RagPriority.exclude
+
+
+def test_mock_infers_foa_role_for_nofo_over_generic_solicitation_keyword() -> None:
+    """'NOFO' is the more specific signal and must win over the generic 'solicitation' keyword."""
+    record = _make_fake_inventory_record("NOFO Solicitation.pdf", extension=".pdf")
+    result = analyze_document_mock(record, "run_x")
+
+    assert result.document_identity.document_role == DocumentRole.foa
 
 
 def test_mock_infers_doe_agency_from_branch_name() -> None:

@@ -237,7 +237,15 @@ def build_clean_set(
 
         write_s3_manifest(manifest_path, manifest_rows)
         assert quality_report_path is not None
-        _write_run_quality_report(store, quality_report_path, proposals_by_id)
+        # Only count proposals that actually got a retrieval object above
+        # (i.e. have at least one currently loaded document), so this count
+        # can never diverge from the proposal_record rows in the manifest.
+        reported_proposals = {
+            proposal_id: proposal
+            for proposal_id, proposal in proposals_by_id.items()
+            if docs_by_proposal.get(proposal_id)
+        }
+        _write_run_quality_report(store, quality_report_path, reported_proposals)
     else:
         copied_documents = [
             CopiedDocument(
