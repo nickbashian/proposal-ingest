@@ -53,6 +53,21 @@ def build_proposal_record_s3_key(
     return "/".join(part.strip("/") for part in parts if part.strip("/"))
 
 
+def build_proposal_lineage_index(
+    proposal: ProposalMetadata,
+) -> tuple[dict[str, DocumentLineageEntry], dict[str, KnowledgeBaseTreatment]]:
+    """Pre-index one proposal's lineage/treatment by ``document_id``, once.
+
+    Callers building a manifest row per copied document should call this
+    once per proposal and reuse the result, rather than re-scanning
+    ``document_lineage``/``knowledge_base_treatment`` (each proportional to
+    the proposal's document count) for every document.
+    """
+    lineage_by_id = {entry.document_id: entry for entry in proposal.document_lineage}
+    treatment_by_id = {t.document_id: t for t in proposal.knowledge_base_treatment}
+    return lineage_by_id, treatment_by_id
+
+
 def build_s3_manifest_row(
     metadata: DocumentMetadata,
     *,
@@ -60,26 +75,20 @@ def build_s3_manifest_row(
     metadata_path: Path,
     clean_filename: str,
     base_prefix: str = "proposal-history",
-    proposal: ProposalMetadata | None = None,
+    lineage_by_id: dict[str, DocumentLineageEntry] | None = None,
+    treatment_by_id: dict[str, KnowledgeBaseTreatment] | None = None,
 ) -> S3ManifestRow:
     """Create one schema-validated S3/RAG manifest row for a copied document.
 
-    When ``proposal`` (the copied document's synthesized proposal record) is
-    supplied, the row is enriched with lineage and knowledge-base-treatment
-    relationship fields; without it, only the fields document-level metadata
-    can supply on its own are populated.
+    ``lineage_by_id``/``treatment_by_id`` are the copied document's
+    synthesized proposal's ``document_lineage``/``knowledge_base_treatment``,
+    pre-indexed by ``document_id`` (see ``build_proposal_lineage_index``).
+    When supplied, the row is enriched with lineage and
+    knowledge-base-treatment relationship fields; without them, only the
+    fields document-level metadata can supply on its own are populated.
     """
-    lineage: DocumentLineageEntry | None = None
-    treatment: KnowledgeBaseTreatment | None = None
-    if proposal is not None:
-        lineage = next(
-            (e for e in proposal.document_lineage if e.document_id == metadata.document_id),
-            None,
-        )
-        treatment = next(
-            (t for t in proposal.knowledge_base_treatment if t.document_id == metadata.document_id),
-            None,
-        )
+    lineage = (lineage_by_id or {}).get(metadata.document_id)
+    treatment = (treatment_by_id or {}).get(metadata.document_id)
 
     return S3ManifestRow(
         object_type=ManifestObjectType.document,
@@ -106,7 +115,7 @@ def build_s3_manifest_row(
         superseded_by_document_id=lineage.superseded_by_document_id if lineage else None,
         contains_unique_reasoning=lineage.contains_unique_reasoning if lineage else None,
         sensitivity_labels=metadata.sensitivity.sensitivity_labels,
-        parent_proposal_record=metadata.proposal_id if proposal is not None else None,
+        parent_proposal_record=metadata.proposal_id if lineage_by_id is not None else None,
     )
 
 

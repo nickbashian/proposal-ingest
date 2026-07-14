@@ -21,6 +21,7 @@ from proposal_ingest.retrieval_builder import (
     build_run_provenance_report,
 )
 from proposal_ingest.s3_manifest import (
+    build_proposal_lineage_index,
     build_proposal_manifest_row,
     build_s3_manifest_row,
     write_s3_manifest,
@@ -136,6 +137,12 @@ def build_clean_set(
     docs_by_proposal: dict[str, list[DocumentMetadata]] = {}
     for metadata in documents:
         docs_by_proposal.setdefault(metadata.proposal_id, []).append(metadata)
+    # Pre-indexed once per proposal so building a manifest row per document
+    # stays O(1) per lookup instead of re-scanning each proposal's lineage.
+    lineage_index_by_proposal = {
+        proposal_id: build_proposal_lineage_index(proposal)
+        for proposal_id, proposal in proposals_by_id.items()
+    }
 
     open_critical = _find_open_critical_questions(output_root, documents, store)
     if open_critical and not allow_critical_open:
@@ -184,6 +191,9 @@ def build_clean_set(
                 metadata.document_id
             ] = str(metadata_path)
             if s3_manifest_enabled:
+                lineage_by_id, treatment_by_id = lineage_index_by_proposal.get(
+                    metadata.proposal_id, (None, None)
+                )
                 manifest_rows.append(
                     build_s3_manifest_row(
                         metadata,
@@ -191,7 +201,8 @@ def build_clean_set(
                         metadata_path=metadata_path,
                         clean_filename=clean_filename,
                         base_prefix=s3_base_prefix,
-                        proposal=proposals_by_id.get(metadata.proposal_id),
+                        lineage_by_id=lineage_by_id,
+                        treatment_by_id=treatment_by_id,
                     )
                 )
 
@@ -240,17 +251,22 @@ def build_clean_set(
             for metadata, clean_path, metadata_path, clean_filename in plans
         ]
         if s3_manifest_enabled:
-            manifest_rows = [
-                build_s3_manifest_row(
-                    metadata,
-                    local_clean_path=clean_path,
-                    metadata_path=metadata_path,
-                    clean_filename=clean_filename,
-                    base_prefix=s3_base_prefix,
-                    proposal=proposals_by_id.get(metadata.proposal_id),
+            manifest_rows = []
+            for metadata, clean_path, metadata_path, clean_filename in plans:
+                lineage_by_id, treatment_by_id = lineage_index_by_proposal.get(
+                    metadata.proposal_id, (None, None)
                 )
-                for metadata, clean_path, metadata_path, clean_filename in plans
-            ]
+                manifest_rows.append(
+                    build_s3_manifest_row(
+                        metadata,
+                        local_clean_path=clean_path,
+                        metadata_path=metadata_path,
+                        clean_filename=clean_filename,
+                        base_prefix=s3_base_prefix,
+                        lineage_by_id=lineage_by_id,
+                        treatment_by_id=treatment_by_id,
+                    )
+                )
             for proposal_id, proposal in sorted(proposals_by_id.items()):
                 if proposal_id not in docs_by_proposal:
                     continue

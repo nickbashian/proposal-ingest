@@ -27,6 +27,7 @@ from proposal_ingest.schemas import (
     RagPrioritySummary,
     RecommendedRagTreatment,
     ReviewQuestion,
+    SensitivityLabel,
     SensitivitySummary,
 )
 
@@ -44,14 +45,14 @@ def build_proposal_retrieval_record(
     """
     documents_by_id = {doc.document_id: doc for doc in documents}
 
-    labels_present: set[str] = set()
+    labels_present: set[SensitivityLabel] = set()
     manual_review_count = 0
     restricted_ids: list[str] = []
     for treatment in proposal.knowledge_base_treatment:
         doc = documents_by_id.get(treatment.document_id)
         if doc is None:
             continue
-        labels_present.update(str(label) for label in doc.sensitivity.sensitivity_labels)
+        labels_present.update(doc.sensitivity.sensitivity_labels)
         if doc.sensitivity.manual_review_required:
             manual_review_count += 1
             restricted_ids.append(doc.document_id)
@@ -69,7 +70,7 @@ def build_proposal_retrieval_record(
         evidence=proposal.evidence,
         unresolved_decisions=proposal.unresolved_decisions,
         sensitivity_summary=SensitivitySummary(
-            labels_present=sorted(labels_present),  # type: ignore[arg-type]
+            labels_present=sorted(labels_present),
             manual_review_required_count=manual_review_count,
             restricted_document_ids=sorted(restricted_ids),
         ),
