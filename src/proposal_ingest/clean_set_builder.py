@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from proposal_ingest.analyzer import load_inventory_jsonl
+from proposal_ingest.human_overrides import load_human_overrides
 from proposal_ingest.metadata_store import MetadataStore
 from proposal_ingest.path_utils import sanitize_filename
 from proposal_ingest.question_loop import stable_question_id
@@ -115,7 +116,7 @@ def build_clean_set(
     documents = sorted(documents_by_id.values(), key=_document_sort_key)
     inventory_records = _load_inventory(run_dir)
 
-    open_critical = _find_open_critical_questions(output_root, documents)
+    open_critical = _find_open_critical_questions(output_root, documents, store)
     if open_critical and not allow_critical_open:
         raise CleanSetBlockedError(open_critical)
 
@@ -431,6 +432,7 @@ def _excluded_row_from_inventory(record: InventoryRecord, reason: str) -> dict[s
 def _find_open_critical_questions(
     output_root: Path,
     documents: list[DocumentMetadata],
+    store: MetadataStore,
 ) -> list[dict[str, str]]:
     applied_question_ids = _load_applied_question_ids(Path(output_root))
     review_rows = _load_review_rows(Path(output_root))
@@ -496,6 +498,28 @@ def _find_open_critical_questions(
             "proposal_id": row.get("proposal_id", ""),
             "field": row.get("field", ""),
             "question": row.get("question", ""),
+        }
+
+    # Belt-and-suspenders: also consult this run's arbitration output directly
+    # (via the durable human-override log, independent of whether
+    # export-questions has been rerun since arbitrate-questions), so a
+    # critical proposal-level question can never slip through the gate
+    # merely because the CSV export step was skipped or is stale.
+    overridden_question_ids = {o.question_id for o in load_human_overrides(Path(output_root))}
+    for arbitrated_question in store.load_arbitrated_questions():
+        if arbitrated_question.priority != QuestionPriority.critical:
+            continue
+        if (
+            arbitrated_question.question_id in blocked
+            or arbitrated_question.question_id in overridden_question_ids
+        ):
+            continue
+        blocked[arbitrated_question.question_id] = {
+            "question_id": arbitrated_question.question_id,
+            "document_id": arbitrated_question.document_id or "",
+            "proposal_id": arbitrated_question.proposal_id,
+            "field": arbitrated_question.field or "",
+            "question": arbitrated_question.question,
         }
 
     return sorted(blocked.values(), key=lambda row: row["question_id"])

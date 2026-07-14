@@ -11,6 +11,7 @@ from proposal_ingest.schemas import (
     DocumentMetadata,
     FolderMetadata,
     ProposalMetadata,
+    ReviewQuestion,
     RunManifest,
 )
 
@@ -31,6 +32,8 @@ class MetadataStore:
         self.all_proposal_metadata_jsonl = (
             self.proposal_metadata_dir / "all_proposal_metadata.jsonl"
         )
+        self.arbitration_dir = self.run_dir / "arbitration"
+        self.arbitrated_questions_jsonl = self.arbitration_dir / "arbitrated_questions.jsonl"
         self.run_manifest_path = self.run_dir / "run_manifest.json"
         self.usage_dir = self.run_dir / "usage"
         self.failures_dir = self.document_metadata_dir / "failures"
@@ -119,6 +122,28 @@ class MetadataStore:
             metadata = ProposalMetadata.model_validate_json(path.read_text(encoding="utf-8"))
             result[metadata.proposal_id] = metadata
         return result
+
+    def write_arbitrated_questions(self, questions: Iterable[ReviewQuestion]) -> Path:
+        """Overwrite this run's arbitrated proposal-level review questions."""
+        self.arbitration_dir.mkdir(parents=True, exist_ok=True)
+        path = self.arbitrated_questions_jsonl
+        with path.open("w", encoding="utf-8") as handle:
+            for question in questions:
+                handle.write(json.dumps(question.model_dump(mode="json"), sort_keys=True))
+                handle.write("\n")
+        return path
+
+    def load_arbitrated_questions(self) -> list[ReviewQuestion]:
+        """Load this run's arbitrated proposal-level review questions, if any."""
+        if not self.arbitrated_questions_jsonl.exists():
+            return []
+        questions: list[ReviewQuestion] = []
+        with self.arbitrated_questions_jsonl.open(encoding="utf-8") as handle:
+            for line in handle:
+                if not line.strip():
+                    continue
+                questions.append(ReviewQuestion.model_validate_json(line))
+        return questions
 
     def write_folder_summary(self, proposal_id: str, summary_text: str) -> Path:
         self.folder_metadata_dir.mkdir(parents=True, exist_ok=True)

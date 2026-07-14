@@ -41,9 +41,11 @@ This is a **local-first batch pipeline** — Python owns orchestration, state, v
 **Pipeline stages** (each is a CLI subcommand):
 1. `scan` → file inventory CSV/JSONL with SHA-256 hashes and state transitions
 2. `analyze` → per-document Bedrock calls producing metadata JSON (or mock mode)
-3. `export-questions` / `apply-answers` → human CSV review loop
-4. `build-folders` → proposal-branch metadata and Markdown summaries
-5. `build-clean-set` → mirrored output directory + S3 manifest JSONL
+3. `synthesize-proposals` → canonical, cross-document `ProposalMetadata` per proposal
+4. `arbitrate-questions` → proposal-level unresolved decisions reconciled into a small, budget-capped set of review questions
+5. `export-questions` / `apply-answers` → human CSV review loop (proposal- and document-scoped answers both apply here)
+6. `build-folders` → proposal-branch metadata and Markdown summaries
+7. `build-clean-set` → mirrored output directory + S3 manifest JSONL
 
 **Config resolution order** (later wins): `config/default_config.yaml` → `.env` → CLI flags.
 
@@ -64,6 +66,9 @@ This is a **local-first batch pipeline** — Python owns orchestration, state, v
 | `mock_bedrock.py` | Deterministic fake metadata for CI/offline testing |
 | `schemas.py` | Pydantic v2 models for all data records |
 | `metadata_store.py` | Writes JSONL/JSON to `document_metadata/` and `folder_metadata/` |
+| `proposal_synthesizer.py` | Synthesizes canonical, cross-document `ProposalMetadata` |
+| `question_arbiter.py` | Reconciles proposal-level unresolved decisions into budget-capped review questions |
+| `human_overrides.py` | Shared proposal/document field-patch map and durable human-override log |
 | `question_loop.py` | Generates and applies `questions_to_answer.csv` |
 | `two_pass.py` | Low-confidence re-analysis with branch context |
 | `folder_builder.py` | Synthesizes folder metadata and Markdown summaries |

@@ -12,6 +12,18 @@ from typing import Any
 from pydantic import ValidationError
 
 from proposal_ingest.analyzer import find_latest_inventory_jsonl
+from proposal_ingest.human_overrides import (
+    KNOWLEDGE_BASE_TREATMENT_FIELDS,
+    PROPOSAL_FIELD_MAP,
+    append_human_override,
+    apply_authoritative_document_override,
+    apply_knowledge_base_treatment_update,
+    canonical_field_key,
+    clear_matching_uncertainties,
+    coerce_field_value,
+    get_value_at_path,
+    set_value_at_path,
+)
 from proposal_ingest.metadata_store import MetadataStore
 from proposal_ingest.path_utils import short_hash
 from proposal_ingest.schemas import (
@@ -19,8 +31,10 @@ from proposal_ingest.schemas import (
     DocumentCategory,
     DocumentMetadata,
     DocumentRole,
+    HumanOverrideRecord,
     OriginType,
     Program,
+    ProposalMetadata,
     ProposalStatus,
     QuestionPriority,
     QuestionStatus,
@@ -28,6 +42,8 @@ from proposal_ingest.schemas import (
     RecommendedRagTreatment,
     ReviewQuestion,
     SensitivityLabel,
+    UncertaintyScope,
+    UnresolvedDecisionType,
     VersionStatus,
 )
 
@@ -35,7 +51,11 @@ REVIEW_COLUMNS = [
     "question_id",
     "run_id",
     "proposal_id",
+    "proposal_name",
+    "scope",
+    "decision_type",
     "document_id",
+    "affected_document_ids",
     "source_path",
     "proposal_branch",
     "file_name_original",
@@ -44,6 +64,9 @@ REVIEW_COLUMNS = [
     "priority",
     "suggested_options",
     "model_guess",
+    "model_confidence",
+    "evidence_summary",
+    "why_human_input_is_needed",
     "user_answer",
     "answer_type",
     "status",
@@ -146,10 +169,14 @@ def export_questions_to_csv(
     *,
     include_low_priority: bool = False,
 ) -> ExportQuestionsResult:
-    """Export operational review questions; document analysis no longer feeds this CSV directly.
+    """Export review questions: proposal-level arbitration output plus operational questions.
 
-    Document-level uncertainties are recorded on metadata for later proposal-level
-    reconciliation (a separate, not-yet-implemented stage) rather than exported here.
+    Proposal-scoped questions come from the ``arbitrate-questions`` stage
+    (see ``question_arbiter.py``), which reconciles document-level
+    uncertainties into a small, budget-capped set per proposal. Document
+    analysis itself no longer feeds this CSV directly; explicitly generated
+    operational questions (for example unsupported PowerPoint handling)
+    still export unchanged, independent of the arbitration budgets.
     """
     run_dir = find_latest_run_dir(output_root)
     review_dir = Path(output_root) / "review"
@@ -159,6 +186,16 @@ def export_questions_to_csv(
     exported: list[ReviewQuestion] = []
     suppressed = 0
     seen_ids: set[str] = set()
+
+    store = MetadataStore(run_dir)
+    for question in store.load_arbitrated_questions():
+        if question.priority == QuestionPriority.low and not include_low_priority:
+            suppressed += 1
+            continue
+        if question.question_id in seen_ids:
+            continue
+        seen_ids.add(question.question_id)
+        exported.append(question)
 
     for question in _powerpoint_questions(run_dir):
         if question.priority == QuestionPriority.low and not include_low_priority:
@@ -176,8 +213,9 @@ def export_questions_to_csv(
 
 def apply_answers_from_csv(output_root: Path, answers_csv: Path) -> ApplyAnswersResult:
     """Apply answered review CSV rows to JSON metadata without calling a model."""
+    output_root = Path(output_root)
     run_dir = find_latest_run_dir(output_root)
-    review_dir = Path(output_root) / "review"
+    review_dir = output_root / "review"
     reports_dir = run_dir / "reports"
     review_dir.mkdir(parents=True, exist_ok=True)
     reports_dir.mkdir(parents=True, exist_ok=True)
@@ -186,6 +224,8 @@ def apply_answers_from_csv(output_root: Path, answers_csv: Path) -> ApplyAnswers
 
     store = MetadataStore(run_dir)
     metadata_by_id = store.load_document_metadata_by_id()
+    proposal_by_id = store.load_proposal_metadata_by_id()
+    changed_proposal_ids: set[str] = set()
     archive_rows: list[dict[str, str]] = []
     error_rows: list[dict[str, str]] = []
     applied_count = 0
@@ -198,6 +238,7 @@ def apply_answers_from_csv(output_root: Path, answers_csv: Path) -> ApplyAnswers
         status = (row.get("status") or "open").strip().lower()
         field = (row.get("field") or "").strip()
         document_id = row.get("document_id") or ""
+        scope = (row.get("scope") or "").strip().lower()
 
         if not answer or status in {
             QuestionStatus.skipped.value,
@@ -206,6 +247,29 @@ def apply_answers_from_csv(output_root: Path, answers_csv: Path) -> ApplyAnswers
         }:
             skipped_count += 1
             continue
+
+        if scope in {UncertaintyScope.proposal.value, UncertaintyScope.document_family.value}:
+            try:
+                _apply_proposal_scoped_answer(
+                    row,
+                    answer=answer,
+                    proposal_by_id=proposal_by_id,
+                    metadata_by_id=metadata_by_id,
+                    store=store,
+                    output_root=output_root,
+                    now=now,
+                )
+            except (ValueError, ValidationError) as exc:
+                error_rows.append(_error_row(row, str(exc)))
+                continue
+            changed_proposal_ids.add(row.get("proposal_id", ""))
+            row["status"] = QuestionStatus.applied.value
+            row["applied_at"] = now
+            row["updated_at"] = now
+            archive_rows.append({column: row.get(column, "") for column in REVIEW_COLUMNS})
+            applied_count += 1
+            continue
+
         if not document_id or document_id not in metadata_by_id:
             if field == "needs_powerpoint_processing" and answer:
                 try:
@@ -252,6 +316,10 @@ def apply_answers_from_csv(output_root: Path, answers_csv: Path) -> ApplyAnswers
         _append_csv(archive_csv, REVIEW_COLUMNS, archive_rows)
     _write_csv(errors_csv, ERROR_COLUMNS, error_rows)
     _rewrite_all_document_metadata_jsonl(store, metadata_by_id.values())
+    if changed_proposal_ids:
+        for proposal_id in changed_proposal_ids:
+            store.write_proposal_metadata(proposal_by_id[proposal_id])
+        store.write_proposal_metadata_jsonl(proposal_by_id.values())
 
     return ApplyAnswersResult(
         run_dir=run_dir,
@@ -334,6 +402,111 @@ def _append_csv(path: Path, fieldnames: list[str], rows: list[dict[str, Any]]) -
         if not exists:
             writer.writeheader()
         writer.writerows(rows)
+
+
+def _apply_proposal_scoped_answer(
+    row: dict[str, str],
+    *,
+    answer: str,
+    proposal_by_id: dict[str, ProposalMetadata],
+    metadata_by_id: dict[str, DocumentMetadata],
+    store: MetadataStore,
+    output_root: Path,
+    now: str,
+) -> None:
+    """Apply one proposal- or document-family-scoped answer and record a durable override.
+
+    Updates the canonical proposal record, propagates to every affected
+    document record where the field is carried there too, and appends a
+    ``HumanOverrideRecord`` so a future resynthesis (even against a freshly
+    analyzed document set) can replay the decision instead of losing it.
+    """
+    proposal_id = row.get("proposal_id") or ""
+    field = (row.get("field") or "").strip()
+    decision_type = (row.get("decision_type") or UnresolvedDecisionType.proposal_fact.value).strip()
+    question_id = row.get("question_id") or ""
+    scope = (row.get("scope") or UncertaintyScope.proposal.value).strip()
+    affected_document_ids = [
+        doc_id.strip()
+        for doc_id in (row.get("affected_document_ids") or "").split("|")
+        if doc_id.strip()
+    ]
+
+    if not proposal_id or proposal_id not in proposal_by_id:
+        raise ValueError("metadata for proposal_id was not found")
+    if not field:
+        raise ValueError("field is required for proposal-scoped answers")
+
+    proposal_data = proposal_by_id[proposal_id].model_dump(mode="json")
+
+    if decision_type == UnresolvedDecisionType.authoritative_document.value:
+        if answer not in affected_document_ids:
+            raise ValueError(
+                f"Answer must be one of the affected document IDs: {affected_document_ids}"
+            )
+        previous_value = next(
+            (
+                entry.get("document_id")
+                for entry in proposal_data.get("document_lineage", [])
+                if entry.get("is_authoritative")
+            ),
+            None,
+        )
+        apply_authoritative_document_override(
+            proposal_data,
+            chosen_document_id=answer,
+            affected_document_ids=affected_document_ids,
+        )
+        applied_value: Any = answer
+        field_key = None
+    else:
+        field_key = canonical_field_key(field)
+        spec = PROPOSAL_FIELD_MAP.get(field_key)
+        if spec is None:
+            raise ValueError(f"Proposal field is not allowed: {field}")
+        applied_value = coerce_field_value(spec, answer)
+        previous_value = (
+            get_value_at_path(proposal_data, spec.proposal_path) if spec.proposal_path else None
+        )
+        if spec.proposal_path is not None:
+            set_value_at_path(proposal_data, spec.proposal_path, applied_value)
+        if field_key in KNOWLEDGE_BASE_TREATMENT_FIELDS:
+            apply_knowledge_base_treatment_update(
+                proposal_data,
+                field_key=field_key,
+                value=applied_value,
+                affected_document_ids=affected_document_ids,
+            )
+
+    proposal_by_id[proposal_id] = ProposalMetadata.model_validate(proposal_data)
+
+    if field_key is not None:
+        spec = PROPOSAL_FIELD_MAP[field_key]
+        if spec.document_path is not None:
+            for document_id in affected_document_ids:
+                document = metadata_by_id.get(document_id)
+                if document is None:
+                    continue
+                doc_data = document.model_dump(mode="json")
+                set_value_at_path(doc_data, spec.document_path, applied_value)
+                clear_matching_uncertainties(doc_data, field)
+                updated_document = DocumentMetadata.model_validate(doc_data)
+                metadata_by_id[document_id] = updated_document
+                store.write_document_metadata(updated_document, append_jsonl=False)
+
+    record = HumanOverrideRecord(
+        question_id=question_id,
+        scope=UncertaintyScope(scope),
+        proposal_id=proposal_id,
+        field=field,
+        decision_type=UnresolvedDecisionType(decision_type),
+        affected_document_ids=affected_document_ids,
+        previous_value=previous_value,
+        applied_value=applied_value,
+        timestamp=now,
+        source="human_review",
+    )
+    append_human_override(output_root, record)
 
 
 def _apply_field(

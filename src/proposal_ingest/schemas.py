@@ -474,6 +474,38 @@ class ReviewQuestion(BaseModel):
     updated_at: str | None = None
     applied_at: str | None = None
     notes: str | None = None
+    # Proposal-level arbitration fields (issue #8). Document-scoped and
+    # operational (e.g. PowerPoint) questions leave these at their defaults.
+    scope: UncertaintyScope = UncertaintyScope.document
+    decision_type: UnresolvedDecisionType | None = None
+    proposal_name: str | None = None
+    affected_document_ids: str | None = None
+    model_confidence: ConfidenceValue | None = None
+    evidence_summary: str | None = None
+    why_human_input_is_needed: str | None = None
+
+
+class HumanOverrideRecord(BaseModel):
+    """Durable record of one applied human answer, used to survive pipeline reruns.
+
+    Stored append-only at ``output_root/review/human_overrides.jsonl`` (not
+    run-scoped), so a later ``synthesize-proposals`` run — even against a
+    freshly re-analyzed document set — can replay the decision instead of
+    silently losing it to new deterministic or Bedrock synthesis output.
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+    question_id: str
+    scope: UncertaintyScope
+    proposal_id: str
+    field: str
+    decision_type: UnresolvedDecisionType = UnresolvedDecisionType.proposal_fact
+    affected_document_ids: list[str] = Field(default_factory=list)
+    previous_value: Any = None
+    applied_value: Any = None
+    timestamp: str
+    source: str = "human_review"
 
 
 class BedrockUsageRecord(BaseModel):

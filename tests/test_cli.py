@@ -303,14 +303,67 @@ def test_run_all_mock_builds_clean_set_outputs(tmp_path: Path) -> None:
     assert "Analyze complete:" in result.output
     assert "Exported" in result.output
     assert "synthesize-proposals complete: 1 proposal(s) synthesized (mock mode)" in result.output
+    assert "arbitrate-questions complete:" in result.output
     assert "build-folders complete: 1 folder(s) synthesized (mock mode)" in result.output
     assert "build-clean-set complete: 1 copied" in result.output
+    # synthesize-proposals must run before arbitrate-questions in the pipeline output.
+    assert result.output.index("synthesize-proposals complete") < result.output.index(
+        "arbitrate-questions complete"
+    )
+    assert result.output.index("arbitrate-questions complete") < result.output.index("Exported")
     run_dir = next((output_root / "logs").glob("run_*"))
     assert list((run_dir / "folder_metadata").glob("*.json"))
     assert list((run_dir / "proposal_metadata" / "by_proposal_id").glob("*.json"))
     assert list((run_dir / "mirror" / "2025").glob("*/documents/Technical_Volume.pdf"))
     assert (run_dir / "manifests" / "s3_manifest.jsonl").exists()
     assert (output_root / "review" / "questions_to_answer.csv").exists()
+
+
+def test_arbitrate_questions_cli_uses_latest_run_directory(tmp_path: Path) -> None:
+    source_root = tmp_path / "source"
+    output_root = tmp_path / "output"
+    proposal_branch = source_root / "2025" / "Demo Proposal"
+    proposal_branch.mkdir(parents=True)
+    (proposal_branch / "Technical Volume.pdf").write_text("pdf content", encoding="utf-8")
+
+    scan_result = runner.invoke(
+        app,
+        ["scan", "--source-root", str(source_root), "--output-root", str(output_root)],
+    )
+    assert scan_result.exit_code == 0, scan_result.output
+
+    analyze_result = runner.invoke(
+        app,
+        ["analyze", "--output-root", str(output_root), "--mock-bedrock"],
+    )
+    assert analyze_result.exit_code == 0, analyze_result.output
+
+    synthesize_result = runner.invoke(
+        app,
+        ["synthesize-proposals", "--output-root", str(output_root), "--mock-bedrock"],
+    )
+    assert synthesize_result.exit_code == 0, synthesize_result.output
+
+    result = runner.invoke(
+        app,
+        ["arbitrate-questions", "--output-root", str(output_root), "--mock-bedrock"],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "arbitrate-questions complete: 0 question(s) across 1 proposal(s) (mock mode)" in (
+        result.output
+    )
+    run_dir = next((output_root / "logs").glob("run_*"))
+    assert (run_dir / "arbitration" / "arbitrated_questions.jsonl").exists()
+
+
+def test_arbitrate_questions_cli_errors_without_run_directory(tmp_path: Path) -> None:
+    output_root = tmp_path / "output"
+    result = runner.invoke(
+        app, ["arbitrate-questions", "--output-root", str(output_root), "--mock-bedrock"]
+    )
+    assert result.exit_code == 1
+    assert "No run directories found" in result.output
 
 
 def test_synthesize_proposals_cli_uses_latest_run_directory(tmp_path: Path) -> None:

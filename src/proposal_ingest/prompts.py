@@ -233,6 +233,23 @@ def load_proposal_synthesis_user_prompt_template() -> str:
     return _load_prompt("proposal_synthesis_user.md")
 
 
+def load_question_arbiter_system_prompt() -> str:
+    """Return the system prompt for proposal-level question arbitration."""
+    return _load_prompt("question_arbiter_system.md")
+
+
+def load_question_arbiter_user_prompt_template() -> str:
+    """Return the raw question-arbiter user prompt template."""
+    return _load_prompt("question_arbiter_user.md")
+
+
+def render_question_arbiter_user_prompt(arbitration_context_json: str) -> str:
+    """Render the question-arbiter user prompt with the context packet substituted."""
+    return load_question_arbiter_user_prompt_template().replace(
+        "{{ARBITRATION_CONTEXT_JSON}}", arbitration_context_json
+    )
+
+
 def _proposal_metadata_template_json() -> str:
     """Return a compact JSON template matching the required proposal record shape."""
     return json.dumps(_PROPOSAL_METADATA_TEMPLATE, indent=2)

@@ -21,6 +21,7 @@ Use small, testable increments. Avoid starting with Bedrock. Build the local sta
 - Phase 12 — complete
 - Phase 13 — not started
 - Phase 14 — complete
+- Phase 15 — complete
 
 ## Phase 0 — Repo bootstrap
 
@@ -298,6 +299,53 @@ Acceptance criteria:
 - a Bedrock proposal-synthesis failure falls back to the deterministic
   record (`synthesis_source: "deterministic_fallback"`) rather than
   breaking the pipeline
+
+## Phase 15 — Proposal-level question arbitration (issue #8)
+
+Status: complete
+
+Deliverables:
+
+- `question_arbiter.py`: deterministic candidate generation from
+  `ProposalMetadata.unresolved_decisions` (mock mode and Bedrock-failure
+  fallback), stable document-independent question IDs, per-proposal and
+  per-run budget enforcement, and an optional real-mode Bedrock call that
+  may only refine wording/consolidation of the candidates Python already
+  selected
+- `human_overrides.py`: shared proposal/document canonical field map used by
+  both answer application and durable-override replay, plus the
+  `output_root/review/human_overrides.jsonl` read/write helpers
+- `ReviewQuestion` schema additions (`scope`, `decision_type`,
+  `proposal_name`, `affected_document_ids`, `model_confidence`,
+  `evidence_summary`, `why_human_input_is_needed`) and the new
+  `HumanOverrideRecord` schema
+- `review.max_questions_per_proposal` / `review.max_questions_per_run` /
+  `review.include_low_priority` config (`default_config.yaml`)
+- `arbitrate-questions` CLI command; wired into `run-all` and
+  `process-folder` between `synthesize-proposals` and `export-questions`
+- `question_loop.py`: `export_questions_to_csv` merges arbitrated
+  proposal-level questions with existing operational questions;
+  `apply_answers_from_csv` applies proposal-/document-family-scoped answers
+  to the canonical proposal record and every affected document, and appends
+  a durable human-override record
+- `proposal_synthesizer.py`: `synthesize_all_proposals` replays durable
+  human overrides onto freshly loaded documents and the freshly synthesized
+  proposal record before writing it, so a resynthesis never silently
+  discards a human decision
+- `clean_set_builder.py`'s critical-question gate also consults this run's
+  arbitration output directly (independent of whether `export-questions`
+  has been rerun since)
+
+Acceptance criteria:
+
+- the normal and valid result for a proposal is zero arbitrated questions
+- repeated document-level uncertainties on the same canonical field
+  consolidate into exactly one proposal-level question
+- stable question IDs depend only on `proposal_id | scope | decision_type |
+  canonical_field_key`, never on document IDs or question wording
+- a previously applied proposal-scoped answer survives a `synthesize-proposals`
+  rerun, and a question only reopens when fresh evidence conflicts with it
+- mock mode and CI never call Bedrock for question arbitration
 
 ## Suggested implementation chunks for AI coding agents
 

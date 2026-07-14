@@ -68,6 +68,18 @@ class QuestionsConfig(BaseModel):
     target_questions_per_file: int = Field(default=3, ge=1)
 
 
+class ReviewConfig(BaseModel):
+    """Proposal-level question arbitration budgets (issue #8).
+
+    These are safeguards, not production targets: the arbiter should
+    normally return far fewer questions than these caps allow.
+    """
+
+    max_questions_per_proposal: int = Field(default=3, ge=0)
+    max_questions_per_run: int = Field(default=20, ge=0)
+    include_low_priority: bool = False
+
+
 class CleanSetConfig(BaseModel):
     """Clean-set copy behavior."""
 
@@ -110,6 +122,7 @@ class RuntimeConfig(BaseModel):
     tracker: TrackerConfig = Field(default_factory=TrackerConfig)
     processing: ProcessingConfig = Field(default_factory=ProcessingConfig)
     questions: QuestionsConfig = Field(default_factory=QuestionsConfig)
+    review: ReviewConfig = Field(default_factory=ReviewConfig)
     clean_set: CleanSetConfig = Field(default_factory=CleanSetConfig)
     s3_manifest: S3ManifestConfig = Field(default_factory=S3ManifestConfig)
     synthesis: SynthesisConfig = Field(default_factory=SynthesisConfig)
