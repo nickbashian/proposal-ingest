@@ -1,0 +1,5 @@
+NOFO Solicitation - Fake DOE SBIR Program
+
+Generic funding-opportunity boilerplate describing the SBIR program, general
+eligibility rules, and administrative submission requirements. Long,
+formal, and largely identical across unrelated proposals.

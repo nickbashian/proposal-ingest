@@ -1,0 +1,6 @@
+Technical Volume (Final) - Fake DOE SBIR Battery Project
+
+This is the final, submitted technical volume. It proposes a solid-state
+battery cell chemistry with a target energy density of 380 Wh/kg and a cycle
+life of 1,000 cycles at 80% capacity retention. This document is the
+authoritative technical description of the proposed work.

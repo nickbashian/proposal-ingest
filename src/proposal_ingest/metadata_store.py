@@ -34,6 +34,7 @@ class MetadataStore:
         )
         self.arbitration_dir = self.run_dir / "arbitration"
         self.arbitrated_questions_jsonl = self.arbitration_dir / "arbitrated_questions.jsonl"
+        self.arbitration_summary_path = self.arbitration_dir / "arbitration_summary.json"
         self.run_manifest_path = self.run_dir / "run_manifest.json"
         self.usage_dir = self.run_dir / "usage"
         self.failures_dir = self.document_metadata_dir / "failures"
@@ -144,6 +145,44 @@ class MetadataStore:
                     continue
                 questions.append(ReviewQuestion.model_validate_json(line))
         return questions
+
+    def write_arbitration_summary(self, summary: dict[str, int]) -> Path:
+        """Persist arbitration counters not carried by any individual ReviewQuestion.
+
+        ``build-clean-set`` can run as a separate CLI invocation from
+        ``arbitrate-questions``, so the run-level provenance report reads
+        this small file back instead of requiring an in-memory
+        ``ArbitrationResult``.
+        """
+        self.arbitration_dir.mkdir(parents=True, exist_ok=True)
+        with self.arbitration_summary_path.open("w", encoding="utf-8") as handle:
+            json.dump(summary, handle, indent=2, sort_keys=True)
+            handle.write("\n")
+        return self.arbitration_summary_path
+
+    def load_arbitration_summary(self) -> dict[str, int]:
+        """Load this run's arbitration counters, or an all-zero summary if absent."""
+        if not self.arbitration_summary_path.exists():
+            return {
+                "proposal_count": 0,
+                "question_count": 0,
+                "suppressed_count": 0,
+                "resolved_by_override_count": 0,
+            }
+        return json.loads(self.arbitration_summary_path.read_text(encoding="utf-8"))
+
+    def load_usage_records(self) -> list[BedrockUsageRecord]:
+        """Load this run's Bedrock usage records, if any were written."""
+        usage_path = self.usage_dir / "bedrock_usage.jsonl"
+        if not usage_path.exists():
+            return []
+        records: list[BedrockUsageRecord] = []
+        with usage_path.open(encoding="utf-8") as handle:
+            for line in handle:
+                if not line.strip():
+                    continue
+                records.append(BedrockUsageRecord.model_validate_json(line))
+        return records
 
     def write_folder_summary(self, proposal_id: str, summary_text: str) -> Path:
         self.folder_metadata_dir.mkdir(parents=True, exist_ok=True)

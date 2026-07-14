@@ -533,11 +533,14 @@ def build_clean_set(
     label = "build-clean-set dry run" if dry_run else "build-clean-set complete"
     console.print(
         f"{label}: {result.copied_count} copied, "
-        f"{result.excluded_count} excluded, {result.manifest_count} manifest rows"
+        f"{result.excluded_count} excluded, {result.manifest_count} manifest rows "
+        f"({result.proposal_record_count} proposal record(s))"
     )
     console.print(f"  run_dir = {result.run_dir}")
     console.print(f"  excluded = {result.excluded_report_path}")
     console.print(f"  manifest = {result.manifest_path}")
+    if result.quality_report_path is not None:
+        console.print(f"  quality_report = {result.quality_report_path}")
 
 
 @app.command(name="run-all")
@@ -670,9 +673,142 @@ def run_all(
     console.print(
         f"build-clean-set complete: {clean_result.copied_count} copied, "
         f"{clean_result.excluded_count} excluded, "
-        f"{clean_result.manifest_count} manifest rows"
+        f"{clean_result.manifest_count} manifest rows "
+        f"({clean_result.proposal_record_count} proposal record(s))"
     )
     console.print(f"  run_dir = {artifacts.run_dir}")
+    if clean_result.quality_report_path is not None:
+        console.print(f"  quality_report = {clean_result.quality_report_path}")
+
+
+@app.command(name="evaluate-quality")
+def evaluate_quality(
+    source_root: str = typer.Option(
+        ...,
+        "--source-root",
+        help="Path to a quality-benchmark source root (see sample_data/quality_benchmark).",
+    ),
+    output_root: str = typer.Option(..., "--output-root", help="Path to the output directory."),
+    mock_bedrock: bool = typer.Option(
+        True,
+        "--mock-bedrock/--real-bedrock",
+        help="Use mock Bedrock (deterministic, CI-safe) or real AWS calls (local, opt-in).",
+    ),
+    expected: str | None = typer.Option(
+        None,
+        "--expected",
+        help=(
+            "Path to a directory of expected-outcome JSON fixtures, one file per proposal "
+            "branch (see tests/fixtures/quality_benchmark/expected)."
+        ),
+    ),
+    config: str | None = typer.Option(None, "--config", help="Path to a YAML config file."),
+) -> None:
+    """Run the pipeline against a benchmark corpus and report quality-benchmark results.
+
+    Always runs deterministically end-to-end (scan through build-clean-set) and prints
+    the run-level provenance/quality report. When ``--expected`` points at a directory of
+    machine-readable expected-outcome fixtures (keyed by proposal branch name), each
+    synthesized proposal is compared against its expected outcome and the command exits
+    non-zero on any mismatch — this is what makes question explosion or a document-treatment
+    regression a CI failure rather than something that must be read off a JSON dump by hand.
+    Real-Bedrock mode (``--real-bedrock``) is opt-in and local-only; CI must never use it.
+    """
+    from proposal_ingest.folder_builder import build_all_folders
+    from proposal_ingest.proposal_synthesizer import synthesize_all_proposals
+    from proposal_ingest.question_arbiter import arbitrate_all_proposals
+    from proposal_ingest.quality_benchmarks import (
+        evaluate_expected_outcomes,
+        load_expected_outcomes,
+    )
+
+    runtime_cfg = load_runtime_config(
+        config,
+        overrides={
+            "app": {"source_root": source_root, "output_root": output_root},
+            "bedrock": {"mock_bedrock": mock_bedrock},
+        },
+    )
+
+    artifacts = scan_source_root(source_root=Path(source_root), output_root=Path(output_root))
+    console.print(f"Scan complete: {len(artifacts.inventory_records)} files inventoried")
+    if artifacts.pruned_run_dir:
+        console.print("[yellow]No eligible files found — run directory pruned.[/yellow]")
+        raise typer.Exit(code=1)
+
+    analyze_inventory(
+        artifacts.run_dir,
+        artifacts.inventory_records,
+        artifacts.run_id,
+        use_mock=mock_bedrock,
+        config=runtime_cfg,
+        final_command="evaluate-quality",
+    )
+
+    store = MetadataStore(artifacts.run_dir)
+    proposal_results = synthesize_all_proposals(store, use_mock=mock_bedrock, config=runtime_cfg)
+    arbitration_result = arbitrate_all_proposals(store, use_mock=mock_bedrock, config=runtime_cfg)
+    build_all_folders(
+        store,
+        proposal_metadata_by_id={r.proposal_id: r.metadata for r in proposal_results},
+        use_mock=mock_bedrock,
+        config=runtime_cfg,
+    )
+    clean_result = build_clean_set_outputs(
+        Path(output_root),
+        allow_critical_open=True,
+        dry_run=False,
+        force=True,
+        sanitize_filenames=runtime_cfg.clean_set.sanitize_filenames,
+        flatten_documents_folder=runtime_cfg.clean_set.flatten_documents_folder,
+        require_manual_review_clearance=runtime_cfg.clean_set.require_manual_review_clearance,
+        s3_manifest_enabled=runtime_cfg.s3_manifest.enabled,
+        s3_base_prefix=runtime_cfg.s3_manifest.base_prefix,
+    )
+
+    console.print(
+        f"Pipeline complete: {len(proposal_results)} proposal(s), "
+        f"{len(arbitration_result.questions)} question(s), "
+        f"{clean_result.copied_count} document(s) copied"
+        f"{' (mock mode)' if mock_bedrock else ' (real Bedrock)'}"
+    )
+    if clean_result.quality_report_path is not None:
+        console.print(f"  quality_report = {clean_result.quality_report_path}")
+
+    if expected is None:
+        return
+
+    questions_by_proposal: dict[str, int] = {}
+    for question in arbitration_result.questions:
+        questions_by_proposal[question.proposal_id] = (
+            questions_by_proposal.get(question.proposal_id, 0) + 1
+        )
+
+    expected_outcomes = load_expected_outcomes(Path(expected))
+    failures: list[str] = []
+    checked = 0
+    for result in proposal_results:
+        proposal = result.metadata
+        outcome = expected_outcomes.get(proposal.proposal_branch)
+        if outcome is None:
+            continue
+        checked += 1
+        mismatches = evaluate_expected_outcomes(
+            proposal,
+            question_count=questions_by_proposal.get(proposal.proposal_id, 0),
+            expected=outcome,
+        )
+        if mismatches:
+            failures.append(proposal.proposal_branch)
+            console.print(f"[red]FAIL[/red] {proposal.proposal_branch}")
+            for mismatch in mismatches:
+                console.print(f"    {mismatch}")
+        else:
+            console.print(f"[green]PASS[/green] {proposal.proposal_branch}")
+
+    console.print(f"Expected-outcome check: {checked - len(failures)}/{checked} proposal(s) passed")
+    if failures:
+        raise typer.Exit(code=1)
 
 
 @app.command(name="process-folder")

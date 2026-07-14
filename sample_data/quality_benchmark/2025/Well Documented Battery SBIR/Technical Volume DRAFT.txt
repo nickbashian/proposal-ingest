@@ -1,0 +1,6 @@
+Technical Volume (Draft) - Fake DOE SBIR Battery Project
+
+This is an early working draft of the technical volume. It proposes a
+solid-state battery cell chemistry with a target energy density of 350 Wh/kg.
+This draft predates internal cost-reduction feedback and is superseded by the
+final submitted technical volume.
