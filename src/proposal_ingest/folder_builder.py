@@ -29,9 +29,8 @@ from proposal_ingest.schemas import (
     ProposalStatus,
     RagPriority,
     SensitivityLabel,
-    TrackerMatchStatus,
 )
-from proposal_ingest.tracker import TrackerRow, _normalize_status, match_tracker_row
+from proposal_ingest.tracker import TrackerRow, apply_tracker_overrides_to_identity
 
 logger = get_logger("folder_builder")
 
@@ -72,8 +71,8 @@ def build_folder_metadata(
     """Synthesize a FolderMetadata record from a list of per-document metadata.
 
     All documents must share the same proposal_id.  The tracker_rows list is
-    optional; when provided, match_tracker_row is called to override
-    high-authority fields.  When a synthesized ``proposal`` (ProposalMetadata)
+    optional; when provided, apply_tracker_overrides_to_identity is called
+    to override high-authority fields.  When a synthesized ``proposal`` (ProposalMetadata)
     is supplied, its canonical identity and narrative summary become the
     primary source for those fields instead of deterministic per-document
     consensus/mock or per-folder Bedrock summaries; document counts, key
@@ -182,29 +181,22 @@ def build_folder_metadata(
         )
         partners = union_lists([d.proposal_context.partners for d in documents])
 
-        tracker_match_status = TrackerMatchStatus.not_attempted
-        tracker_disagreements = []
-        selection_notification_date = None
-        award_date = None
-
-        if tracker_rows:
-            (
-                tracker_match_status,
-                canonical_proposal_name,
-                submission_date,
-                selection_notification_date,
-                award_date,
-                status_str,
-                award_status,
-                tracker_disagreements,
-            ) = _apply_tracker_to_folder(
-                proposal_branch=proposal_branch,
-                tracker_rows=tracker_rows,
-                canonical_proposal_name=canonical_proposal_name,
-                submission_date=submission_date,
-                status_str=status_str,
-                award_status=award_status,
-            )
+        tracker_override = apply_tracker_overrides_to_identity(
+            proposal_branch=proposal_branch,
+            tracker_rows=tracker_rows,
+            canonical_proposal_name=canonical_proposal_name,
+            submission_date=submission_date,
+            status=status_str,
+            award_status=award_status,
+        )
+        tracker_match_status = tracker_override.match_status
+        canonical_proposal_name = tracker_override.canonical_proposal_name
+        submission_date = tracker_override.submission_date
+        selection_notification_date = tracker_override.selection_notification_date
+        award_date = tracker_override.award_date
+        status_str = tracker_override.status
+        award_status = tracker_override.award_status
+        tracker_disagreements = tracker_override.disagreements
 
         (
             folder_summary_short,
@@ -551,117 +543,6 @@ def _identify_key_documents(documents: list[DocumentMetadata]) -> list[FolderKey
             )
 
     return result
-
-
-# ---------------------------------------------------------------------------
-# Tracker folder-level application
-# ---------------------------------------------------------------------------
-
-
-def _apply_tracker_to_folder(
-    *,
-    proposal_branch: str,
-    tracker_rows: list[TrackerRow],
-    canonical_proposal_name: str,
-    submission_date: str | None,
-    status_str: str,
-    award_status: str,
-) -> tuple[
-    TrackerMatchStatus, str, str | None, str | None, str | None, str, str, list[dict[str, Any]]
-]:
-    """Match and apply tracker high-authority fields at folder level.
-
-    Returns:
-        (match_status, canonical_proposal_name, submission_date,
-         selection_notification_date, award_date, status_str, award_status, disagreements)
-    """
-    match_result = match_tracker_row(
-        proposal_branch,
-        tracker_rows,
-        canonical_proposal_name=canonical_proposal_name,
-    )
-
-    selection_notification_date: str | None = None
-    award_date: str | None = None
-    disagreements: list[dict[str, Any]] = []
-
-    if match_result.status != TrackerMatchStatus.matched or match_result.tracker_row is None:
-        return (
-            match_result.status,
-            canonical_proposal_name,
-            submission_date,
-            selection_notification_date,
-            award_date,
-            status_str,
-            award_status,
-            disagreements,
-        )
-
-    row = match_result.tracker_row.values
-
-    tracker_name = row.get("proposal_name")
-    if tracker_name and tracker_name != canonical_proposal_name:
-        disagreements.append(
-            {
-                "field": "canonical_proposal_name",
-                "folder_value": canonical_proposal_name,
-                "tracker_value": tracker_name,
-                "source": "tracker",
-            }
-        )
-        canonical_proposal_name = tracker_name
-
-    tracker_submission = row.get("submission_date")
-    if tracker_submission:
-        if submission_date and submission_date != tracker_submission:
-            disagreements.append(
-                {
-                    "field": "submission_date",
-                    "folder_value": submission_date,
-                    "tracker_value": tracker_submission,
-                    "source": "tracker",
-                }
-            )
-        submission_date = tracker_submission
-
-    selection_notification_date = row.get("selection_notification_date")
-    award_date = row.get("award_date")
-
-    normalized_status = _normalize_status(row.get("status"))
-    if normalized_status and normalized_status != status_str:
-        disagreements.append(
-            {
-                "field": "status",
-                "folder_value": status_str,
-                "tracker_value": normalized_status,
-                "source": "tracker",
-            }
-        )
-        status_str = normalized_status
-
-    tracker_award = row.get("award_status") or row.get("result")
-    if tracker_award:
-        if award_status != tracker_award:
-            disagreements.append(
-                {
-                    "field": "award_status",
-                    "folder_value": award_status,
-                    "tracker_value": tracker_award,
-                    "source": "tracker",
-                }
-            )
-        award_status = tracker_award
-
-    return (
-        match_result.status,
-        canonical_proposal_name,
-        submission_date,
-        selection_notification_date,
-        award_date,
-        status_str,
-        award_status,
-        disagreements,
-    )
 
 
 # ---------------------------------------------------------------------------

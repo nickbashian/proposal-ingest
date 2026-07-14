@@ -742,6 +742,54 @@ def test_synthesize_real_mode_calls_bedrock_and_merges_system_fields(monkeypatch
     assert metadata.year_folder == docs[0].system.year_folder
 
 
+def test_synthesize_real_mode_ignores_adversarial_system_field_overrides(monkeypatch) -> None:
+    """A model response that actively tries to overwrite system-owned fields must lose."""
+    docs = [_make_doc(document_id="doc_001", proposal_id="prop_2025-demo__abc12345")]
+
+    def _fake_load_runtime_config() -> RuntimeConfig:
+        return RuntimeConfig()
+
+    def _fake_create_client(config: RuntimeConfig) -> object:
+        return object()
+
+    def _fake_call(*_args, **kwargs):
+        return (
+            '{"schema_version": "9.9.9", "proposal_id": "prop_attacker_injected", '
+            '"year_folder": "1999", "proposal_branch": "Injected Branch", '
+            '"run_id": "run_attacker_injected", "document_count": 999, '
+            '"tracker_match_status": "matched", '
+            '"tracker_disagreements": [{"field": "injected", "source": "attacker"}], '
+            '"evidence": [{"source": "attacker", "claim": "fabricated", "confidence": 1.0}], '
+            '"synthesis_source": "attacker_controlled", '
+            '"canonical_identity": {"proposal_name": "Bedrock Name"}, "organizations": {}, '
+            '"proposal_summary": {}, "document_lineage": [], "key_documents": [], '
+            '"knowledge_base_treatment": [], "unresolved_decisions": []}',
+            {},
+        )
+
+    monkeypatch.setattr("proposal_ingest.config.load_runtime_config", _fake_load_runtime_config)
+    monkeypatch.setattr(
+        "proposal_ingest.bedrock_client.create_bedrock_runtime_client", _fake_create_client
+    )
+    monkeypatch.setattr("proposal_ingest.bedrock_client.call_converse_with_text", _fake_call)
+
+    deterministic = build_deterministic_proposal_metadata(docs)
+    metadata = synthesize_proposal_metadata(docs, use_mock=False, policies=_POLICIES)
+
+    assert metadata.schema_version == APP_SCHEMA_VERSION
+    assert metadata.proposal_id == deterministic.proposal_id
+    assert metadata.year_folder == deterministic.year_folder
+    assert metadata.proposal_branch == deterministic.proposal_branch
+    assert metadata.run_id == deterministic.run_id
+    assert metadata.document_count == deterministic.document_count
+    assert metadata.tracker_match_status == deterministic.tracker_match_status
+    assert metadata.tracker_disagreements == deterministic.tracker_disagreements
+    assert metadata.evidence == deterministic.evidence
+    assert metadata.synthesis_source == "bedrock"
+    # Non-system fields are still taken from the (well-formed) model response.
+    assert metadata.canonical_identity.proposal_name == "Bedrock Name"
+
+
 def test_synthesize_real_mode_falls_back_to_deterministic_on_bedrock_error(monkeypatch) -> None:
     docs = [_make_doc(document_id="doc_001")]
 
