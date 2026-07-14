@@ -12,8 +12,10 @@ from proposal_ingest.config import load_runtime_config
 from proposal_ingest.scanner import scan_source_root
 from proposal_ingest.schemas import DocumentMetadata
 from proposal_ingest.tracker import (
+    TrackerRow,
     _rows_from_dataframe,
     apply_tracker_overrides,
+    apply_tracker_overrides_to_identity,
     load_tracker_rows,
     match_tracker_row,
 )
@@ -77,6 +79,75 @@ def test_tracker_overrides_high_authority_fields_and_logs_name_disagreement(tmp_
     assert updated.tracker_matching.tracker_row_id is not None
     disagreement_fields = {d["field"] for d in updated.tracker_matching.tracker_disagreements}
     assert "canonical_proposal_name" in disagreement_fields
+
+
+def _make_tracker_row(proposal_name: str) -> TrackerRow:
+    return TrackerRow(
+        row_id="trk_shared_001",
+        values={
+            "proposal_name": proposal_name,
+            "submission_date": "2025-09-01",
+            "selection_notification_date": "2025-11-01",
+            "award_date": "2026-01-15",
+            "status": "awarded",
+            "award_status": "Phase I award",
+        },
+    )
+
+
+def test_apply_tracker_overrides_to_identity_without_rows_returns_not_attempted() -> None:
+    result = apply_tracker_overrides_to_identity(
+        proposal_branch="Demo Battery Proposal",
+        tracker_rows=None,
+        canonical_proposal_name="Demo Battery Proposal",
+        submission_date="2025-08-15",
+        status="submitted",
+        award_status="pending",
+    )
+    assert result.match_status == "not_attempted"
+    assert result.canonical_proposal_name == "Demo Battery Proposal"
+    assert result.submission_date == "2025-08-15"
+    assert result.disagreements == []
+    assert result.matched_row is None
+
+
+def test_apply_tracker_overrides_to_identity_overrides_and_records_disagreements() -> None:
+    rows = [_make_tracker_row("Demo Battery Proposal")]
+    result = apply_tracker_overrides_to_identity(
+        proposal_branch="Demo Battery Proposal",
+        tracker_rows=rows,
+        canonical_proposal_name="Demo Battery Proposal",
+        submission_date="2025-08-15",
+        status="submitted",
+        award_status="pending",
+    )
+    assert result.match_status == "matched"
+    assert result.submission_date == "2025-09-01"
+    assert result.selection_notification_date == "2025-11-01"
+    assert result.award_date == "2026-01-15"
+    assert result.status == "awarded"
+    assert result.award_status == "Phase I award"
+    assert result.matched_row is not None
+    disagreement_fields = {d["field"] for d in result.disagreements}
+    assert "submission_date" in disagreement_fields
+    assert "status" in disagreement_fields
+    assert "award_status" in disagreement_fields
+
+
+def test_apply_tracker_overrides_to_identity_unmatched_leaves_fields_unchanged() -> None:
+    rows = [_make_tracker_row("Completely Unrelated Project")]
+    result = apply_tracker_overrides_to_identity(
+        proposal_branch="Demo Battery Proposal",
+        tracker_rows=rows,
+        canonical_proposal_name="Demo Battery Proposal",
+        submission_date="2025-08-15",
+        status="submitted",
+        award_status="pending",
+    )
+    assert result.match_status in {"unmatched", "ambiguous"}
+    assert result.submission_date == "2025-08-15"
+    assert result.status == "submitted"
+    assert result.disagreements == []
 
 
 def test_scan_and_analyze_apply_tracker_rows(tmp_path: Path) -> None:

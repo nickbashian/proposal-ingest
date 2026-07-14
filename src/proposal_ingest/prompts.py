@@ -104,6 +104,77 @@ _DOCUMENT_METADATA_TEMPLATE = {
 }
 
 
+_PROPOSAL_METADATA_TEMPLATE = {
+    "canonical_identity": {
+        "proposal_name": "unknown",
+        "proposal_short_name": None,
+        "agency": "unknown",
+        "agency_subunit": None,
+        "program": "unknown",
+        "phase": None,
+        "topic_number": None,
+        "topic_title": None,
+        "solicitation_number": None,
+        "submission_date": None,
+        "selection_notification_date": None,
+        "award_date": None,
+        "status": "unknown",
+        "award_status": "unknown",
+        "award_amount": None,
+    },
+    "organizations": {
+        "lead_organization": None,
+        "prime_or_sub": "unknown",
+        "partners": [],
+        "customer_or_sponsor": None,
+    },
+    "proposal_summary": {
+        "technical_objective": "",
+        "proposed_approach": "",
+        "target_applications": [],
+        "key_performance_targets": [],
+        "commercial_strategy": "",
+        "reviewer_feedback": [],
+        "outcome": "",
+    },
+    "document_lineage": [
+        {
+            "document_id": "doc_...",
+            "document_role": "unknown",
+            "version_status": "unknown",
+            "authority_rank": "supporting",
+            "is_authoritative": False,
+            "superseded_by_document_id": None,
+            "contains_unique_reasoning": False,
+            "rationale": "",
+        }
+    ],
+    "key_documents": [{"document_id": "doc_...", "document_role": "unknown", "reason": ""}],
+    "knowledge_base_treatment": [
+        {
+            "document_id": "doc_...",
+            "recommended_rag_treatment": "metadata_only",
+            "rag_priority": "medium",
+            "policy_applied": None,
+            "exception_reason": None,
+        }
+    ],
+    "unresolved_decisions": [
+        {
+            "field": "canonical_identity.award_status",
+            "scope": "proposal",
+            "decision_type": "proposal_fact",
+            "current_guess": None,
+            "confidence": 0.0,
+            "evidence_summary": "",
+            "affected_document_ids": [],
+            "downstream_impact": "low",
+            "reason_unresolved": "",
+        }
+    ],
+}
+
+
 def _load_prompt(name: str) -> str:
     """Read a prompt template file and return its contents stripped of surrounding whitespace."""
     path = PROMPTS_DIR / name
@@ -150,6 +221,30 @@ def load_folder_summary_user_prompt_template() -> str:
 def load_smoke_test_prompt() -> str:
     """Return the Bedrock connectivity smoke-test prompt."""
     return _load_prompt("bedrock_smoke_test.md")
+
+
+def load_proposal_synthesis_system_prompt() -> str:
+    """Return the system prompt for proposal-level synthesis."""
+    return _load_prompt("proposal_synthesis_system.md")
+
+
+def load_proposal_synthesis_user_prompt_template() -> str:
+    """Return the raw proposal-synthesis user prompt template."""
+    return _load_prompt("proposal_synthesis_user.md")
+
+
+def _proposal_metadata_template_json() -> str:
+    """Return a compact JSON template matching the required proposal record shape."""
+    return json.dumps(_PROPOSAL_METADATA_TEMPLATE, indent=2)
+
+
+def render_proposal_synthesis_user_prompt(proposal_context_json: str) -> str:
+    """Render the proposal-synthesis user prompt with the context packet substituted."""
+    return (
+        load_proposal_synthesis_user_prompt_template()
+        .replace("{{PROPOSAL_CONTEXT_JSON}}", proposal_context_json)
+        .replace("{{PROPOSAL_METADATA_TEMPLATE_JSON}}", _proposal_metadata_template_json())
+    )
 
 
 def render_folder_summary_user_prompt(

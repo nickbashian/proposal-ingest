@@ -20,6 +20,7 @@ Use small, testable increments. Avoid starting with Bedrock. Build the local sta
 - Phase 11 — complete
 - Phase 12 — complete
 - Phase 13 — not started
+- Phase 14 — complete
 
 ## Phase 0 — Repo bootstrap
 
@@ -263,6 +264,40 @@ Recommended real-world pilot:
 4. Adjust prompts/rules.
 5. Run one full year.
 6. Only then run the whole archive.
+
+## Phase 14 — Proposal-level synthesis (issue #7)
+
+Status: complete
+
+Deliverables:
+
+- `ProposalMetadata` schema (canonical identity, organizations, proposal
+  summary, document lineage/authority ranking, key documents,
+  knowledge-base treatment, evidence, unresolved decisions)
+- `config/knowledge_base_policies.yaml` standing policies, loaded by both
+  the deterministic synthesizer and the Bedrock synthesis prompt
+- `proposal_synthesizer.py`: deterministic synthesis (mock mode and
+  Bedrock-failure fallback) plus an optional real-mode Bedrock call seeded
+  by a token-budgeted context packet (per-document metadata, extracted text
+  of selected high-value documents, tracker candidates, standing policies)
+- `synthesize-proposals` CLI command; wired into `run-all` and
+  `process-folder` before folder synthesis
+- `folder_builder.py` consumes the synthesized proposal record as its
+  primary source for canonical identity and narrative summary fields when
+  available, with the original deterministic behavior retained as a
+  fallback when no proposal record exists
+- `proposal_metadata/all_proposal_metadata.jsonl` and
+  `proposal_metadata/by_proposal_id/<proposal_id>.json` run outputs
+
+Acceptance criteria:
+
+- mock mode and CI never call Bedrock for proposal synthesis
+- a proposal with conflicting document evidence and no tracker match
+  produces a consolidated `unresolved_decisions` entry instead of silently
+  picking a value
+- a Bedrock proposal-synthesis failure falls back to the deterministic
+  record (`synthesis_source: "deterministic_fallback"`) rather than
+  breaking the pipeline
 
 ## Suggested implementation chunks for AI coding agents
 

@@ -16,6 +16,7 @@ from proposal_ingest.folder_builder import (
 )
 from proposal_ingest.config import RuntimeConfig
 from proposal_ingest.metadata_store import MetadataStore
+from proposal_ingest.proposal_synthesizer import build_deterministic_proposal_metadata
 from proposal_ingest.schemas import (
     APP_SCHEMA_VERSION,
     DocumentMetadata,
@@ -703,6 +704,70 @@ def test_build_all_folders_json_roundtrip(tmp_path: Path) -> None:
     loaded = FolderMetadata.model_validate_json(json_text)
     assert loaded.proposal_id == "prop_aaa"
     assert loaded.included_document_count == 1
+
+
+# ---------------------------------------------------------------------------
+# ProposalMetadata as primary source (issue #7)
+# ---------------------------------------------------------------------------
+
+
+def test_build_folder_metadata_uses_proposal_canonical_identity() -> None:
+    docs = [_make_doc(document_id="doc_001", canonical_proposal_name="Doc Consensus Name")]
+    proposal = build_deterministic_proposal_metadata(docs)
+    proposal.canonical_identity.proposal_name = "Proposal Record Name"
+    proposal.canonical_identity.agency = "NSF"  # type: ignore[assignment]
+
+    meta = build_folder_metadata(docs, proposal=proposal, use_mock=True)
+
+    assert meta.canonical_proposal_name == "Proposal Record Name"
+    assert str(meta.agency) == "NSF"
+
+
+def test_build_folder_metadata_without_proposal_falls_back_to_consensus() -> None:
+    docs = [_make_doc(document_id="doc_001", canonical_proposal_name="Doc Consensus Name")]
+    meta = build_folder_metadata(docs, proposal=None, use_mock=True)
+    assert meta.canonical_proposal_name == "Doc Consensus Name"
+
+
+def test_build_folder_metadata_uses_proposal_summary_for_narrative() -> None:
+    docs = [_make_doc(document_id="doc_001")]
+    proposal = build_deterministic_proposal_metadata(docs)
+    proposal.proposal_summary.proposed_approach = "Proposal-level proposed approach text."
+
+    meta = build_folder_metadata(docs, proposal=proposal, use_mock=True)
+
+    assert meta.folder_summary_detailed == "Proposal-level proposed approach text."
+
+
+def test_build_all_folders_passes_proposal_metadata_by_id(tmp_path: Path) -> None:
+    store = MetadataStore(tmp_path / "run_001")
+    doc = _make_doc(
+        document_id="doc_001", proposal_id="prop_aaa", canonical_proposal_name="Doc Name"
+    )
+    store.write_document_metadata(doc, append_jsonl=False)
+
+    proposal = build_deterministic_proposal_metadata([doc])
+    proposal.canonical_identity.proposal_name = "Synthesized Name"
+
+    results = build_all_folders(
+        store, proposal_metadata_by_id={"prop_aaa": proposal}, use_mock=True
+    )
+
+    assert results[0].metadata.canonical_proposal_name == "Synthesized Name"
+
+
+def test_build_all_folders_without_proposal_metadata_uses_deterministic_default(
+    tmp_path: Path,
+) -> None:
+    store = MetadataStore(tmp_path / "run_001")
+    doc = _make_doc(
+        document_id="doc_001", proposal_id="prop_aaa", canonical_proposal_name="Doc Name"
+    )
+    store.write_document_metadata(doc, append_jsonl=False)
+
+    results = build_all_folders(store, use_mock=True)
+
+    assert results[0].metadata.canonical_proposal_name == "Doc Name"
 
 
 # ---------------------------------------------------------------------------

@@ -201,6 +201,22 @@ class QuestionStatus(StrEnum):
     skipped = "skipped"
 
 
+class AuthorityRank(StrEnum):
+    authoritative = "authoritative"
+    supporting = "supporting"
+    superseded = "superseded"
+    excluded = "excluded"
+
+
+class UnresolvedDecisionType(StrEnum):
+    proposal_fact = "proposal_fact"
+    authoritative_document = "authoritative_document"
+    knowledge_base_treatment = "knowledge_base_treatment"
+    sensitivity_exception = "sensitivity_exception"
+    identity_resolution = "identity_resolution"
+    operational_processing = "operational_processing"
+
+
 class InventoryRecord(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -528,6 +544,133 @@ class FolderMetadata(BaseModel):
     ready_for_future_s3: bool
     tracker_match_status: TrackerMatchStatus = TrackerMatchStatus.not_attempted
     tracker_disagreements: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class ProposalCanonicalIdentity(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    proposal_name: str
+    proposal_short_name: str | None = None
+    agency: Agency = Agency.unknown
+    agency_subunit: str | None = None
+    program: Program = Program.unknown
+    phase: str | None = None
+    topic_number: str | None = None
+    topic_title: str | None = None
+    solicitation_number: str | None = None
+    submission_date: str | None = None
+    selection_notification_date: str | None = None
+    award_date: str | None = None
+    status: ProposalStatus = ProposalStatus.unknown
+    award_status: str = "unknown"
+    award_amount: float | None = None
+
+
+class ProposalOrganizations(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    lead_organization: str | None = None
+    prime_or_sub: str = "unknown"
+    partners: list[str] = Field(default_factory=list)
+    customer_or_sponsor: str | None = None
+
+
+class ProposalSummary(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    technical_objective: str = ""
+    proposed_approach: str = ""
+    target_applications: list[str] = Field(default_factory=list)
+    key_performance_targets: list[str] = Field(default_factory=list)
+    commercial_strategy: str = ""
+    reviewer_feedback: list[str] = Field(default_factory=list)
+    outcome: str = ""
+
+
+class DocumentLineageEntry(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    document_id: str
+    file_name_original: str | None = None
+    document_role: DocumentRole = DocumentRole.unknown
+    version_status: VersionStatus = VersionStatus.unknown
+    authority_rank: AuthorityRank = AuthorityRank.supporting
+    is_authoritative: bool = False
+    superseded_by_document_id: str | None = None
+    contains_unique_reasoning: bool = False
+    rationale: str = ""
+
+
+class ProposalKeyDocument(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    document_id: str
+    file_name_original: str | None = None
+    document_role: DocumentRole | None = None
+    reason: str = ""
+
+
+class KnowledgeBaseTreatment(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    document_id: str
+    recommended_rag_treatment: RecommendedRagTreatment = RecommendedRagTreatment.metadata_only
+    rag_priority: RagPriority = RagPriority.medium
+    policy_applied: str | None = None
+    exception_reason: str | None = None
+
+
+class ProposalEvidenceRef(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    source: str
+    document_id: str | None = None
+    claim: str
+    confidence: ConfidenceValue = 0.5
+
+
+class UnresolvedDecision(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    field: str
+    scope: UncertaintyScope = UncertaintyScope.proposal
+    decision_type: UnresolvedDecisionType = UnresolvedDecisionType.proposal_fact
+    current_guess: str | None = None
+    confidence: ConfidenceValue = 0.0
+    evidence_summary: str = ""
+    affected_document_ids: list[str] = Field(default_factory=list)
+    downstream_impact: UncertaintyImpact = UncertaintyImpact.low
+    reason_unresolved: str = ""
+
+
+class ProposalMetadata(BaseModel):
+    """Canonical, cross-document proposal record synthesized after document analysis.
+
+    Documents remain evidence underneath this record; ``document_lineage``,
+    ``key_documents``, and ``knowledge_base_treatment`` are keyed by
+    ``document_id`` and reference (not duplicate) the underlying
+    ``DocumentMetadata`` records.
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+    schema_version: str = APP_SCHEMA_VERSION
+    proposal_id: str
+    year_folder: str
+    proposal_branch: str
+    run_id: str | None = None
+    canonical_identity: ProposalCanonicalIdentity
+    organizations: ProposalOrganizations = Field(default_factory=ProposalOrganizations)
+    proposal_summary: ProposalSummary = Field(default_factory=ProposalSummary)
+    document_lineage: list[DocumentLineageEntry] = Field(default_factory=list)
+    key_documents: list[ProposalKeyDocument] = Field(default_factory=list)
+    knowledge_base_treatment: list[KnowledgeBaseTreatment] = Field(default_factory=list)
+    evidence: list[ProposalEvidenceRef] = Field(default_factory=list)
+    unresolved_decisions: list[UnresolvedDecision] = Field(default_factory=list)
+    tracker_match_status: TrackerMatchStatus = TrackerMatchStatus.not_attempted
+    tracker_disagreements: list[dict[str, Any]] = Field(default_factory=list)
+    synthesis_source: str = "mock"
+    document_count: int = Field(default=0, ge=0)
 
 
 class S3ManifestRow(BaseModel):

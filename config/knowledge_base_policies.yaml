@@ -1,0 +1,49 @@
+# Standing knowledge-base treatment policies applied during proposal-level
+# synthesis (see docs/03_metadata_schema.md and issue #7). These are loaded
+# by both the deterministic proposal synthesizer and the Bedrock proposal
+# synthesis prompt, so Python and the model apply the same rules. Bedrock
+# may recommend a documented, evidence-backed exception to any policy; the
+# exception and its reason must be recorded, not applied silently.
+policies:
+  - id: submitted_final_authoritative
+    statement: >-
+      Submitted or final versions have greater authority than drafts and
+      working versions.
+  - id: draft_retained_for_unique_reasoning
+    statement: >-
+      Drafts are normally lower priority than the submitted/final version,
+      but should be retained at low priority (not excluded) when they
+      contain unique reasoning or decision history not present in the
+      final version.
+  - id: superseded_low_priority
+    statement: >-
+      Superseded documents are normally low priority or summary-only for
+      future RAG unless they contain unique reasoning.
+  - id: high_value_roles
+    statement: >-
+      Technical volumes, project descriptions, statements of work, reviewer
+      feedback, award notices, milestone reports, final reports, and
+      commercialization plans are generally high RAG value.
+  - id: opportunity_boilerplate_not_high_value
+    statement: >-
+      Long opportunity documents (RFP/FOA/NOFO), topic descriptions,
+      submission instructions, terms and conditions, and DFARS clauses are
+      not high RAG priority merely because they are long or formal.
+  - id: evaluation_criteria_may_be_useful
+    statement: >-
+      Evaluation criteria documents may be more useful than generic
+      submission instructions or terms and conditions and can receive
+      higher treatment when they contain unique evaluation guidance.
+  - id: budgets_excluded_from_rag
+    statement: >-
+      Budgets, rates, and documents containing personal information are
+      normally excluded from future general-purpose RAG.
+  - id: tracker_high_authority
+    statement: >-
+      Grants-tracker data is high authority for dates, submission/award
+      status, and outcome, and should override document-derived guesses
+      when the two conflict.
+  - id: exceptions_must_be_documented
+    statement: >-
+      An exception to any of the above policies must be recorded with a
+      documented, evidence-backed reason rather than applied silently.

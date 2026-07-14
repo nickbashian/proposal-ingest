@@ -244,6 +244,140 @@ def match_tracker_row(
     )
 
 
+@dataclass(frozen=True)
+class ScalarTrackerOverrideResult:
+    """Result of reconciling folder/proposal-level scalar fields against a tracker row."""
+
+    match_status: TrackerMatchStatus
+    canonical_proposal_name: str
+    submission_date: str | None
+    selection_notification_date: str | None
+    award_date: str | None
+    status: str
+    award_status: str
+    disagreements: list[dict[str, Any]]
+    matched_row: TrackerRow | None
+
+
+def apply_tracker_overrides_to_identity(
+    *,
+    proposal_branch: str,
+    tracker_rows: list[TrackerRow] | None,
+    canonical_proposal_name: str,
+    submission_date: str | None,
+    status: str,
+    award_status: str,
+) -> ScalarTrackerOverrideResult:
+    """Match a proposal branch to a tracker row and override high-authority scalar fields.
+
+    Shared by folder-level (``folder_builder.py``) and proposal-level
+    (``proposal_synthesizer.py``) synthesis so both stages reconcile tracker
+    data identically. Unlike ``apply_tracker_overrides`` above, this operates
+    on plain scalar identity fields rather than a full ``DocumentMetadata``
+    record, and also resolves ``selection_notification_date``/``award_date``,
+    which only exist at the folder/proposal level.
+    """
+    if not tracker_rows:
+        return ScalarTrackerOverrideResult(
+            match_status=TrackerMatchStatus.not_attempted,
+            canonical_proposal_name=canonical_proposal_name,
+            submission_date=submission_date,
+            selection_notification_date=None,
+            award_date=None,
+            status=status,
+            award_status=award_status,
+            disagreements=[],
+            matched_row=None,
+        )
+
+    match_result = match_tracker_row(
+        proposal_branch,
+        tracker_rows,
+        canonical_proposal_name=canonical_proposal_name,
+    )
+
+    if match_result.status != TrackerMatchStatus.matched or match_result.tracker_row is None:
+        return ScalarTrackerOverrideResult(
+            match_status=match_result.status,
+            canonical_proposal_name=canonical_proposal_name,
+            submission_date=submission_date,
+            selection_notification_date=None,
+            award_date=None,
+            status=status,
+            award_status=award_status,
+            disagreements=[],
+            matched_row=None,
+        )
+
+    row = match_result.tracker_row.values
+    disagreements: list[dict[str, Any]] = []
+
+    tracker_name = row.get("proposal_name")
+    if tracker_name and tracker_name != canonical_proposal_name:
+        disagreements.append(
+            {
+                "field": "canonical_proposal_name",
+                "folder_value": canonical_proposal_name,
+                "tracker_value": tracker_name,
+                "source": "tracker",
+            }
+        )
+        canonical_proposal_name = tracker_name
+
+    tracker_submission = row.get("submission_date")
+    if tracker_submission:
+        if submission_date and submission_date != tracker_submission:
+            disagreements.append(
+                {
+                    "field": "submission_date",
+                    "folder_value": submission_date,
+                    "tracker_value": tracker_submission,
+                    "source": "tracker",
+                }
+            )
+        submission_date = tracker_submission
+
+    selection_notification_date = row.get("selection_notification_date")
+    award_date = row.get("award_date")
+
+    normalized_status = _normalize_status(row.get("status"))
+    if normalized_status and normalized_status != status:
+        disagreements.append(
+            {
+                "field": "status",
+                "folder_value": status,
+                "tracker_value": normalized_status,
+                "source": "tracker",
+            }
+        )
+        status = normalized_status
+
+    tracker_award = row.get("award_status") or row.get("result")
+    if tracker_award:
+        if award_status != tracker_award:
+            disagreements.append(
+                {
+                    "field": "award_status",
+                    "folder_value": award_status,
+                    "tracker_value": tracker_award,
+                    "source": "tracker",
+                }
+            )
+        award_status = tracker_award
+
+    return ScalarTrackerOverrideResult(
+        match_status=match_result.status,
+        canonical_proposal_name=canonical_proposal_name,
+        submission_date=submission_date,
+        selection_notification_date=selection_notification_date,
+        award_date=award_date,
+        status=status,
+        award_status=award_status,
+        disagreements=disagreements,
+        matched_row=match_result.tracker_row,
+    )
+
+
 def apply_tracker_overrides(
     metadata: DocumentMetadata,
     match_result: TrackerMatchResult,

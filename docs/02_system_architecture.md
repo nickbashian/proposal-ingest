@@ -19,7 +19,9 @@ Local source root  ──scan──>  File inventory
                                │
                                ├──human CSV review/apply answers
                                │
-                               ├──folder-level synthesis
+                               ├──proposal-level synthesis (canonical proposal record)
+                               │
+                               ├──folder-level synthesis (sourced from the proposal record)
                                │
                                └──clean mirrored output + S3 manifest
 ```
@@ -40,6 +42,7 @@ proposal-ingest/
   config/
     default_config.yaml
     document_type_rules.yaml
+    knowledge_base_policies.yaml
   prompts/
     document_metadata_system.md
     document_metadata_user.md
@@ -47,9 +50,12 @@ proposal-ingest/
     folder_metadata_system.md
     folder_metadata_user.md
     pass2_contextual_review_system.md
+    proposal_synthesis_system.md
+    proposal_synthesis_user.md
   schemas/
     document_metadata.schema.json
     folder_metadata.schema.json
+    proposal_metadata.schema.json
   src/
     proposal_ingest/
       __init__.py
@@ -65,9 +71,12 @@ proposal-ingest/
       mock_bedrock.py
       prompts.py
       schemas.py
+      aggregation.py
+      json_utils.py
       metadata_store.py
       question_loop.py
       two_pass.py
+      proposal_synthesizer.py
       folder_builder.py
       clean_set_builder.py
       s3_manifest.py
@@ -205,10 +214,24 @@ Pydantic models for:
 - inventory records
 - document metadata
 - document-level uncertainties
+- proposal metadata (canonical proposal record)
 - folder metadata
 - review questions
 - tracker rows
 - S3 manifest rows
+
+### `aggregation.py`
+
+Deterministic consensus/union helpers (and the key-document role priority
+list) shared by `folder_builder.py` and `proposal_synthesizer.py` so both
+stages aggregate per-document fields identically.
+
+### `json_utils.py`
+
+Shared parser that extracts a JSON object from a raw Bedrock text response,
+tolerating Markdown code fences or stray commentary. Used by every module
+that parses a Bedrock JSON response (`folder_builder.py`,
+`proposal_synthesizer.py`).
 
 ### `metadata_store.py`
 
@@ -218,6 +241,8 @@ Writes:
 
 - `document_metadata/all_documents.jsonl`
 - `document_metadata/by_document_id/<document_id>.json`
+- `proposal_metadata/all_proposal_metadata.jsonl`
+- `proposal_metadata/by_proposal_id/<proposal_id>.json`
 - `folder_metadata/<proposal_id>.json`
 - `runs/<run_id>/run_manifest.json`
 
@@ -238,9 +263,29 @@ Implements contextual re-analysis.
 - re-runs model call
 - merges changes conservatively
 
+### `proposal_synthesizer.py`
+
+Synthesizes one canonical `ProposalMetadata` record per proposal from all of
+its document metadata, standing knowledge-base policies
+(`config/knowledge_base_policies.yaml`), and tracker data. A deterministic
+Python pass always runs first — consensus identity, document lineage and
+authority ranking, key documents, knowledge-base treatment, evidence, and
+consolidated `unresolved_decisions` — and is the mock-mode result and the
+Bedrock-failure fallback. In real mode it seeds a single Bedrock call (one
+per proposal) that may refine those fields using a token-budgeted context
+packet built from document metadata, extracted text of high-value
+documents, and tracker candidates.
+
 ### `folder_builder.py`
 
-Synthesizes proposal-branch metadata and Markdown summaries from document metadata.
+Synthesizes proposal-branch (`FolderMetadata`) metadata and Markdown
+summaries. When a synthesized `ProposalMetadata` record is available for a
+proposal, its canonical identity and narrative summary become the primary
+source for the corresponding `FolderMetadata` fields; document counts, key
+documents, and readiness stay deterministic either way. When no proposal
+record is available (synthesis stage skipped or failed), the original
+deterministic per-document consensus/mock/Bedrock-summary behavior is used
+unchanged.
 
 ### `clean_set_builder.py`
 
@@ -266,6 +311,10 @@ processed_output/
     all_documents.jsonl
     by_document_id/
       <document_id>.json
+  proposal_metadata/
+    all_proposal_metadata.jsonl
+    by_proposal_id/
+      <proposal_id>.json
   folder_metadata/
     <proposal_id>.json
   review/

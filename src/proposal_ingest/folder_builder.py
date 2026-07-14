@@ -2,12 +2,19 @@
 
 from __future__ import annotations
 
-import json
-from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from proposal_ingest.aggregation import (
+    KEY_DOCUMENT_ROLES,
+    MAX_KEY_DOCUMENTS,
+    consensus_enum,
+    consensus_str,
+    first_non_none,
+    union_lists,
+)
+from proposal_ingest.json_utils import parse_json_object_response
 from proposal_ingest.logging_utils import get_logger
 from proposal_ingest.metadata_store import MetadataStore
 from proposal_ingest.schemas import (
@@ -18,36 +25,15 @@ from proposal_ingest.schemas import (
     FolderMetadata,
     OriginType,
     Program,
+    ProposalMetadata,
     ProposalStatus,
     RagPriority,
     SensitivityLabel,
-    TrackerMatchStatus,
 )
-from proposal_ingest.tracker import TrackerRow, _normalize_status, match_tracker_row
+from proposal_ingest.tracker import TrackerRow, apply_tracker_overrides_to_identity
 
 logger = get_logger("folder_builder")
 
-# ---------------------------------------------------------------------------
-# Key document priority
-# ---------------------------------------------------------------------------
-
-_KEY_DOCUMENT_ROLES: list[DocumentRole] = [
-    DocumentRole.technical_volume,
-    DocumentRole.project_description,
-    DocumentRole.statement_of_work,
-    DocumentRole.commercialization_plan,
-    DocumentRole.budget,
-    DocumentRole.budget_justification,
-    DocumentRole.abstract,
-    DocumentRole.rfp,
-    DocumentRole.foa,
-    DocumentRole.award_notice,
-    DocumentRole.quad_chart,
-    DocumentRole.final_report,
-    DocumentRole.milestone_report,
-]
-
-_MAX_KEY_DOCUMENTS = 10
 _MAX_TECHNICAL_FOCUS = 20
 _MAX_COMMERCIAL_FOCUS = 10
 _SUMMARY_DETAIL_MAX_DOCS = 5
@@ -78,15 +64,22 @@ def build_folder_metadata(
     documents: list[DocumentMetadata],
     *,
     tracker_rows: list[TrackerRow] | None = None,
+    proposal: ProposalMetadata | None = None,
     use_mock: bool = True,
     config: Any = None,
 ) -> FolderMetadata:
     """Synthesize a FolderMetadata record from a list of per-document metadata.
 
     All documents must share the same proposal_id.  The tracker_rows list is
-    optional; when provided, match_tracker_row is called to override
-    high-authority fields.  When use_mock=True, summaries are template-based;
-    otherwise a single Bedrock call generates narrative text.
+    optional; when provided, apply_tracker_overrides_to_identity is called
+    to override high-authority fields.  When a synthesized ``proposal`` (ProposalMetadata)
+    is supplied, its canonical identity and narrative summary become the
+    primary source for those fields instead of deterministic per-document
+    consensus/mock or per-folder Bedrock summaries; document counts, key
+    documents, and readiness remain deterministic either way. When
+    ``proposal`` is omitted (no proposal-synthesis stage has run, or it
+    failed), the original deterministic consensus/mock/Bedrock-summary
+    behavior is used unchanged.
     """
     if not documents:
         raise ValueError("documents must be non-empty")
@@ -95,53 +88,6 @@ def build_folder_metadata(
     proposal_id = first.proposal_id
     year_folder = first.system.year_folder
     proposal_branch = first.system.proposal_branch
-
-    # --- aggregated context fields ---
-    canonical_proposal_name = _consensus_str(
-        [d.proposal_context.canonical_proposal_name for d in documents],
-        fallback=proposal_branch,
-        ignore={"unknown", ""},
-    )
-    agency = _consensus_enum(
-        [str(d.proposal_context.agency) for d in documents],
-        default=Agency.unknown.value,
-        ignore={Agency.unknown.value},
-    )
-    program = _consensus_enum(
-        [str(d.proposal_context.program) for d in documents],
-        default=Program.unknown.value,
-        ignore={Program.unknown.value},
-    )
-    status_str = _consensus_enum(
-        [str(d.proposal_context.status) for d in documents],
-        default=ProposalStatus.unknown.value,
-        ignore={ProposalStatus.unknown.value},
-    )
-    award_status = _consensus_str(
-        [d.proposal_context.award_status for d in documents],
-        fallback="unknown",
-        ignore={"unknown", ""},
-    )
-    submission_date = _first_non_none([d.proposal_context.submission_date for d in documents])
-    phase = _first_non_none([d.proposal_context.phase for d in documents])
-    topic_number = _first_non_none([d.proposal_context.topic_number for d in documents])
-    topic_title = _first_non_none([d.proposal_context.topic_title for d in documents])
-    solicitation_number = _first_non_none(
-        [d.proposal_context.solicitation_number for d in documents]
-    )
-    lead_organization = _first_non_none([d.proposal_context.lead_organization for d in documents])
-    prime_or_sub = _consensus_str(
-        [d.proposal_context.prime_or_sub for d in documents],
-        fallback="unknown",
-        ignore={"unknown", ""},
-    )
-    partners = _union_lists([d.proposal_context.partners for d in documents])
-    technical_focus = _union_lists(
-        [d.content.primary_topics + d.content.technologies for d in documents]
-    )[:_MAX_TECHNICAL_FOCUS]
-    commercial_focus = _union_lists([d.content.applications for d in documents])[
-        :_MAX_COMMERCIAL_FOCUS
-    ]
 
     # --- document counts ---
     included_docs = [d for d in documents if d.inclusion.include_in_clean_set]
@@ -160,30 +106,112 @@ def build_folder_metadata(
     ) + sum(1 for d in documents for u in d.uncertainties if str(u.downstream_impact) == "critical")
 
     key_documents = _identify_key_documents(documents)
+    technical_focus = union_lists(
+        [d.content.primary_topics + d.content.technologies for d in documents]
+    )[:_MAX_TECHNICAL_FOCUS]
+    commercial_focus = union_lists([d.content.applications for d in documents])[
+        :_MAX_COMMERCIAL_FOCUS
+    ]
 
-    # --- tracker ---
-    tracker_match_status: TrackerMatchStatus = TrackerMatchStatus.not_attempted
-    tracker_disagreements: list[dict[str, Any]] = []
-    selection_notification_date: str | None = None
-    award_date: str | None = None
-
-    if tracker_rows:
+    if proposal is not None:
+        canonical = _canonical_fields_from_proposal(proposal)
+        canonical_proposal_name = canonical["canonical_proposal_name"]
+        agency = canonical["agency"]
+        program = canonical["program"]
+        phase = canonical["phase"]
+        topic_number = canonical["topic_number"]
+        topic_title = canonical["topic_title"]
+        solicitation_number = canonical["solicitation_number"]
+        submission_date = canonical["submission_date"]
+        selection_notification_date = canonical["selection_notification_date"]
+        award_date = canonical["award_date"]
+        status_str = canonical["status"]
+        award_status = canonical["award_status"]
+        lead_organization = canonical["lead_organization"]
+        prime_or_sub = canonical["prime_or_sub"]
+        partners = canonical["partners"]
+        tracker_match_status = canonical["tracker_match_status"]
+        tracker_disagreements = canonical["tracker_disagreements"]
         (
-            tracker_match_status,
-            canonical_proposal_name,
-            submission_date,
-            selection_notification_date,
-            award_date,
-            status_str,
-            award_status,
-            tracker_disagreements,
-        ) = _apply_tracker_to_folder(
+            folder_summary_short,
+            folder_summary_detailed,
+            opportunity_context_summary,
+            generated_response_summary,
+        ) = _summaries_from_proposal(proposal, documents=documents, included_docs=included_docs)
+    else:
+        canonical_proposal_name = consensus_str(
+            [d.proposal_context.canonical_proposal_name for d in documents],
+            fallback=proposal_branch,
+            ignore={"unknown", ""},
+        )
+        agency = consensus_enum(
+            [str(d.proposal_context.agency) for d in documents],
+            default=Agency.unknown.value,
+            ignore={Agency.unknown.value},
+        )
+        program = consensus_enum(
+            [str(d.proposal_context.program) for d in documents],
+            default=Program.unknown.value,
+            ignore={Program.unknown.value},
+        )
+        status_str = consensus_enum(
+            [str(d.proposal_context.status) for d in documents],
+            default=ProposalStatus.unknown.value,
+            ignore={ProposalStatus.unknown.value},
+        )
+        award_status = consensus_str(
+            [d.proposal_context.award_status for d in documents],
+            fallback="unknown",
+            ignore={"unknown", ""},
+        )
+        submission_date = first_non_none([d.proposal_context.submission_date for d in documents])
+        phase = first_non_none([d.proposal_context.phase for d in documents])
+        topic_number = first_non_none([d.proposal_context.topic_number for d in documents])
+        topic_title = first_non_none([d.proposal_context.topic_title for d in documents])
+        solicitation_number = first_non_none(
+            [d.proposal_context.solicitation_number for d in documents]
+        )
+        lead_organization = first_non_none(
+            [d.proposal_context.lead_organization for d in documents]
+        )
+        prime_or_sub = consensus_str(
+            [d.proposal_context.prime_or_sub for d in documents],
+            fallback="unknown",
+            ignore={"unknown", ""},
+        )
+        partners = union_lists([d.proposal_context.partners for d in documents])
+
+        tracker_override = apply_tracker_overrides_to_identity(
             proposal_branch=proposal_branch,
             tracker_rows=tracker_rows,
             canonical_proposal_name=canonical_proposal_name,
             submission_date=submission_date,
-            status_str=status_str,
+            status=status_str,
             award_status=award_status,
+        )
+        tracker_match_status = tracker_override.match_status
+        canonical_proposal_name = tracker_override.canonical_proposal_name
+        submission_date = tracker_override.submission_date
+        selection_notification_date = tracker_override.selection_notification_date
+        award_date = tracker_override.award_date
+        status_str = tracker_override.status
+        award_status = tracker_override.award_status
+        tracker_disagreements = tracker_override.disagreements
+
+        (
+            folder_summary_short,
+            folder_summary_detailed,
+            opportunity_context_summary,
+            generated_response_summary,
+        ) = _build_summaries(
+            documents,
+            canonical_proposal_name=canonical_proposal_name,
+            agency=agency,
+            program=program,
+            status_str=status_str,
+            included_docs=included_docs,
+            use_mock=use_mock,
+            config=config,
         )
 
     # --- readiness ---
@@ -193,23 +221,6 @@ def build_folder_metadata(
     )
     ready_for_clean_set = len(included_docs) > 0 and open_critical == 0
     ready_for_future_s3 = ready_for_clean_set and not has_export_control
-
-    # --- summaries ---
-    (
-        folder_summary_short,
-        folder_summary_detailed,
-        opportunity_context_summary,
-        generated_response_summary,
-    ) = _build_summaries(
-        documents,
-        canonical_proposal_name=canonical_proposal_name,
-        agency=agency,
-        program=program,
-        status_str=status_str,
-        included_docs=included_docs,
-        use_mock=use_mock,
-        config=config,
-    )
 
     return FolderMetadata(
         proposal_id=proposal_id,
@@ -252,10 +263,19 @@ def build_all_folders(
     store: MetadataStore,
     *,
     tracker_rows: list[TrackerRow] | None = None,
+    proposal_metadata_by_id: dict[str, ProposalMetadata] | None = None,
     use_mock: bool = True,
     config: Any = None,
 ) -> list[FolderBuildResult]:
-    """Load all document metadata from store, group by proposal_id, synthesize."""
+    """Load all document metadata from store, group by proposal_id, synthesize.
+
+    ``proposal_metadata_by_id`` is the optional output of the proposal
+    synthesis stage (see ``proposal_synthesizer.synthesize_all_proposals``),
+    keyed by ``proposal_id``. When a proposal's record is present, it becomes
+    the primary source for canonical identity and narrative summary fields;
+    proposals without a synthesized record fall back to the original
+    deterministic per-document consensus behavior unchanged.
+    """
     docs_by_proposal: dict[str, list[DocumentMetadata]] = {}
     for doc in store.load_document_metadata_by_id().values():
         docs_by_proposal.setdefault(doc.proposal_id, []).append(doc)
@@ -268,6 +288,7 @@ def build_all_folders(
             metadata = build_folder_metadata(
                 docs,
                 tracker_rows=tracker_rows,
+                proposal=(proposal_metadata_by_id or {}).get(proposal_id),
                 use_mock=use_mock,
                 config=config,
             )
@@ -400,42 +421,71 @@ def render_folder_summary_markdown(metadata: FolderMetadata) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Aggregation helpers
+# ProposalMetadata field mapping
 # ---------------------------------------------------------------------------
 
 
-def _consensus_str(values: list[str | None], *, fallback: str, ignore: set[str]) -> str:
-    candidates = [v for v in values if v and v not in ignore]
-    return _consensus_value(candidates, default=fallback)
+def _canonical_fields_from_proposal(proposal: ProposalMetadata) -> dict[str, Any]:
+    """Map a synthesized ProposalMetadata record onto FolderMetadata field names."""
+    ci = proposal.canonical_identity
+    org = proposal.organizations
+    return {
+        "canonical_proposal_name": ci.proposal_name,
+        "agency": str(ci.agency),
+        "program": str(ci.program),
+        "phase": ci.phase,
+        "topic_number": ci.topic_number,
+        "topic_title": ci.topic_title,
+        "solicitation_number": ci.solicitation_number,
+        "submission_date": ci.submission_date,
+        "selection_notification_date": ci.selection_notification_date,
+        "award_date": ci.award_date,
+        "status": str(ci.status),
+        "award_status": ci.award_status,
+        "lead_organization": org.lead_organization,
+        "prime_or_sub": org.prime_or_sub,
+        "partners": org.partners,
+        "tracker_match_status": proposal.tracker_match_status,
+        "tracker_disagreements": proposal.tracker_disagreements,
+    }
 
 
-def _consensus_enum(values: list[str], *, default: str, ignore: set[str]) -> str:
-    candidates = [v for v in values if v not in ignore]
-    return _consensus_value(candidates, default=default)
+def _summaries_from_proposal(
+    proposal: ProposalMetadata,
+    *,
+    documents: list[DocumentMetadata],
+    included_docs: list[DocumentMetadata],
+) -> tuple[str, str, str, str]:
+    """Derive folder narrative summaries from a synthesized proposal record."""
+    ps = proposal.proposal_summary
+    ci = proposal.canonical_identity
+    folder_summary_short = (
+        f"This folder contains {len(included_docs)} included document(s) for the "
+        f"{ci.program} proposal '{ci.proposal_name}' submitted to {ci.agency}. "
+        f"Status: {ci.status}."
+    )
+    folder_summary_detailed = ps.proposed_approach or ps.technical_objective
 
+    _, _, opportunity_context_summary, _ = _build_mock_summaries(
+        documents=documents,
+        canonical_proposal_name=ci.proposal_name,
+        agency=str(ci.agency),
+        program=str(ci.program),
+        status_str=str(ci.status),
+        included_docs=included_docs,
+    )
 
-def _consensus_value(candidates: list[str], *, default: str) -> str:
-    if not candidates:
-        return default
-    counts = Counter(candidates).most_common(2)
-    if len(counts) > 1 and counts[0][1] == counts[1][1]:
-        return default
-    return counts[0][0]
+    generated_response_parts = [
+        text for text in (ps.technical_objective, ps.proposed_approach) if text
+    ]
+    generated_response_summary = " ".join(generated_response_parts)
 
-
-def _first_non_none(values: list[str | None]) -> str | None:
-    return next((v for v in values if v is not None), None)
-
-
-def _union_lists(lists: list[list[str]]) -> list[str]:
-    seen: set[str] = set()
-    result: list[str] = []
-    for items in lists:
-        for item in items:
-            if item and item not in seen:
-                seen.add(item)
-                result.append(item)
-    return result
+    return (
+        folder_summary_short,
+        folder_summary_detailed,
+        opportunity_context_summary,
+        generated_response_summary,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -459,8 +509,8 @@ def _identify_key_documents(documents: list[DocumentMetadata]) -> list[FolderKey
     seen_ids: set[str] = set()
     result: list[FolderKeyDocument] = []
 
-    for role in _KEY_DOCUMENT_ROLES:
-        if len(result) >= _MAX_KEY_DOCUMENTS:
+    for role in KEY_DOCUMENT_ROLES:
+        if len(result) >= MAX_KEY_DOCUMENTS:
             break
         role_doc = docs_by_role.get(role)
         if role_doc and role_doc.document_id not in seen_ids:
@@ -476,7 +526,7 @@ def _identify_key_documents(documents: list[DocumentMetadata]) -> list[FolderKey
 
     # append high-priority docs not already listed
     for doc in documents:
-        if len(result) >= _MAX_KEY_DOCUMENTS:
+        if len(result) >= MAX_KEY_DOCUMENTS:
             break
         if (
             str(doc.inclusion.rag_priority) == RagPriority.high.value
@@ -493,117 +543,6 @@ def _identify_key_documents(documents: list[DocumentMetadata]) -> list[FolderKey
             )
 
     return result
-
-
-# ---------------------------------------------------------------------------
-# Tracker folder-level application
-# ---------------------------------------------------------------------------
-
-
-def _apply_tracker_to_folder(
-    *,
-    proposal_branch: str,
-    tracker_rows: list[TrackerRow],
-    canonical_proposal_name: str,
-    submission_date: str | None,
-    status_str: str,
-    award_status: str,
-) -> tuple[
-    TrackerMatchStatus, str, str | None, str | None, str | None, str, str, list[dict[str, Any]]
-]:
-    """Match and apply tracker high-authority fields at folder level.
-
-    Returns:
-        (match_status, canonical_proposal_name, submission_date,
-         selection_notification_date, award_date, status_str, award_status, disagreements)
-    """
-    match_result = match_tracker_row(
-        proposal_branch,
-        tracker_rows,
-        canonical_proposal_name=canonical_proposal_name,
-    )
-
-    selection_notification_date: str | None = None
-    award_date: str | None = None
-    disagreements: list[dict[str, Any]] = []
-
-    if match_result.status != TrackerMatchStatus.matched or match_result.tracker_row is None:
-        return (
-            match_result.status,
-            canonical_proposal_name,
-            submission_date,
-            selection_notification_date,
-            award_date,
-            status_str,
-            award_status,
-            disagreements,
-        )
-
-    row = match_result.tracker_row.values
-
-    tracker_name = row.get("proposal_name")
-    if tracker_name and tracker_name != canonical_proposal_name:
-        disagreements.append(
-            {
-                "field": "canonical_proposal_name",
-                "folder_value": canonical_proposal_name,
-                "tracker_value": tracker_name,
-                "source": "tracker",
-            }
-        )
-        canonical_proposal_name = tracker_name
-
-    tracker_submission = row.get("submission_date")
-    if tracker_submission:
-        if submission_date and submission_date != tracker_submission:
-            disagreements.append(
-                {
-                    "field": "submission_date",
-                    "folder_value": submission_date,
-                    "tracker_value": tracker_submission,
-                    "source": "tracker",
-                }
-            )
-        submission_date = tracker_submission
-
-    selection_notification_date = row.get("selection_notification_date")
-    award_date = row.get("award_date")
-
-    normalized_status = _normalize_status(row.get("status"))
-    if normalized_status and normalized_status != status_str:
-        disagreements.append(
-            {
-                "field": "status",
-                "folder_value": status_str,
-                "tracker_value": normalized_status,
-                "source": "tracker",
-            }
-        )
-        status_str = normalized_status
-
-    tracker_award = row.get("award_status") or row.get("result")
-    if tracker_award:
-        if award_status != tracker_award:
-            disagreements.append(
-                {
-                    "field": "award_status",
-                    "folder_value": award_status,
-                    "tracker_value": tracker_award,
-                    "source": "tracker",
-                }
-            )
-        award_status = tracker_award
-
-    return (
-        match_result.status,
-        canonical_proposal_name,
-        submission_date,
-        selection_notification_date,
-        award_date,
-        status_str,
-        award_status,
-        disagreements,
-    )
 
 
 # ---------------------------------------------------------------------------
@@ -739,7 +678,7 @@ def _build_bedrock_summaries(
             max_tokens=1024,
             temperature=0.0,
         )
-        parsed = _parse_summary_json_response(raw_text)
+        parsed = parse_json_object_response(raw_text)
         return (
             parsed.get("folder_summary_short", ""),
             parsed.get("folder_summary_detailed", ""),
@@ -756,43 +695,3 @@ def _build_bedrock_summaries(
             status_str=status_str,
             included_docs=included_docs,
         )
-
-
-def _strip_markdown_fences(text: str) -> str:
-    text = text.strip()
-    if text.startswith("```"):
-        lines = text.splitlines()
-        lines = lines[1:]
-        if lines and lines[-1].strip().startswith("```"):
-            lines = lines[:-1]
-        return "\n".join(lines).strip()
-    return text
-
-
-def _parse_summary_json_response(raw_text: str) -> dict[str, Any]:
-    decoder = json.JSONDecoder()
-    candidates = [raw_text.strip()]
-
-    stripped = _strip_markdown_fences(raw_text)
-    if stripped != raw_text.strip():
-        candidates.insert(0, stripped)
-
-    for candidate in candidates:
-        try:
-            parsed = json.loads(candidate)
-            if isinstance(parsed, dict):
-                return parsed
-        except json.JSONDecodeError:
-            pass
-
-        start = candidate.find("{")
-        if start < 0:
-            continue
-        try:
-            parsed, _ = decoder.raw_decode(candidate[start:])
-        except json.JSONDecodeError:
-            continue
-        if isinstance(parsed, dict):
-            return parsed
-
-    raise ValueError("Bedrock folder summary response did not contain a JSON object")
