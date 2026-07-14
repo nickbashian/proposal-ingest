@@ -163,6 +163,7 @@ def _make_doc(
     summary_short: str = "A short summary.",
     useful_context_summary: str = "",
     questions_for_user: list[dict] | None = None,
+    uncertainties: list[dict] | None = None,
     submission_date: str | None = "2025-08-15",
 ) -> DocumentMetadata:
     payload = copy.deepcopy(_BASE_DOC)
@@ -197,6 +198,7 @@ def _make_doc(
     payload["sensitivity"]["manual_review_required"] = manual_review_required
     payload["sensitivity"]["sensitivity_labels"] = sensitivity_labels or ["internal"]
     payload["questions_for_user"] = questions_for_user or []
+    payload["uncertainties"] = uncertainties or []
     return DocumentMetadata.model_validate(payload)
 
 
@@ -376,6 +378,28 @@ def test_ready_for_clean_set_false_when_open_critical_question() -> None:
             document_id="doc_001",
             include_in_clean_set=True,
             questions_for_user=questions,
+        )
+    ]
+    meta = build_folder_metadata(docs, use_mock=True)
+    assert meta.ready_for_clean_set is False
+    assert meta.open_critical_questions == 1
+
+
+def test_ready_for_clean_set_false_when_critical_uncertainty() -> None:
+    uncertainties = [
+        {
+            "field": "proposal_context.award_status",
+            "scope": "proposal",
+            "confidence": 0.5,
+            "downstream_impact": "critical",
+            "reason_unresolved": "Award status could not be confirmed from this document.",
+        }
+    ]
+    docs = [
+        _make_doc(
+            document_id="doc_001",
+            include_in_clean_set=True,
+            uncertainties=uncertainties,
         )
     ]
     meta = build_folder_metadata(docs, use_mock=True)

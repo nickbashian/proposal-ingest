@@ -192,10 +192,6 @@ def _inject_system_fields(
         processing_strategy=ProcessingStrategy(processing_strategy),
         processing_status=ProcessingStatus.processed_pass1,
     ).model_dump()
-    # Auto-assign question_ids for any questions the model generated.
-    for i, question in enumerate(data.get("questions_for_user", [])):
-        if isinstance(question, dict) and "question_id" not in question:
-            question["question_id"] = f"q_{record.document_id}_{i + 1:03d}"
     return data
 
 

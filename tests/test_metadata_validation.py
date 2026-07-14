@@ -18,6 +18,7 @@ from proposal_ingest.schemas import (
     ReviewQuestion,
     RunManifest,
     S3ManifestRow,
+    Uncertainty,
 )
 
 
@@ -244,6 +245,95 @@ def test_invalid_document_metadata_raises() -> None:
 
     with pytest.raises(ValidationError):
         DocumentMetadata.model_validate(invalid)
+
+
+def test_document_metadata_defaults_to_empty_uncertainties() -> None:
+    """A clear, unambiguous document should validate with zero uncertainties."""
+    metadata = DocumentMetadata.model_validate(make_valid_document_metadata())
+
+    assert metadata.uncertainties == []
+
+
+def test_document_metadata_accepts_proposal_scoped_uncertainty() -> None:
+    """Proposal-wide unknowns should validate as a single proposal-scoped uncertainty."""
+    payload = make_valid_document_metadata()
+    payload["uncertainties"] = [
+        {
+            "field": "proposal_context.award_status",
+            "scope": "proposal",
+            "current_guess": "awarded",
+            "confidence": 0.65,
+            "evidence": ["Folder path contains AWD", "This file is an old technical-volume draft"],
+            "missing_evidence": "Award notice or authoritative tracker result",
+            "downstream_impact": "medium",
+            "reason_unresolved": "The document itself does not establish the final proposal outcome",
+        }
+    ]
+
+    metadata = DocumentMetadata.model_validate(payload)
+
+    assert len(metadata.uncertainties) == 1
+    uncertainty = metadata.uncertainties[0]
+    assert uncertainty.scope == "proposal"
+    assert uncertainty.downstream_impact == "medium"
+    assert uncertainty.field == "proposal_context.award_status"
+
+
+def test_uncertainty_rejects_invalid_scope_and_impact() -> None:
+    """Uncertainty scope and downstream_impact must use the controlled vocabulary."""
+    with pytest.raises(ValidationError):
+        Uncertainty.model_validate(
+            {
+                "field": "document_identity.version_status",
+                "scope": "bogus_scope",
+                "confidence": 0.5,
+                "reason_unresolved": "n/a",
+            }
+        )
+
+    with pytest.raises(ValidationError):
+        Uncertainty.model_validate(
+            {
+                "field": "document_identity.version_status",
+                "downstream_impact": "extreme",
+                "confidence": 0.5,
+                "reason_unresolved": "n/a",
+            }
+        )
+
+
+def test_missing_document_date_alone_does_not_require_uncertainty() -> None:
+    """A null document_date by itself should validate without any uncertainty entry."""
+    payload = make_valid_document_metadata()
+    payload["document_identity"]["document_date"] = None
+
+    metadata = DocumentMetadata.model_validate(payload)
+
+    assert metadata.document_identity.document_date is None
+    assert metadata.uncertainties == []
+
+
+def test_legacy_document_metadata_with_questions_for_user_still_loads() -> None:
+    """Metadata written before the uncertainty model existed must remain loadable."""
+    payload = make_valid_document_metadata()
+    assert "uncertainties" not in payload
+    payload["questions_for_user"] = [
+        {
+            "question_id": "q_legacy_001",
+            "field": "document_identity.version_status",
+            "question": "Is this the final submitted version?",
+            "priority": "high",
+            "suggested_options": ["final", "draft", "unknown"],
+            "model_guess": "unknown",
+            "answer_type": "enum",
+        }
+    ]
+
+    metadata = DocumentMetadata.model_validate(payload)
+
+    assert metadata.uncertainties == []
+    assert len(metadata.questions_for_user) == 1
+    assert metadata.questions_for_user[0].field == "document_identity.version_status"
 
 
 def test_valid_folder_metadata_passes() -> None:

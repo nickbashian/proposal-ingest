@@ -208,6 +208,137 @@ def test_normalize_metadata_output_maps_common_enum_aliases() -> None:
     assert normalized["proposal_context"]["status"] == "drafted"
 
 
+# ---------------------------------------------------------------------------
+# normalize_metadata_output — legacy questions_for_user -> uncertainties
+# ---------------------------------------------------------------------------
+
+
+def test_normalize_metadata_output_converts_legacy_questions_to_uncertainties() -> None:
+    """A stale prompt/cache that still emits questions_for_user gets folded into uncertainties."""
+    record = _make_inventory_record()
+    payload = analyze_document_mock(record, "run_legacy_001").model_dump(mode="json")
+    payload["questions_for_user"] = [
+        {
+            "field": "document_identity.version_status",
+            "question": "Is this the final submitted version?",
+            "priority": "critical",
+            "model_guess": "draft",
+            "notes": "Determines inclusion priority.",
+        }
+    ]
+
+    normalized = normalize_metadata_output(payload)
+    _inject_system_fields(normalized, record, "run_legacy_001", "direct_bedrock")
+    validated = DocumentMetadata.model_validate(normalized)
+
+    assert validated.questions_for_user == []
+    assert len(validated.uncertainties) == 1
+    uncertainty = validated.uncertainties[0]
+    assert uncertainty.field == "document_identity.version_status"
+    assert uncertainty.current_guess == "draft"
+    assert uncertainty.downstream_impact == "critical"
+    assert "final submitted version" in uncertainty.reason_unresolved
+
+
+def test_normalize_metadata_output_leaves_uncertainties_empty_when_no_legacy_questions() -> None:
+    """A clear document with no legacy questions should not gain any uncertainty entries."""
+    record = _make_inventory_record()
+    payload = analyze_document_mock(record, "run_clear_001").model_dump(mode="json")
+
+    normalized = normalize_metadata_output(payload)
+
+    assert normalized.get("uncertainties", []) == []
+    assert normalized.get("questions_for_user", []) == []
+
+
+# ---------------------------------------------------------------------------
+# Uncertainty fixture scenarios (Issue #6 acceptance criteria)
+# ---------------------------------------------------------------------------
+
+
+def test_clear_submitted_technical_volume_has_zero_uncertainties() -> None:
+    """A clear, submitted technical volume should validate with an empty uncertainty list."""
+    record = _make_inventory_record()
+    payload = analyze_document_mock(record, "run_fixture_clear").model_dump(mode="json")
+    payload["document_identity"]["version_status"] = "submitted_version"
+    payload["document_identity"]["document_date"] = "2025-08-15"
+
+    normalized = normalize_metadata_output(payload)
+    _inject_system_fields(normalized, record, "run_fixture_clear", "direct_bedrock")
+    validated = DocumentMetadata.model_validate(normalized)
+
+    assert validated.uncertainties == []
+
+
+def test_old_draft_may_record_proposal_scoped_version_lineage_uncertainty() -> None:
+    """An old draft may carry a proposal-scoped uncertainty rather than a document question."""
+    record = _make_inventory_record(file_name="Old Draft.pdf")
+    payload = analyze_document_mock(record, "run_fixture_draft").model_dump(mode="json")
+    payload["document_identity"]["version_status"] = "draft"
+    payload["uncertainties"] = [
+        {
+            "field": "document_identity.version_status",
+            "scope": "proposal",
+            "current_guess": "superseded",
+            "confidence": 0.55,
+            "evidence": ["Filename suggests an early draft", "No submission markers present"],
+            "missing_evidence": "The final submitted version of this technical volume",
+            "downstream_impact": "medium",
+            "reason_unresolved": "Cannot tell whether a later final version exists in the branch.",
+        }
+    ]
+
+    normalized = normalize_metadata_output(payload)
+    _inject_system_fields(normalized, record, "run_fixture_draft", "direct_bedrock")
+    validated = DocumentMetadata.model_validate(normalized)
+
+    assert validated.questions_for_user == []
+    assert len(validated.uncertainties) == 1
+    assert validated.uncertainties[0].scope == "proposal"
+
+
+def test_reviewer_feedback_with_unknown_award_outcome_records_proposal_uncertainty() -> None:
+    """Reviewer feedback with an unresolved award outcome records a proposal-level uncertainty."""
+    record = _make_inventory_record(file_name="Reviewer Feedback.pdf")
+    payload = analyze_document_mock(record, "run_fixture_feedback").model_dump(mode="json")
+    payload["document_identity"]["document_role"] = "review_feedback"
+    payload["proposal_context"]["award_status"] = "unknown"
+    payload["uncertainties"] = [
+        {
+            "field": "proposal_context.award_status",
+            "scope": "proposal",
+            "current_guess": None,
+            "confidence": 0.3,
+            "evidence": ["Reviewer comments discuss scoring but not a final decision"],
+            "missing_evidence": "Award notice or authoritative tracker result",
+            "downstream_impact": "high",
+            "reason_unresolved": "This document predates any award decision.",
+        }
+    ]
+
+    normalized = normalize_metadata_output(payload)
+    _inject_system_fields(normalized, record, "run_fixture_feedback", "direct_bedrock")
+    validated = DocumentMetadata.model_validate(normalized)
+
+    assert len(validated.uncertainties) == 1
+    assert validated.uncertainties[0].scope == "proposal"
+    assert validated.uncertainties[0].field == "proposal_context.award_status"
+
+
+def test_missing_document_date_alone_does_not_generate_uncertainty() -> None:
+    """A null document_date by itself should not force an uncertainty entry."""
+    record = _make_inventory_record()
+    payload = analyze_document_mock(record, "run_fixture_date").model_dump(mode="json")
+    payload["document_identity"]["document_date"] = None
+
+    normalized = normalize_metadata_output(payload)
+    _inject_system_fields(normalized, record, "run_fixture_date", "direct_bedrock")
+    validated = DocumentMetadata.model_validate(normalized)
+
+    assert validated.document_identity.document_date is None
+    assert validated.uncertainties == []
+
+
 def test_normalize_metadata_output_flattens_partner_objects() -> None:
     record = _make_inventory_record()
     payload = analyze_document_mock(record, "run_norm_002").model_dump(mode="json")
@@ -280,17 +411,16 @@ def test_inject_system_fields_overrides_document_id() -> None:
     assert data["system"]["processing_status"] == ProcessingStatus.processed_pass1
 
 
-def test_inject_system_fields_auto_assigns_question_ids() -> None:
+def test_inject_system_fields_does_not_touch_questions_for_user() -> None:
+    """Legacy question_id assignment is normalize_metadata_output's job, not this function's.
+
+    normalize_metadata_output() always runs first and clears questions_for_user (converting
+    any legacy entries into uncertainties), so _inject_system_fields has nothing left to do here.
+    """
     record = _make_inventory_record()
-    data: dict = {
-        "questions_for_user": [
-            {"question": "What is this?", "priority": "high"},
-        ]
-    }
+    data: dict = {"questions_for_user": []}
     _inject_system_fields(data, record, "run_x", "direct_bedrock")
-    q = data["questions_for_user"][0]
-    assert "question_id" in q
-    assert q["question_id"].startswith("q_")
+    assert data["questions_for_user"] == []
 
 
 # ---------------------------------------------------------------------------

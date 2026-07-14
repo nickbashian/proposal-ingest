@@ -10,7 +10,7 @@ Rules:
 - Do not invent facts to make the branch look consistent. Branch context improves grounding; it does not license guessing.
 - Use tracker metadata, when present in the packet, as high authority for dates, status, and award results.
 - Keep all schema field names and enum values exact; pick `unknown` rather than an out-of-vocabulary value.
-- Preserve genuine remaining uncertainty as `questions_for_user` only when the answer would change downstream behavior (inclusion, classification, sensitivity, or proposal identity).
+- Preserve genuine remaining uncertainty as an `uncertainties` entry only when it cannot be resolved from context and would change downstream behavior (inclusion, classification, sensitivity, or proposal identity). Do not ask the user questions; an empty `uncertainties` list is the normal, preferred result.
 - Honor the inclusion invariant: provide `include_reason` when either inclusion flag is true, and `exclude_reason` when both are false.
 
 Return strict JSON only.

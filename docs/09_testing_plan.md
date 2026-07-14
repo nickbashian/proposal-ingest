@@ -53,9 +53,9 @@ Deck final.pptx + Deck.pdf -> no supersession unless same stem rule says yes
 
 #### Question loop tests
 
-- Generates stable question IDs.
+- Document-level uncertainties (and any legacy `questions_for_user` entries) do not produce CSV rows.
+- Generates stable question IDs for operational questions (for example, PowerPoint review).
 - Suppresses low-priority questions by default.
-- Enforces max questions per file.
 - Applies valid CSV answers.
 - Rejects invalid enum values.
 - Does not reapply already-applied answers.
@@ -135,7 +135,7 @@ Expected:
 
 - pass 1 metadata for supported files
 - low-confidence files flagged
-- questions generated
+- material uncertainties recorded only when genuinely unresolved (usually none)
 - no source files modified
 
 ## Test fixtures

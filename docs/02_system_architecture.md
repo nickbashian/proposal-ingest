@@ -13,7 +13,7 @@ Local source root  ──scan──>  File inventory
                                │       │
                                │       ├──document metadata JSON
                                │       ├──raw model response optional
-                               │       └──questions for user
+                               │       └──material uncertainties (usually none)
                                │
                                ├──two-pass contextual review
                                │
@@ -204,6 +204,7 @@ Pydantic models for:
 
 - inventory records
 - document metadata
+- document-level uncertainties
 - folder metadata
 - review questions
 - tracker rows
@@ -222,7 +223,11 @@ Writes:
 
 ### `question_loop.py`
 
-Generates, updates, and applies `questions_to_answer.csv`.
+Generates, updates, and applies `questions_to_answer.csv`. Document-level
+analysis records material uncertainties on metadata rather than exporting
+questions directly; the exported CSV currently carries only explicitly
+generated operational questions (for example, unsupported PowerPoint
+handling) until proposal-level question arbitration is implemented.
 
 ### `two_pass.py`
 

@@ -63,7 +63,6 @@ class QuestionsConfig(BaseModel):
 
     suppress_low_priority: bool = True
     target_questions_per_file: int = Field(default=3, ge=1)
-    max_questions_per_file: int = Field(default=5, ge=1)
 
 
 class CleanSetConfig(BaseModel):

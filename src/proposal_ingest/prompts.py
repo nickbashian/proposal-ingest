@@ -98,7 +98,7 @@ _DOCUMENT_METADATA_TEMPLATE = {
         "include_in_future_rag": 0.0,
         "rag_priority": 0.0,
     },
-    "questions_for_user": [],
+    "uncertainties": [],
     "fields_needing_review": [],
     "processing_notes": [],
 }

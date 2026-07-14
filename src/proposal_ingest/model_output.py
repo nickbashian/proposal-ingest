@@ -56,7 +56,70 @@ def normalize_metadata_output(data: dict[str, Any]) -> dict[str, Any]:
     _normalize_program(normalized)
     _normalize_partners(normalized)
     _normalize_content_string_lists(normalized)
+    _convert_legacy_questions_to_uncertainties(normalized)
     return normalized
+
+
+_LEGACY_PRIORITY_TO_IMPACT = {
+    "critical": "critical",
+    "high": "high",
+    "medium": "medium",
+    "low": "low",
+}
+
+
+def _convert_legacy_questions_to_uncertainties(payload: dict[str, Any]) -> None:
+    """Fold any legacy questions_for_user entries into uncertainties records.
+
+    Older prompts asked the model for user-facing questions directly; current
+    prompts ask for material uncertainties instead. If a model still emits the
+    legacy shape (stale prompt cache, repair-path fallback, etc.), convert each
+    entry so it participates in proposal-level reconciliation instead of being
+    exported to the review CSV.
+    """
+    legacy_questions = payload.get("questions_for_user")
+    if not isinstance(legacy_questions, list) or not legacy_questions:
+        return
+
+    uncertainties = payload.get("uncertainties")
+    if not isinstance(uncertainties, list):
+        uncertainties = []
+
+    for question in legacy_questions:
+        if not isinstance(question, dict):
+            continue
+        reason_parts = [
+            text
+            for text in (question.get("question"), question.get("notes"))
+            if isinstance(text, str) and text.strip()
+        ]
+        impact = _LEGACY_PRIORITY_TO_IMPACT.get(
+            str(question.get("priority") or "").strip().lower(), "low"
+        )
+        suggested_options = question.get("suggested_options")
+        option_strings = (
+            [item for item in suggested_options if isinstance(item, str) and item.strip()]
+            if isinstance(suggested_options, list)
+            else []
+        )
+        evidence = (
+            [f"Legacy suggested options: {', '.join(option_strings)}"] if option_strings else []
+        )
+        uncertainties.append(
+            {
+                "field": question.get("field") or "unknown",
+                "scope": "document",
+                "current_guess": question.get("model_guess"),
+                "confidence": 0.5,
+                "evidence": evidence,
+                "missing_evidence": None,
+                "downstream_impact": impact,
+                "reason_unresolved": " ".join(reason_parts) or "Legacy Pass 1 question.",
+            }
+        )
+
+    payload["uncertainties"] = uncertainties
+    payload["questions_for_user"] = []
 
 
 def _normalize_program(payload: dict[str, Any]) -> None:

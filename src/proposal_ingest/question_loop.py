@@ -145,9 +145,12 @@ def export_questions_to_csv(
     output_root: Path,
     *,
     include_low_priority: bool = False,
-    max_questions_per_file: int = 5,
 ) -> ExportQuestionsResult:
-    """Export review questions from document metadata and Python-generated sources."""
+    """Export operational review questions; document analysis no longer feeds this CSV directly.
+
+    Document-level uncertainties are recorded on metadata for later proposal-level
+    reconciliation (a separate, not-yet-implemented stage) rather than exported here.
+    """
     run_dir = find_latest_run_dir(output_root)
     review_dir = Path(output_root) / "review"
     review_dir.mkdir(parents=True, exist_ok=True)
@@ -156,20 +159,6 @@ def export_questions_to_csv(
     exported: list[ReviewQuestion] = []
     suppressed = 0
     seen_ids: set[str] = set()
-    store = MetadataStore(run_dir)
-
-    for metadata_path in store.iter_document_metadata_paths():
-        metadata = DocumentMetadata.model_validate_json(metadata_path.read_text(encoding="utf-8"))
-        file_questions = _questions_from_document(metadata)
-        file_questions = sorted(file_questions, key=_question_sort_key)[:max_questions_per_file]
-        for question in file_questions:
-            if question.priority == QuestionPriority.low and not include_low_priority:
-                suppressed += 1
-                continue
-            if question.question_id in seen_ids:
-                continue
-            seen_ids.add(question.question_id)
-            exported.append(question)
 
     for question in _powerpoint_questions(run_dir):
         if question.priority == QuestionPriority.low and not include_low_priority:
@@ -281,39 +270,6 @@ def stable_question_id(document_id: str, field: str | None, question: str) -> st
     return f"q_{short_hash(f'{document_id}|{field or ''}|{normalized}', length=12)}"
 
 
-def _questions_from_document(metadata: DocumentMetadata) -> list[ReviewQuestion]:
-    rows: list[ReviewQuestion] = []
-    now = datetime.now(UTC).isoformat()
-    for question in metadata.questions_for_user:
-        field = question.field
-        question_text = question.question
-        qid = stable_question_id(metadata.document_id, field, question_text)
-        rows.append(
-            ReviewQuestion(
-                question_id=qid,
-                run_id=metadata.run_id,
-                proposal_id=metadata.proposal_id,
-                document_id=metadata.document_id,
-                source_path=metadata.system.source_path,
-                proposal_branch=metadata.system.proposal_branch,
-                file_name_original=metadata.system.file_name_original,
-                field=field,
-                question=question_text,
-                priority=question.priority,
-                suggested_options=(
-                    " | ".join(question.suggested_options) if question.suggested_options else None
-                ),
-                model_guess=question.model_guess,
-                user_answer=None,
-                answer_type=question.answer_type,
-                status=question.status,
-                created_at=now,
-                notes=question.notes,
-            )
-        )
-    return rows
-
-
 def _powerpoint_questions(run_dir: Path) -> list[ReviewQuestion]:
     path = run_dir / "inventory" / "powerpoint_review_questions.jsonl"
     if not path.exists():
@@ -350,11 +306,6 @@ def _powerpoint_questions(run_dir: Path) -> list[ReviewQuestion]:
                 )
             )
     return questions
-
-
-def _question_sort_key(question: ReviewQuestion) -> tuple[int, str]:
-    priority_rank = {"critical": 0, "high": 1, "medium": 2, "low": 3}
-    return (priority_rank.get(str(question.priority), 9), question.question_id)
 
 
 def _write_questions_csv(path: Path, questions: list[ReviewQuestion]) -> None:

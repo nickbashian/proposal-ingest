@@ -47,7 +47,6 @@ processing:
 questions:
   suppress_low_priority: true
   target_questions_per_file: 3
-  max_questions_per_file: 5
 
 clean_set:
   sanitize_filenames: true

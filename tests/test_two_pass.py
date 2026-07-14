@@ -9,8 +9,18 @@ from pathlib import Path
 from proposal_ingest.config import load_runtime_config
 from proposal_ingest.metadata_store import MetadataStore
 from proposal_ingest.mock_bedrock import analyze_document_mock
-from proposal_ingest.schemas import DocumentCategory, DocumentRole, OriginType, ProcessingStatus
-from proposal_ingest.two_pass import build_branch_context_packet, run_two_pass_review
+from proposal_ingest.schemas import (
+    DocumentCategory,
+    DocumentRole,
+    OriginType,
+    ProcessingStatus,
+    Uncertainty,
+)
+from proposal_ingest.two_pass import (
+    _merge_pass2_candidate,
+    build_branch_context_packet,
+    run_two_pass_review,
+)
 
 
 def _write_metadata_run(run_dir: Path) -> tuple[Path, str, str]:
@@ -117,6 +127,34 @@ def test_run_two_pass_review_improves_ambiguous_letter_in_mock_mode(tmp_path: Pa
         )
     )
     assert len(metadata_json["metadata_history"]) == 3
+
+
+def test_merge_pass2_candidate_replaces_uncertainties(tmp_path: Path) -> None:
+    """Pass 2's uncertainty assessment must not be silently discarded during merge."""
+    run_dir, _tech_id, support_id = _write_metadata_run(tmp_path / "run_pass2_uncertainty")
+    store = MetadataStore(run_dir)
+    pass1_metadata = store.load_document_metadata_by_id()[support_id]
+    assert pass1_metadata.uncertainties == []
+
+    pass2_candidate = pass1_metadata.model_copy(
+        update={
+            "uncertainties": [
+                Uncertainty(
+                    field="proposal_context.award_status",
+                    scope="proposal",
+                    confidence=0.6,
+                    downstream_impact="critical",
+                    reason_unresolved="Award status could not be confirmed from branch context.",
+                )
+            ]
+        }
+    )
+
+    merged, changes = _merge_pass2_candidate(pass1_metadata, pass2_candidate, threshold=0.65)
+
+    assert len(merged.uncertainties) == 1
+    assert merged.uncertainties[0].downstream_impact == "critical"
+    assert any(change["field_path"] == "uncertainties" for change in changes)
 
 
 def test_run_two_pass_review_does_not_repeat_processed_pass2(tmp_path: Path) -> None:

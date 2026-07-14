@@ -39,23 +39,28 @@ Return JSON using exactly these nested field names. Pipeline-managed fields (`sc
 
 Confidence scores are floats from 0.0 to 1.0. `document_date`, `submission_date`, and `response_date` should be ISO `YYYY-MM-DD` strings or `null`. Only add items to `performance_metrics` / `technical_claims` when the document states them; each metric needs `metric_name`, `value`, and `confidence`, and each claim needs `claim`, `claim_type`, `support_level`, and `confidence`.
 
-## Questions for the user
+## Material uncertainties
 
-Only ask questions whose answers change downstream behavior. Aim for 3, never exceed 5.
+Do not ask the user questions at this stage. Record only uncertainties that cannot be resolved from the document itself and that would matter downstream — proposal identity, document lineage, inclusion, sensitivity, or an important interpretation. The normal and preferred result is an empty `uncertainties` list; do not manufacture uncertainty to fill it, and never record one merely because a field is `null` or `unknown`. When the evidence supports a reasonable provisional inference, make it and record the supporting evidence and confidence instead of leaving the field blank.
 
-`suggested_options` must be a JSON array of strings and `model_guess` must be a string — even for yes/no or numeric answers (use `"true"`/`"false"`, never JSON booleans or numbers). When the `field` is a boolean schema field (for example `inclusion.include_in_future_rag` or `sensitivity.manual_review_required`), use exactly `["true", "false"]` as the options and a `"true"`/`"false"` string as the guess. Boolean question wording must make the mapping unambiguous: ask whether the target field should be set to true, and explain what true and false mean in the question text. Do not ask "A or B" choice questions for boolean fields unless A clearly means true and B clearly means false. When the reviewer must choose among multiple treatments (for example full document vs summary-only vs exclude), target the appropriate enum/text field instead of a boolean field. When the `field` is an enum, the options must be values from that field's allowed list above.
+Use `scope` to say how broadly the uncertainty applies:
 
-Each item in `questions_for_user` must use this shape:
+- `document` — specific to this file only.
+- `document_family` — likely shared by a small cluster of related files (for example, multiple drafts of the same volume).
+- `proposal` — a proposal-wide unknown (for example, award status, submission status, version lineage, or RAG treatment) that should not be repeated per document.
+
+Each item in `uncertainties` must use this shape:
 
 ```json
 {
-  "field": "schema_field_name_the_answer_updates",
-  "question": "Specific question for the human reviewer.",
-  "priority": "critical | high | medium | low",
-  "suggested_options": ["option1", "option2"],
-  "model_guess": "your best answer now",
-  "answer_type": "enum | boolean | list | text",
-  "notes": "Why this matters: how the answer changes inclusion, classification, or sensitivity."
+  "field": "schema_field_name_this_relates_to",
+  "scope": "document | document_family | proposal",
+  "current_guess": "best current value, or null if none",
+  "confidence": 0.0,
+  "evidence": ["supporting evidence found in the document"],
+  "missing_evidence": "what would resolve this uncertainty",
+  "downstream_impact": "critical | high | medium | low",
+  "reason_unresolved": "why the document itself does not resolve this"
 }
 ```
 
