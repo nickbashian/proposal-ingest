@@ -57,3 +57,8 @@ clean_set:
 s3_manifest:
   enabled: true
   base_prefix: "proposal-history"
+
+synthesis:
+  policies_path: null
+  max_full_text_documents: 8
+  max_full_text_chars_per_doc: 6000

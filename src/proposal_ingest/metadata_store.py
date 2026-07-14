@@ -10,6 +10,7 @@ from proposal_ingest.schemas import (
     BedrockUsageRecord,
     DocumentMetadata,
     FolderMetadata,
+    ProposalMetadata,
     RunManifest,
 )
 
@@ -25,6 +26,11 @@ class MetadataStore:
             self.document_metadata_dir / "all_document_metadata.jsonl"
         )
         self.folder_metadata_dir = self.run_dir / "folder_metadata"
+        self.proposal_metadata_dir = self.run_dir / "proposal_metadata"
+        self.proposal_by_id_dir = self.proposal_metadata_dir / "by_proposal_id"
+        self.all_proposal_metadata_jsonl = (
+            self.proposal_metadata_dir / "all_proposal_metadata.jsonl"
+        )
         self.run_manifest_path = self.run_dir / "run_manifest.json"
         self.usage_dir = self.run_dir / "usage"
         self.failures_dir = self.document_metadata_dir / "failures"
@@ -77,6 +83,30 @@ class MetadataStore:
         path = self.folder_metadata_dir / f"{metadata.proposal_id}.json"
         self._write_json(path, metadata)
         return path
+
+    def proposal_metadata_path(self, proposal_id: str) -> Path:
+        """Return the canonical path for one proposal's synthesized metadata JSON."""
+        return self.proposal_by_id_dir / f"{proposal_id}.json"
+
+    def write_proposal_metadata(self, metadata: ProposalMetadata) -> Path:
+        self.proposal_by_id_dir.mkdir(parents=True, exist_ok=True)
+        path = self.proposal_metadata_path(metadata.proposal_id)
+        self._write_json(path, metadata)
+        self.proposal_metadata_dir.mkdir(parents=True, exist_ok=True)
+        with self.all_proposal_metadata_jsonl.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(metadata.model_dump(mode="json"), sort_keys=True))
+            handle.write("\n")
+        return path
+
+    def load_proposal_metadata_by_id(self) -> dict[str, ProposalMetadata]:
+        """Load all stored proposal metadata records keyed by proposal_id."""
+        if not self.proposal_by_id_dir.exists():
+            return {}
+        result: dict[str, ProposalMetadata] = {}
+        for path in sorted(self.proposal_by_id_dir.glob("*.json"), key=lambda p: p.name):
+            metadata = ProposalMetadata.model_validate_json(path.read_text(encoding="utf-8"))
+            result[metadata.proposal_id] = metadata
+        return result
 
     def write_folder_summary(self, proposal_id: str, summary_text: str) -> Path:
         self.folder_metadata_dir.mkdir(parents=True, exist_ok=True)
@@ -148,7 +178,10 @@ class MetadataStore:
         return json.dumps(model.model_dump(mode="json"), sort_keys=True)
 
     @staticmethod
-    def _write_json(path: Path, model: DocumentMetadata | FolderMetadata | RunManifest) -> None:
+    def _write_json(
+        path: Path,
+        model: DocumentMetadata | FolderMetadata | ProposalMetadata | RunManifest,
+    ) -> None:
         with path.open("w", encoding="utf-8") as handle:
             json.dump(model.model_dump(mode="json"), handle, indent=2, sort_keys=True)
             handle.write("\n")

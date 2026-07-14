@@ -12,6 +12,9 @@ from dotenv import load_dotenv
 from pydantic import BaseModel, Field
 
 DEFAULT_CONFIG_PATH = Path(__file__).resolve().parents[2] / "config" / "default_config.yaml"
+DEFAULT_KNOWLEDGE_BASE_POLICIES_PATH = (
+    Path(__file__).resolve().parents[2] / "config" / "knowledge_base_policies.yaml"
+)
 
 
 class AppConfig(BaseModel):
@@ -90,6 +93,14 @@ class TrackerConfig(BaseModel):
     header_row: int = Field(default=0, ge=0)
 
 
+class SynthesisConfig(BaseModel):
+    """Proposal-level synthesis settings."""
+
+    policies_path: str | None = None
+    max_full_text_documents: int = Field(default=8, ge=0)
+    max_full_text_chars_per_doc: int = Field(default=6_000, ge=1_000)
+
+
 class RuntimeConfig(BaseModel):
     """Top-level runtime configuration used by the CLI."""
 
@@ -101,6 +112,7 @@ class RuntimeConfig(BaseModel):
     questions: QuestionsConfig = Field(default_factory=QuestionsConfig)
     clean_set: CleanSetConfig = Field(default_factory=CleanSetConfig)
     s3_manifest: S3ManifestConfig = Field(default_factory=S3ManifestConfig)
+    synthesis: SynthesisConfig = Field(default_factory=SynthesisConfig)
 
 
 def load_runtime_config(
@@ -120,6 +132,26 @@ def load_runtime_config(
     if overrides:
         _deep_merge(merged, dict(overrides))
     return RuntimeConfig.model_validate(merged)
+
+
+def load_knowledge_base_policies(path: str | Path | None = None) -> list[dict[str, str]]:
+    """Load standing knowledge-base treatment policies used by proposal synthesis."""
+    policies_path = Path(path) if path is not None else DEFAULT_KNOWLEDGE_BASE_POLICIES_PATH
+    if not policies_path.exists():
+        raise FileNotFoundError(f"Knowledge base policies file not found: {policies_path}")
+
+    with policies_path.open("r", encoding="utf-8") as handle:
+        loaded = yaml.safe_load(handle) or {}
+
+    if not isinstance(loaded, dict):
+        raise ValueError(
+            f"Knowledge base policies file must contain a top-level mapping: {policies_path}"
+        )
+
+    policies = loaded.get("policies", [])
+    if not isinstance(policies, list):
+        raise ValueError(f"'policies' must be a list in {policies_path}")
+    return policies
 
 
 def _load_yaml_config(path: Path) -> dict[str, Any]:
@@ -147,6 +179,7 @@ def _apply_environment_overrides(config: dict[str, Any]) -> None:
         "SAVE_RAW_MODEL_RESPONSES": ("bedrock", "save_raw_model_responses", bool),
         "MOCK_BEDROCK": ("bedrock", "mock_bedrock", bool),
         "PROPOSAL_INGEST_TRACKER_PATH": ("tracker", "path", str),
+        "PROPOSAL_INGEST_KB_POLICIES_PATH": ("synthesis", "policies_path", str),
     }
 
     for env_name, (section, key, value_type) in env_map.items():

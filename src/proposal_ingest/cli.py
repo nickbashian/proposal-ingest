@@ -5,6 +5,7 @@ from __future__ import annotations
 import secrets
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 import typer
 from rich.console import Console
@@ -46,6 +47,26 @@ def _build_run_id() -> str:
     """Return a run identifier for one-off CLI operations."""
     timestamp = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
     return f"run_{timestamp}_{secrets.token_hex(3)}"
+
+
+def _latest_run_dir_or_exit(output_root: str) -> Path:
+    """Return the most recent run_* directory under output_root, or exit(1)."""
+    logs_dir = Path(output_root) / "logs"
+    run_dirs = sorted(logs_dir.glob("run_*")) if logs_dir.is_dir() else []
+    if not run_dirs:
+        console.print(f"[red]No run directories found under {logs_dir}[/red]")
+        raise typer.Exit(code=1)
+    return run_dirs[-1]
+
+
+def _load_tracker_rows_for_run(run_dir: Path, tracker_path: str | None, loader: Any) -> Any:
+    """Load tracker rows from an explicit path, or the run's default tracker JSONL."""
+    if tracker_path:
+        return loader(Path(tracker_path))
+    default_tracker = run_dir / "tracker" / "tracker_rows.jsonl"
+    if default_tracker.exists():
+        return loader(default_tracker)
+    return None
 
 
 def _build_single_file_inventory_record(file_path: Path) -> InventoryRecord:
@@ -348,6 +369,47 @@ def apply_answers(
     console.print(f"  errors  = {result.errors_csv}")
 
 
+@app.command(name="synthesize-proposals")
+def synthesize_proposals(
+    output_root: str = typer.Option(..., "--output-root", help="Path to the output directory."),
+    mock_bedrock: bool = typer.Option(
+        False,
+        "--mock-bedrock",
+        help="Use deterministic synthesis instead of a Bedrock proposal-synthesis call.",
+    ),
+    tracker_path: str | None = typer.Option(
+        None,
+        "--tracker-path",
+        help="Path to tracker JSONL file. Defaults to the tracker JSONL in the latest run dir.",
+    ),
+    config: str | None = typer.Option(None, "--config", help="Path to a YAML config file."),
+) -> None:
+    """Synthesize canonical proposal-level metadata records from document metadata."""
+    from proposal_ingest.proposal_synthesizer import synthesize_all_proposals
+    from proposal_ingest.tracker import load_tracker_rows_jsonl
+
+    run_dir = _latest_run_dir_or_exit(output_root)
+    store = MetadataStore(run_dir)
+    runtime_cfg = load_runtime_config(config)
+    tracker_rows = _load_tracker_rows_for_run(run_dir, tracker_path, load_tracker_rows_jsonl)
+
+    results = synthesize_all_proposals(
+        store,
+        tracker_rows=tracker_rows,
+        use_mock=mock_bedrock,
+        config=runtime_cfg,
+    )
+
+    console.print(
+        f"synthesize-proposals complete: {len(results)} proposal(s) synthesized"
+        f"{' (mock mode)' if mock_bedrock else ''}"
+    )
+    for result in results:
+        console.print(
+            f"  {result.proposal_id}: {result.json_path} (source={result.metadata.synthesis_source})"
+        )
+
+
 @app.command(name="build-folders")
 def build_folders(
     output_root: str = typer.Option(..., "--output-root", help="Path to the output directory."),
@@ -367,27 +429,16 @@ def build_folders(
     from proposal_ingest.folder_builder import build_all_folders
     from proposal_ingest.tracker import load_tracker_rows_jsonl
 
-    logs_dir = Path(output_root) / "logs"
-    run_dirs = sorted(logs_dir.glob("run_*")) if logs_dir.is_dir() else []
-    if not run_dirs:
-        console.print(f"[red]No run directories found under {logs_dir}[/red]")
-        raise typer.Exit(code=1)
-
-    run_dir = run_dirs[-1]
+    run_dir = _latest_run_dir_or_exit(output_root)
     store = MetadataStore(run_dir)
     runtime_cfg = load_runtime_config(config)
-
-    tracker_rows = None
-    if tracker_path:
-        tracker_rows = load_tracker_rows_jsonl(Path(tracker_path))
-    else:
-        default_tracker = run_dir / "tracker" / "tracker_rows.jsonl"
-        if default_tracker.exists():
-            tracker_rows = load_tracker_rows_jsonl(default_tracker)
+    tracker_rows = _load_tracker_rows_for_run(run_dir, tracker_path, load_tracker_rows_jsonl)
+    proposal_metadata_by_id = store.load_proposal_metadata_by_id()
 
     results = build_all_folders(
         store,
         tracker_rows=tracker_rows,
+        proposal_metadata_by_id=proposal_metadata_by_id,
         use_mock=mock_bedrock,
         config=runtime_cfg,
     )
@@ -474,6 +525,7 @@ def run_all(
 ) -> None:
     """Run the implemented pipeline end-to-end through clean-set output."""
     from proposal_ingest.folder_builder import build_all_folders
+    from proposal_ingest.proposal_synthesizer import synthesize_all_proposals
     from proposal_ingest.tracker import load_tracker_rows_jsonl
 
     runtime_cfg = load_runtime_config(
@@ -529,13 +581,28 @@ def run_all(
         f"{questions_result.questions_csv}"
     )
 
-    # Stage 4: folder synthesis
+    # Stage 4: proposal synthesis
     tracker_rows = None
     if artifacts.tracker_rows_jsonl.exists():
         tracker_rows = load_tracker_rows_jsonl(artifacts.tracker_rows_jsonl)
-    folder_results = build_all_folders(
-        MetadataStore(artifacts.run_dir),
+    store = MetadataStore(artifacts.run_dir)
+    proposal_results = synthesize_all_proposals(
+        store,
         tracker_rows=tracker_rows,
+        use_mock=mock_bedrock,
+        config=runtime_cfg,
+    )
+    console.print(
+        f"synthesize-proposals complete: {len(proposal_results)} proposal(s) synthesized"
+        f"{' (mock mode)' if mock_bedrock else ''}"
+    )
+
+    # Stage 5: folder synthesis
+    proposal_metadata_by_id = {r.proposal_id: r.metadata for r in proposal_results}
+    folder_results = build_all_folders(
+        store,
+        tracker_rows=tracker_rows,
+        proposal_metadata_by_id=proposal_metadata_by_id,
         use_mock=mock_bedrock,
         config=runtime_cfg,
     )
@@ -544,7 +611,7 @@ def run_all(
         f"{' (mock mode)' if mock_bedrock else ''}"
     )
 
-    # Stage 5: clean-set and S3 manifest
+    # Stage 6: clean-set and S3 manifest
     try:
         clean_result = build_clean_set_outputs(
             Path(output_root),
@@ -587,6 +654,7 @@ def process_folder(
 ) -> None:
     """Process a single proposal branch folder."""
     from proposal_ingest.folder_builder import build_all_folders
+    from proposal_ingest.proposal_synthesizer import synthesize_all_proposals
 
     try:
         runtime_cfg = load_runtime_config(
@@ -632,8 +700,16 @@ def process_folder(
         f"{questions_result.questions_csv}"
     )
 
+    store = MetadataStore(artifacts.run_dir)
+    proposal_results = synthesize_all_proposals(
+        store,
+        use_mock=mock_bedrock,
+        config=runtime_cfg,
+    )
+    proposal_metadata_by_id = {r.proposal_id: r.metadata for r in proposal_results}
     folder_results = build_all_folders(
-        MetadataStore(artifacts.run_dir),
+        store,
+        proposal_metadata_by_id=proposal_metadata_by_id,
         use_mock=mock_bedrock,
         config=runtime_cfg,
     )

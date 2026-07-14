@@ -33,6 +33,7 @@ proposal-ingest/
   config/
     default_config.yaml     Default runtime configuration
     document_type_rules.yaml  File type inclusion/exclusion rules
+    knowledge_base_policies.yaml  Standing policies used by proposal-level synthesis
   prompts/                  Bedrock prompt templates
   schemas/                  JSON Schema definitions for metadata records
   src/proposal_ingest/      Python package source
@@ -182,10 +183,13 @@ proposal-ingest apply-answers \
   --output-root /path/to/output \
   --answers-csv /path/to/output/review/questions_to_answer.csv
 
-# 6. Build folder metadata and summaries
+# 6. Synthesize canonical proposal-level records
+proposal-ingest synthesize-proposals --output-root /path/to/output --mock-bedrock
+
+# 7. Build folder metadata and summaries (uses the proposal record above when present)
 proposal-ingest build-folders --output-root /path/to/output
 
-# 7. Build clean document set and S3 manifest
+# 8. Build clean document set and S3 manifest
 proposal-ingest build-clean-set --output-root /path/to/output
 ```
 
@@ -206,6 +210,9 @@ processed_output/
       document_metadata/
         all_document_metadata.jsonl
         by_document_id/<document_id>.json
+      proposal_metadata/
+        all_proposal_metadata.jsonl
+        by_proposal_id/<proposal_id>.json
       folder_metadata/<proposal_id>.json
       reports/
         excluded_files.csv
@@ -223,7 +230,7 @@ processed_output/
 
 ## Implementation status
 
-Phases 1 through 12 are complete:
+Phases 1 through 12, plus Phase 14 (proposal-level synthesis), are complete:
 
 - Phase 1 — scanner and inventory
 - Phase 2 — file rules and PowerPoint handling
@@ -237,10 +244,11 @@ Phases 1 through 12 are complete:
 - Phase 10 — grants tracker ingestion and overrides
 - Phase 11 — folder metadata synthesis and Markdown summaries
 - Phase 12 — clean document set, excluded-files report, and S3 manifest
+- Phase 14 — canonical proposal-level synthesis (`synthesize-proposals`), consumed by folder synthesis
 
 Current implementation boundary:
 
-- `scan`, `process-file`, `analyze`, `export-questions`, `answer-questions`, `apply-answers`, `build-folders`, `build-clean-set`, `process-folder`, `run-all`, and `bedrock-smoke-test` are wired.
+- `scan`, `process-file`, `analyze`, `export-questions`, `answer-questions`, `apply-answers`, `synthesize-proposals`, `build-folders`, `build-clean-set`, `process-folder`, `run-all`, and `bedrock-smoke-test` are wired.
 - Use `--mock-bedrock` for local and CI-safe runs; real Bedrock paths require valid AWS credentials and model access.
 - `run-all` now finishes by building the clean set and manifest unless critical review questions remain open.
 

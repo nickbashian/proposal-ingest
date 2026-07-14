@@ -345,6 +345,53 @@ Core fields:
 - `tracker_match_status`
 - `tracker_disagreements`
 
+## Proposal metadata object
+
+Proposal metadata is synthesized after document-level metadata exists, and
+before folder metadata. Documents remain evidence underneath it; the
+proposal record is the canonical, cross-document synthesis for one
+`proposal_id`. A deterministic Python pass (consensus identity, document
+lineage/authority ranking, key documents, knowledge-base treatment,
+evidence, and consolidated unresolved decisions) always runs first — it is
+the mock-mode result and the fallback if the optional real-mode Bedrock
+call fails. Folder-level synthesis (`folder_builder.py`) uses this record
+as its primary source for canonical identity and narrative fields when it
+is available.
+
+Core fields:
+
+- `proposal_id`, `schema_version`, `year_folder`, `proposal_branch`, `run_id`
+- `canonical_identity` — proposal name, agency, program, phase, topic/solicitation
+  identifiers, dates, `status`, `award_status`, `award_amount`
+- `organizations` — `lead_organization`, `prime_or_sub`, `partners`, `customer_or_sponsor`
+- `proposal_summary` — `technical_objective`, `proposed_approach`, `target_applications`,
+  `key_performance_targets`, `commercial_strategy`, `reviewer_feedback`, `outcome`
+- `document_lineage` — one entry per document: `document_role`, `version_status`,
+  `authority_rank` (`authoritative` / `supporting` / `superseded` / `excluded`),
+  `is_authoritative`, `superseded_by_document_id`, `contains_unique_reasoning`, `rationale`
+- `key_documents` — bounded list of the proposal's most important documents, by role priority
+- `knowledge_base_treatment` — per-document `recommended_rag_treatment`, `rag_priority`,
+  the standing `policy_applied`, and any evidence-backed `exception_reason`
+- `evidence` — a short list of `ProposalEvidenceRef` entries (`source`: `"tracker"` or
+  `"document"`) supporting the canonical identity
+- `unresolved_decisions` — consolidated proposal-level/document-family uncertainties that
+  remain after synthesis, plus any conflicting-evidence issues Python itself detects (for
+  example, disagreeing per-document `award_status` values with no tracker match to
+  arbitrate them). The normal and preferred result is a short list, not an empty one
+  padded with trivial gaps.
+- `tracker_match_status`, `tracker_disagreements`
+- `synthesis_source` — `"mock"`, `"bedrock"`, or `"deterministic_fallback"`
+- `document_count`
+
+Standing knowledge-base policies applied during synthesis (submitted/final
+authority over drafts, low priority for superseded/boilerplate documents
+unless they hold unique reasoning, budgets/PII excluded from RAG by
+default, tracker as high authority for dates/status, and so on) are loaded
+from `config/knowledge_base_policies.yaml` and supplied to both the
+deterministic pass and the Bedrock synthesis prompt. An exception to a
+policy must be recorded with a documented reason (`exception_reason`), never
+applied silently.
+
 ## Inclusion logic defaults
 
 By default:
