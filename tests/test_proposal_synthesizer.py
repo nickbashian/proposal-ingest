@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from proposal_ingest.config import RuntimeConfig
+from proposal_ingest.human_overrides import append_human_override
 from proposal_ingest.metadata_store import MetadataStore
 from proposal_ingest.proposal_synthesizer import (
     ProposalSynthesisResult,
@@ -20,6 +21,7 @@ from proposal_ingest.schemas import (
     APP_SCHEMA_VERSION,
     AuthorityRank,
     DocumentMetadata,
+    HumanOverrideRecord,
     ProposalMetadata,
     TrackerMatchStatus,
     UncertaintyImpact,
@@ -864,6 +866,43 @@ def test_synthesize_all_proposals_rerun_does_not_duplicate_jsonl(tmp_path: Path)
 
     lines = store.all_proposal_metadata_jsonl.read_text(encoding="utf-8").splitlines()
     assert len(lines) == 2
+
+
+def test_synthesize_all_proposals_replays_human_override_across_rerun(tmp_path: Path) -> None:
+    """A durable human override must survive a resynthesis even against unchanged evidence.
+
+    Two documents conflict on award_status with no tracker match, so
+    deterministic synthesis alone would leave canonical_identity.award_status
+    at its consensus fallback. A human override recorded in a prior run must
+    win on rerun instead of being silently discarded.
+    """
+    run_dir = tmp_path / "logs" / "run_001"
+    store = MetadataStore(run_dir)
+    doc_a = _make_doc(document_id="doc_a", proposal_id="prop_aaa", award_status="awarded")
+    doc_b = _make_doc(document_id="doc_b", proposal_id="prop_aaa", award_status="rejected")
+    store.write_document_metadata(doc_a, append_jsonl=False)
+    store.write_document_metadata(doc_b, append_jsonl=False)
+
+    append_human_override(
+        tmp_path,
+        HumanOverrideRecord(
+            question_id="q_test_override",
+            scope="proposal",
+            proposal_id="prop_aaa",
+            field="canonical_identity.award_status",
+            decision_type="proposal_fact",
+            affected_document_ids=["doc_a", "doc_b"],
+            previous_value=None,
+            applied_value="awarded",
+            timestamp="2026-07-14T00:00:00+00:00",
+            source="human_review",
+        ),
+    )
+
+    results = synthesize_all_proposals(store, use_mock=True, policies=_POLICIES)
+
+    assert len(results) == 1
+    assert results[0].metadata.canonical_identity.award_status == "awarded"
 
 
 def test_synthesize_all_proposals_resolves_policies_from_configured_path(

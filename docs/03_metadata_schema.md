@@ -392,6 +392,68 @@ deterministic pass and the Bedrock synthesis prompt. An exception to a
 policy must be recorded with a documented reason (`exception_reason`), never
 applied silently.
 
+## Proposal-level question arbitration (issue #8)
+
+`arbitrate-questions` runs after `synthesize-proposals` and turns each
+proposal's `unresolved_decisions` into review questions. A deterministic
+Python pass always runs first (mock mode and the Bedrock-failure fallback);
+Bedrock reasoning is optional and only refines wording/consolidation of the
+candidates Python already selected — it never invents new fields, IDs, or
+document sets.
+
+Key behaviors:
+
+- **Stable IDs** are built from `proposal_id | scope | decision_type |
+  canonical_field_key` — never from a document ID or the question wording,
+  so question text changes and document-set churn never mint a new ID for
+  the same underlying issue.
+- **Budgets** are configurable safeguards, not production targets:
+  `review.max_questions_per_proposal` (default 3) and
+  `review.max_questions_per_run` (default 20) in `default_config.yaml`.
+  `review.include_low_priority` (default `false`) suppresses low-priority
+  candidates the same way `export-questions --include-low-priority` does.
+- **Prior answers survive reruns.** Every applied proposal-scoped answer is
+  recorded as a durable `HumanOverrideRecord` at
+  `output_root/review/human_overrides.jsonl` (not run-scoped). A resolved
+  candidate whose fresh evidence still agrees with the applied answer is
+  suppressed; a question only reopens when the new evidence genuinely
+  conflicts with what a human already decided, and the reopened question's
+  `why_human_input_is_needed` says so explicitly.
+
+`ReviewQuestion` (the row shape written to `questions_to_answer.csv`) adds
+these fields for proposal-scoped questions, alongside the original
+document-scoped columns:
+
+- `scope` — `document` (default, unchanged for operational questions like
+  PowerPoint review), `document_family`, or `proposal`
+- `decision_type` — mirrors `UnresolvedDecision.decision_type`
+- `proposal_name`, `affected_document_ids` (pipe-joined for the CSV)
+- `model_confidence`, `evidence_summary`, `why_human_input_is_needed`
+
+`HumanOverrideRecord` is the durable audit/replay record written when a
+proposal- or document-family-scoped answer is applied:
+
+```json
+{
+  "question_id": "q_...",
+  "scope": "proposal",
+  "proposal_id": "prop_...",
+  "field": "canonical_identity.award_status",
+  "decision_type": "proposal_fact",
+  "affected_document_ids": ["doc_1", "doc_2"],
+  "previous_value": "unknown",
+  "applied_value": "awarded",
+  "timestamp": "2026-07-14T00:00:00+00:00",
+  "source": "human_review"
+}
+```
+
+Applying a proposal-scoped answer updates the canonical `ProposalMetadata`
+record, propagates the value to every affected `DocumentMetadata` record
+where the field is also carried there (clearing the now-resolved
+uncertainty on each), and — for `decision_type: authoritative_document` —
+reassigns `document_lineage` authority instead of patching a scalar field.
+
 ## Inclusion logic defaults
 
 By default:
@@ -440,9 +502,12 @@ question quota. Proposal-wide unknowns (award status, submission status, version
 lineage, RAG treatment) should be recorded with `scope: proposal` rather than
 repeated as a document-specific entry on every file in the branch. Consolidating
 uncertainties across a proposal and turning them into user-facing questions is a
-later, separate stage — not part of document analysis. Until that stage exists, a
-`downstream_impact: critical` uncertainty still blocks `build-clean-set` (the same
-safety gate that legacy critical `questions_for_user` entries triggered) unless the
+later, separate stage: proposal synthesis (`synthesize-proposals`) folds them into
+`ProposalMetadata.unresolved_decisions`, and question arbitration
+(`arbitrate-questions`, see below) turns those into a small, budget-capped set of
+review questions. A `downstream_impact: critical` uncertainty still blocks
+`build-clean-set` (the same safety gate that legacy critical `questions_for_user`
+entries triggered) unless it has been answered through that review loop or the
 operator passes `--allow-critical-open`.
 
 ```json

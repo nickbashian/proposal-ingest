@@ -24,6 +24,12 @@ from proposal_ingest.aggregation import (
     union_lists,
 )
 from proposal_ingest.config import load_knowledge_base_policies
+from proposal_ingest.human_overrides import (
+    load_human_overrides,
+    output_root_from_run_dir,
+    reapply_overrides_to_documents,
+    reapply_overrides_to_proposal,
+)
 from proposal_ingest.json_utils import parse_json_object_response
 from proposal_ingest.logging_utils import get_logger
 from proposal_ingest.metadata_store import MetadataStore
@@ -183,7 +189,13 @@ def synthesize_all_proposals(
     config: Any = None,
     policies: list[dict[str, str]] | None = None,
 ) -> list[ProposalSynthesisResult]:
-    """Load all document metadata from store, group by proposal_id, synthesize."""
+    """Load all document metadata from store, group by proposal_id, synthesize.
+
+    Durable human overrides from prior runs (``output_root/review/human_overrides.jsonl``)
+    are replayed onto the loaded documents before synthesis and onto the final
+    proposal record after synthesis, so a resynthesis on a fresh document set
+    never silently discards a previously applied human answer.
+    """
     docs_by_proposal: dict[str, list[DocumentMetadata]] = {}
     for doc in store.load_document_metadata_by_id().values():
         docs_by_proposal.setdefault(doc.proposal_id, []).append(doc)
@@ -193,10 +205,14 @@ def synthesize_all_proposals(
         if policies is not None
         else load_knowledge_base_policies(config.synthesis.policies_path if config else None)
     )
+    overrides = load_human_overrides(output_root_from_run_dir(store.run_dir))
 
     results: list[ProposalSynthesisResult] = []
     for proposal_id in sorted(docs_by_proposal):
         docs = docs_by_proposal[proposal_id]
+        proposal_overrides = [o for o in overrides if o.proposal_id == proposal_id]
+        if proposal_overrides:
+            docs = reapply_overrides_to_documents(docs, proposal_overrides)
         logger.info("Synthesizing proposal metadata for %s (%d docs)", proposal_id, len(docs))
         try:
             metadata = synthesize_proposal_metadata(
@@ -210,6 +226,9 @@ def synthesize_all_proposals(
         except Exception:
             logger.exception("Failed to synthesize proposal metadata for %s", proposal_id)
             continue
+
+        if proposal_overrides:
+            metadata = reapply_overrides_to_proposal(metadata, proposal_overrides)
 
         json_path = store.write_proposal_metadata(metadata)
         results.append(

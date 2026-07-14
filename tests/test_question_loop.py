@@ -14,14 +14,25 @@ import hashlib
 import json
 from pathlib import Path
 
+from proposal_ingest.human_overrides import load_human_overrides
+from proposal_ingest.metadata_store import MetadataStore
 from proposal_ingest.mock_bedrock import analyze_document_mock
+from proposal_ingest.proposal_synthesizer import build_deterministic_proposal_metadata
+from proposal_ingest.question_arbiter import stable_proposal_question_id
 from proposal_ingest.question_loop import (
     REVIEW_COLUMNS,
     apply_answers_from_csv,
     export_questions_to_csv,
     stable_question_id,
 )
-from proposal_ingest.schemas import DocumentMetadata, InventoryRecord, QuestionForUser, Uncertainty
+from proposal_ingest.schemas import (
+    DocumentMetadata,
+    InventoryRecord,
+    ProposalMetadata,
+    QuestionForUser,
+    ReviewQuestion,
+    Uncertainty,
+)
 
 
 def _record(file_name: str = "Technical Volume.pdf") -> InventoryRecord:
@@ -234,3 +245,152 @@ def test_apply_answers_logs_invalid_answers(tmp_path: Path) -> None:
     assert result.invalid_count == 1
     assert errors[0]["field"] == "version_status"
     assert metadata["document_identity"]["version_status"] == "unknown"
+
+
+# ---------------------------------------------------------------------------
+# Proposal-scoped export/apply (issue #8)
+# ---------------------------------------------------------------------------
+
+
+def _write_run_with_two_documents_and_proposal(
+    output_root: Path,
+) -> tuple[Path, DocumentMetadata, DocumentMetadata, ProposalMetadata]:
+    run_dir = output_root / "logs" / "run_20260517_120000_abcdef"
+    (run_dir / "inventory").mkdir(parents=True)
+    record_a = _record("Doc A.pdf")
+    record_b = _record("Doc B.pdf")
+    metadata_a = analyze_document_mock(record_a, run_id=run_dir.name)
+    metadata_b = analyze_document_mock(record_b, run_id=run_dir.name)
+    (run_dir / "inventory" / "file_inventory.jsonl").write_text(
+        json.dumps(record_a.model_dump(mode="json"))
+        + "\n"
+        + json.dumps(record_b.model_dump(mode="json"))
+        + "\n",
+        encoding="utf-8",
+    )
+
+    store = MetadataStore(run_dir)
+    store.write_document_metadata(metadata_a, append_jsonl=False)
+    store.write_document_metadata(metadata_b, append_jsonl=False)
+    store.write_document_metadata_jsonl([metadata_a, metadata_b])
+
+    proposal = build_deterministic_proposal_metadata([metadata_a, metadata_b])
+    store.write_proposal_metadata(proposal)
+    store.write_proposal_metadata_jsonl([proposal])
+
+    return run_dir, metadata_a, metadata_b, proposal
+
+
+def test_export_includes_arbitrated_proposal_questions(tmp_path: Path) -> None:
+    run_dir, metadata_a, _metadata_b, proposal = _write_run_with_two_documents_and_proposal(
+        tmp_path
+    )
+    store = MetadataStore(run_dir)
+    question_id = stable_proposal_question_id(
+        proposal.proposal_id, "proposal", "proposal_fact", "award_status"
+    )
+    store.write_arbitrated_questions(
+        [
+            ReviewQuestion(
+                question_id=question_id,
+                proposal_id=proposal.proposal_id,
+                field="canonical_identity.award_status",
+                question="What is the correct award status?",
+                priority="high",
+                scope="proposal",
+                decision_type="proposal_fact",
+                proposal_name=proposal.canonical_identity.proposal_name,
+                affected_document_ids=metadata_a.document_id,
+                model_confidence=0.4,
+                evidence_summary="Documents disagree.",
+                why_human_input_is_needed="No tracker match available.",
+            )
+        ]
+    )
+
+    result = export_questions_to_csv(tmp_path)
+
+    rows = _read_rows(result.questions_csv)
+    assert result.exported_count == 1
+    assert rows[0]["question_id"] == question_id
+    assert rows[0]["scope"] == "proposal"
+    assert rows[0]["proposal_name"] == proposal.canonical_identity.proposal_name
+
+
+def test_apply_proposal_scoped_answer_updates_proposal_and_documents(tmp_path: Path) -> None:
+    run_dir, metadata_a, metadata_b, proposal = _write_run_with_two_documents_and_proposal(tmp_path)
+    question_id = stable_proposal_question_id(
+        proposal.proposal_id, "proposal", "proposal_fact", "award_status"
+    )
+    answers_csv = tmp_path / "review" / "questions_to_answer.csv"
+    _write_manual_answers_csv(
+        answers_csv,
+        {
+            "question_id": question_id,
+            "proposal_id": proposal.proposal_id,
+            "scope": "proposal",
+            "decision_type": "proposal_fact",
+            "field": "canonical_identity.award_status",
+            "affected_document_ids": f"{metadata_a.document_id}|{metadata_b.document_id}",
+            "answer_type": "string",
+            "user_answer": "awarded",
+            "status": "open",
+        },
+    )
+
+    result = apply_answers_from_csv(tmp_path, answers_csv)
+
+    assert result.applied_count == 1
+    assert result.invalid_count == 0
+
+    store = MetadataStore(run_dir)
+    updated_proposal = store.load_proposal_metadata_by_id()[proposal.proposal_id]
+    assert updated_proposal.canonical_identity.award_status == "awarded"
+
+    documents = store.load_document_metadata_by_id()
+    assert documents[metadata_a.document_id].proposal_context.award_status == "awarded"
+    assert documents[metadata_b.document_id].proposal_context.award_status == "awarded"
+
+    overrides = load_human_overrides(tmp_path)
+    assert len(overrides) == 1
+    assert overrides[0].question_id == question_id
+    assert overrides[0].applied_value == "awarded"
+    assert set(overrides[0].affected_document_ids) == {
+        metadata_a.document_id,
+        metadata_b.document_id,
+    }
+
+    archive_rows = _read_rows(result.archive_csv)
+    assert archive_rows[0]["status"] == "applied"
+
+
+def test_apply_authoritative_document_answer_updates_document_lineage(tmp_path: Path) -> None:
+    run_dir, metadata_a, metadata_b, proposal = _write_run_with_two_documents_and_proposal(tmp_path)
+    question_id = stable_proposal_question_id(
+        proposal.proposal_id, "document_family", "authoritative_document", "authoritative_document"
+    )
+    answers_csv = tmp_path / "review" / "questions_to_answer.csv"
+    _write_manual_answers_csv(
+        answers_csv,
+        {
+            "question_id": question_id,
+            "proposal_id": proposal.proposal_id,
+            "scope": "document_family",
+            "decision_type": "authoritative_document",
+            "field": "authoritative_document",
+            "affected_document_ids": f"{metadata_a.document_id}|{metadata_b.document_id}",
+            "answer_type": "string",
+            "user_answer": metadata_a.document_id,
+            "status": "open",
+        },
+    )
+
+    result = apply_answers_from_csv(tmp_path, answers_csv)
+    assert result.applied_count == 1
+
+    store = MetadataStore(run_dir)
+    updated_proposal = store.load_proposal_metadata_by_id()[proposal.proposal_id]
+    lineage_by_id = {entry.document_id: entry for entry in updated_proposal.document_lineage}
+    assert lineage_by_id[metadata_a.document_id].is_authoritative is True
+    assert lineage_by_id[metadata_b.document_id].is_authoritative is False
+    assert lineage_by_id[metadata_b.document_id].superseded_by_document_id == metadata_a.document_id

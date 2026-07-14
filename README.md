@@ -7,7 +7,9 @@ Local-first document ingestion and metadata pipeline for a historical grant/prop
 - Scans a read-only local folder tree and builds a complete file inventory.
 - Filters, hashes, and deduplicates files; handles PowerPoint/PDF supersession.
 - Sends supported documents to Amazon Bedrock (Claude) for metadata extraction and classification.
-- Supports a human question-and-answer correction loop via CSV.
+- Synthesizes canonical, cross-document proposal-level metadata records.
+- Arbitrates proposal-level unresolved decisions into a small, budget-capped set of human review questions.
+- Supports a human question-and-answer correction loop via CSV, applying answers to the correct scope (document, document family, or proposal).
 - Performs a two-pass contextual review for low-confidence documents.
 - Synthesizes proposal-branch folder metadata and Markdown summaries.
 - Exports a clean mirrored document set ready for future S3 upload and RAG ingestion.
@@ -172,24 +174,27 @@ proposal-ingest analyze \
   --output-root /path/to/output \
   --mock-bedrock
 
-# 3. Export questions for human review
+# 3. Synthesize canonical proposal-level records
+proposal-ingest synthesize-proposals --output-root /path/to/output --mock-bedrock
+
+# 4. Arbitrate proposal-level unresolved decisions into review questions
+proposal-ingest arbitrate-questions --output-root /path/to/output --mock-bedrock
+
+# 5. Export questions for human review
 proposal-ingest export-questions --output-root /path/to/output
 
-# 4. Answer output/review/questions_to_answer.csv in the simple GUI
+# 6. Answer output/review/questions_to_answer.csv in the simple GUI
 proposal-ingest answer-questions --output-root /path/to/output
 
-# 5. Apply answers
+# 7. Apply answers (updates document and, for proposal-scoped rows, proposal records)
 proposal-ingest apply-answers \
   --output-root /path/to/output \
   --answers-csv /path/to/output/review/questions_to_answer.csv
 
-# 6. Synthesize canonical proposal-level records
-proposal-ingest synthesize-proposals --output-root /path/to/output --mock-bedrock
-
-# 7. Build folder metadata and summaries (uses the proposal record above when present)
+# 8. Build folder metadata and summaries (uses the proposal record above when present)
 proposal-ingest build-folders --output-root /path/to/output
 
-# 8. Build clean document set and S3 manifest
+# 9. Build clean document set and S3 manifest
 proposal-ingest build-clean-set --output-root /path/to/output
 ```
 
@@ -200,6 +205,7 @@ processed_output/
   review/
     questions_to_answer.csv
     answered_questions_archive.csv
+    human_overrides.jsonl
   logs/
     run_YYYYMMDD_HHMMSS_<id>/
       run_manifest.json
@@ -213,6 +219,8 @@ processed_output/
       proposal_metadata/
         all_proposal_metadata.jsonl
         by_proposal_id/<proposal_id>.json
+      arbitration/
+        arbitrated_questions.jsonl
       folder_metadata/<proposal_id>.json
       reports/
         excluded_files.csv
@@ -230,7 +238,8 @@ processed_output/
 
 ## Implementation status
 
-Phases 1 through 12, plus Phase 14 (proposal-level synthesis), are complete:
+Phases 1 through 12, plus Phase 14 (proposal-level synthesis) and Phase 15
+(proposal-level question arbitration), are complete:
 
 - Phase 1 — scanner and inventory
 - Phase 2 — file rules and PowerPoint handling
@@ -245,10 +254,11 @@ Phases 1 through 12, plus Phase 14 (proposal-level synthesis), are complete:
 - Phase 11 — folder metadata synthesis and Markdown summaries
 - Phase 12 — clean document set, excluded-files report, and S3 manifest
 - Phase 14 — canonical proposal-level synthesis (`synthesize-proposals`), consumed by folder synthesis
+- Phase 15 — proposal-level question arbitration (`arbitrate-questions`), consumed by the human review loop
 
 Current implementation boundary:
 
-- `scan`, `process-file`, `analyze`, `export-questions`, `answer-questions`, `apply-answers`, `synthesize-proposals`, `build-folders`, `build-clean-set`, `process-folder`, `run-all`, and `bedrock-smoke-test` are wired.
+- `scan`, `process-file`, `analyze`, `synthesize-proposals`, `arbitrate-questions`, `export-questions`, `answer-questions`, `apply-answers`, `build-folders`, `build-clean-set`, `process-folder`, `run-all`, and `bedrock-smoke-test` are wired.
 - Use `--mock-bedrock` for local and CI-safe runs; real Bedrock paths require valid AWS credentials and model access.
 - `run-all` now finishes by building the clean set and manifest unless critical review questions remain open.
 

@@ -410,6 +410,34 @@ def synthesize_proposals(
         )
 
 
+@app.command(name="arbitrate-questions")
+def arbitrate_questions(
+    output_root: str = typer.Option(..., "--output-root", help="Path to the output directory."),
+    mock_bedrock: bool = typer.Option(
+        False,
+        "--mock-bedrock",
+        help="Use deterministic candidates instead of a Bedrock arbitration call.",
+    ),
+    config: str | None = typer.Option(None, "--config", help="Path to a YAML config file."),
+) -> None:
+    """Arbitrate synthesized proposals' unresolved decisions into review questions."""
+    from proposal_ingest.question_arbiter import arbitrate_all_proposals
+
+    run_dir = _latest_run_dir_or_exit(output_root)
+    store = MetadataStore(run_dir)
+    runtime_cfg = load_runtime_config(config)
+
+    result = arbitrate_all_proposals(store, use_mock=mock_bedrock, config=runtime_cfg)
+
+    console.print(
+        f"arbitrate-questions complete: {len(result.questions)} question(s) across "
+        f"{result.proposal_count} proposal(s){' (mock mode)' if mock_bedrock else ''}"
+    )
+    console.print(f"  suppressed = {result.suppressed_count}")
+    console.print(f"  resolved by prior human answer = {result.resolved_by_override_count}")
+    console.print(f"  output = {result.output_path}")
+
+
 @app.command(name="build-folders")
 def build_folders(
     output_root: str = typer.Option(..., "--output-root", help="Path to the output directory."),
@@ -526,6 +554,7 @@ def run_all(
     """Run the implemented pipeline end-to-end through clean-set output."""
     from proposal_ingest.folder_builder import build_all_folders
     from proposal_ingest.proposal_synthesizer import synthesize_all_proposals
+    from proposal_ingest.question_arbiter import arbitrate_all_proposals
     from proposal_ingest.tracker import load_tracker_rows_jsonl
 
     runtime_cfg = load_runtime_config(
@@ -571,17 +600,7 @@ def run_all(
         f" processed{' (mock mode)' if mock_bedrock else ''}"
     )
 
-    # Stage 3: export questions
-    questions_result = export_questions_to_csv(
-        Path(output_root),
-        include_low_priority=False,
-    )
-    console.print(
-        f"Exported {questions_result.exported_count} questions to "
-        f"{questions_result.questions_csv}"
-    )
-
-    # Stage 4: proposal synthesis
+    # Stage 3: proposal synthesis
     tracker_rows = None
     if artifacts.tracker_rows_jsonl.exists():
         tracker_rows = load_tracker_rows_jsonl(artifacts.tracker_rows_jsonl)
@@ -597,7 +616,25 @@ def run_all(
         f"{' (mock mode)' if mock_bedrock else ''}"
     )
 
-    # Stage 5: folder synthesis
+    # Stage 4: arbitrate proposal-level questions
+    arbitration_result = arbitrate_all_proposals(store, use_mock=mock_bedrock, config=runtime_cfg)
+    console.print(
+        f"arbitrate-questions complete: {len(arbitration_result.questions)} question(s) across "
+        f"{arbitration_result.proposal_count} proposal(s)"
+        f"{' (mock mode)' if mock_bedrock else ''}"
+    )
+
+    # Stage 5: export questions
+    questions_result = export_questions_to_csv(
+        Path(output_root),
+        include_low_priority=False,
+    )
+    console.print(
+        f"Exported {questions_result.exported_count} questions to "
+        f"{questions_result.questions_csv}"
+    )
+
+    # Stage 6: folder synthesis
     proposal_metadata_by_id = {r.proposal_id: r.metadata for r in proposal_results}
     folder_results = build_all_folders(
         store,
@@ -611,7 +648,7 @@ def run_all(
         f"{' (mock mode)' if mock_bedrock else ''}"
     )
 
-    # Stage 6: clean-set and S3 manifest
+    # Stage 7: clean-set and S3 manifest
     try:
         clean_result = build_clean_set_outputs(
             Path(output_root),
@@ -655,6 +692,7 @@ def process_folder(
     """Process a single proposal branch folder."""
     from proposal_ingest.folder_builder import build_all_folders
     from proposal_ingest.proposal_synthesizer import synthesize_all_proposals
+    from proposal_ingest.question_arbiter import arbitrate_all_proposals
 
     try:
         runtime_cfg = load_runtime_config(
@@ -691,6 +729,24 @@ def process_folder(
         f" processed{' (mock mode)' if mock_bedrock else ''}"
     )
 
+    store = MetadataStore(artifacts.run_dir)
+    proposal_results = synthesize_all_proposals(
+        store,
+        use_mock=mock_bedrock,
+        config=runtime_cfg,
+    )
+    console.print(
+        f"synthesize-proposals complete: {len(proposal_results)} proposal(s) synthesized"
+        f"{' (mock mode)' if mock_bedrock else ''}"
+    )
+
+    arbitration_result = arbitrate_all_proposals(store, use_mock=mock_bedrock, config=runtime_cfg)
+    console.print(
+        f"arbitrate-questions complete: {len(arbitration_result.questions)} question(s) across "
+        f"{arbitration_result.proposal_count} proposal(s)"
+        f"{' (mock mode)' if mock_bedrock else ''}"
+    )
+
     questions_result = export_questions_to_csv(
         Path(output_root),
         include_low_priority=False,
@@ -700,12 +756,6 @@ def process_folder(
         f"{questions_result.questions_csv}"
     )
 
-    store = MetadataStore(artifacts.run_dir)
-    proposal_results = synthesize_all_proposals(
-        store,
-        use_mock=mock_bedrock,
-        config=runtime_cfg,
-    )
     proposal_metadata_by_id = {r.proposal_id: r.metadata for r in proposal_results}
     folder_results = build_all_folders(
         store,

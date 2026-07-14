@@ -48,6 +48,11 @@ questions:
   suppress_low_priority: true
   target_questions_per_file: 3
 
+review:
+  max_questions_per_proposal: 3
+  max_questions_per_run: 20
+  include_low_priority: false
+
 clean_set:
   sanitize_filenames: true
   flatten_documents_folder: true
