@@ -37,6 +37,7 @@ from proposal_ingest.schemas import (
     ReviewQuestion,
     UncertaintyImpact,
     UnresolvedDecision,
+    UnresolvedDecisionType,
 )
 
 logger = get_logger("question_arbiter")
@@ -255,6 +256,8 @@ def _build_review_question(
         f"for '{decision.field}'?{guess_clause} {decision.reason_unresolved}"
     ).strip()
 
+    suggested_options, answer_type = _suggested_options_and_answer_type(decision)
+
     return ReviewQuestion(
         question_id=question_id,
         run_id=proposal.run_id,
@@ -266,9 +269,9 @@ def _build_review_question(
         field=decision.field,
         question=question_text,
         priority=_IMPACT_TO_PRIORITY[decision.downstream_impact],
-        suggested_options=None,
+        suggested_options=suggested_options,
         model_guess=decision.current_guess,
-        answer_type="string",
+        answer_type=answer_type,
         status=QuestionStatus.open,
         scope=decision.scope,
         decision_type=decision.decision_type,
@@ -278,6 +281,29 @@ def _build_review_question(
         evidence_summary=decision.evidence_summary or None,
         why_human_input_is_needed=why or None,
     )
+
+
+def _suggested_options_and_answer_type(decision: UnresolvedDecision) -> tuple[str | None, str]:
+    """Derive CSV/GUI-facing suggested_options and answer_type from the field map.
+
+    Reuses the same ``PROPOSAL_FIELD_MAP`` that answer application validates
+    against, so a reviewer sees the same controlled choices apply-answers
+    will accept — never invented separately from the enforcement logic.
+    """
+    if decision.decision_type == UnresolvedDecisionType.authoritative_document:
+        if decision.affected_document_ids:
+            return "|".join(decision.affected_document_ids), "string"
+        return None, "string"
+
+    spec = PROPOSAL_FIELD_MAP.get(canonical_field_key(decision.field))
+    if spec is None:
+        return None, "string"
+    if spec.enum_cls is not None:
+        values = sorted(item.value for item in spec.enum_cls)  # type: ignore[attr-defined]
+        return " | ".join(values), "enum"
+    if spec.is_list:
+        return None, "list"
+    return None, "string"
 
 
 def _refine_with_bedrock(

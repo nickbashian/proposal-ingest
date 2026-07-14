@@ -524,6 +524,36 @@ def test_conflicting_award_status_without_tracker_flagged() -> None:
     assert matching[0].downstream_impact == UncertaintyImpact.high
 
 
+def test_uncertainty_and_tracker_conflict_on_same_field_merge_into_one_decision() -> None:
+    """A doc-flagged ``proposal_context.award_status`` uncertainty and the
+
+    system-detected ``canonical_identity.award_status`` value conflict (no
+    tracker match) describe the same underlying issue and must consolidate
+    into exactly one ``UnresolvedDecision`` — otherwise question arbitration,
+    which mints stable IDs from the canonical (last-segment) field key, would
+    silently double-count one issue against the per-proposal question budget.
+    """
+    docs = [
+        _make_doc(
+            document_id="doc_001",
+            award_status="awarded",
+            uncertainties=[_proposal_uncertainty()],
+        ),
+        _make_doc(document_id="doc_002", award_status="rejected"),
+        _make_doc(document_id="doc_003", award_status="pending"),
+    ]
+    metadata = build_deterministic_proposal_metadata(docs, tracker_rows=None)
+    award_status_decisions = [
+        d for d in metadata.unresolved_decisions if d.field.rsplit(".", 1)[-1] == "award_status"
+    ]
+    assert len(award_status_decisions) == 1
+    assert set(award_status_decisions[0].affected_document_ids) == {
+        "doc_001",
+        "doc_002",
+        "doc_003",
+    }
+
+
 def test_conflicting_award_status_suppressed_when_tracker_matched() -> None:
     docs = [
         _make_doc(document_id="doc_001", award_status="awarded"),

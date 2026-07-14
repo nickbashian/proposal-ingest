@@ -207,6 +207,30 @@ def test_stable_question_id_matches_generated_question(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Suggested options / answer type
+# ---------------------------------------------------------------------------
+
+
+def test_enum_field_question_gets_suggested_options(tmp_path: Path) -> None:
+    """An enum-typed canonical field (e.g. agency) should surface its valid values."""
+    store = MetadataStore(_run_dir(tmp_path))
+    doc = _make_doc(
+        document_id="doc_001",
+        proposal_id="prop_aaa",
+        uncertainties=[_proposal_uncertainty(field="proposal_context.agency")],
+    )
+    store.write_document_metadata(doc, append_jsonl=False)
+    synthesize_all_proposals(store, use_mock=True, policies=_POLICIES)
+
+    result = arbitrate_all_proposals(store, use_mock=True, config=RuntimeConfig())
+
+    assert len(result.questions) == 1
+    question = result.questions[0]
+    assert question.answer_type == "enum"
+    assert "DOE" in (question.suggested_options or "")
+
+
+# ---------------------------------------------------------------------------
 # Prior answers and reopening on conflicting evidence
 # ---------------------------------------------------------------------------
 
