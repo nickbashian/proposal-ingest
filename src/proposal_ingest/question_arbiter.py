@@ -19,7 +19,9 @@ from pathlib import Path
 from typing import Any
 
 from proposal_ingest.human_overrides import (
+    PROPOSAL_FIELD_MAP,
     canonical_field_key,
+    coerce_field_value,
     load_human_overrides,
     output_root_from_run_dir,
 )
@@ -203,9 +205,29 @@ def _has_conflicting_new_evidence(
     A candidate with no current guess at all is treated as still consistent
     with the applied answer (nothing new to conflict with); a question only
     reopens when the new evidence positively points somewhere else.
+
+    ``override.applied_value`` may be a list or a number (for list/numeric
+    proposal fields), while ``decision.current_guess`` is always a plain
+    string; a naive ``str()`` comparison would treat every such field as
+    conflicting on every rerun purely from formatting differences (e.g.
+    ``"['internal']"`` vs ``"internal"``). Coercing the guess through the
+    same field spec used to validate/apply answers puts both sides in the
+    same shape before comparing.
     """
     if decision.current_guess is None:
         return False
+
+    spec = PROPOSAL_FIELD_MAP.get(canonical_field_key(override.field))
+    if spec is not None:
+        try:
+            normalized_guess = coerce_field_value(spec, decision.current_guess)
+        except ValueError:
+            pass
+        else:
+            if spec.is_list:
+                return sorted(normalized_guess) != sorted(override.applied_value or [])
+            return normalized_guess != override.applied_value
+
     return str(decision.current_guess) != str(override.applied_value)
 
 

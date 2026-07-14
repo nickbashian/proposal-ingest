@@ -254,3 +254,86 @@ def test_conflicting_new_evidence_reopens_question(tmp_path: Path) -> None:
     assert len(result.questions) == 1
     assert result.resolved_by_override_count == 0
     assert "Reopened" in (result.questions[0].why_human_input_is_needed or "")
+
+
+def test_prior_override_with_list_value_does_not_falsely_reopen(tmp_path: Path) -> None:
+    """A list-valued applied answer must not be treated as conflicting with a matching guess.
+
+    ``current_guess`` is always a plain string (e.g. "internal") while a
+    list-valued override's ``applied_value`` is a real list (e.g.
+    ["internal"]); a naive str() comparison would always disagree.
+    """
+    store = MetadataStore(_run_dir(tmp_path))
+    doc = _make_doc(
+        document_id="doc_001",
+        proposal_id="prop_aaa",
+        uncertainties=[
+            _proposal_uncertainty(field="sensitivity.sensitivity_labels")
+            | {"current_guess": "internal"}
+        ],
+    )
+    store.write_document_metadata(doc, append_jsonl=False)
+    synthesize_all_proposals(store, use_mock=True, policies=_POLICIES)
+
+    question_id = stable_proposal_question_id(
+        "prop_aaa", "proposal", "proposal_fact", "sensitivity_labels"
+    )
+    append_human_override(
+        tmp_path,
+        HumanOverrideRecord(
+            question_id=question_id,
+            scope="proposal",
+            proposal_id="prop_aaa",
+            field="sensitivity.sensitivity_labels",
+            decision_type="proposal_fact",
+            affected_document_ids=["doc_001"],
+            previous_value=None,
+            applied_value=["internal"],
+            timestamp="2026-07-14T00:00:00+00:00",
+            source="human_review",
+        ),
+    )
+
+    result = arbitrate_all_proposals(store, use_mock=True, config=RuntimeConfig())
+
+    assert result.questions == []
+    assert result.resolved_by_override_count == 1
+
+
+def test_prior_override_with_numeric_value_does_not_falsely_reopen(tmp_path: Path) -> None:
+    """A numeric applied answer must not be treated as conflicting due to string formatting."""
+    store = MetadataStore(_run_dir(tmp_path))
+    doc = _make_doc(
+        document_id="doc_001",
+        proposal_id="prop_aaa",
+        uncertainties=[
+            _proposal_uncertainty(field="canonical_identity.award_amount")
+            | {"current_guess": "500000"}
+        ],
+    )
+    store.write_document_metadata(doc, append_jsonl=False)
+    synthesize_all_proposals(store, use_mock=True, policies=_POLICIES)
+
+    question_id = stable_proposal_question_id(
+        "prop_aaa", "proposal", "proposal_fact", "award_amount"
+    )
+    append_human_override(
+        tmp_path,
+        HumanOverrideRecord(
+            question_id=question_id,
+            scope="proposal",
+            proposal_id="prop_aaa",
+            field="canonical_identity.award_amount",
+            decision_type="proposal_fact",
+            affected_document_ids=["doc_001"],
+            previous_value=None,
+            applied_value=500000.0,
+            timestamp="2026-07-14T00:00:00+00:00",
+            source="human_review",
+        ),
+    )
+
+    result = arbitrate_all_proposals(store, use_mock=True, config=RuntimeConfig())
+
+    assert result.questions == []
+    assert result.resolved_by_override_count == 1

@@ -905,6 +905,46 @@ def test_synthesize_all_proposals_replays_human_override_across_rerun(tmp_path: 
     assert results[0].metadata.canonical_identity.award_status == "awarded"
 
 
+def test_synthesize_all_proposals_persists_reapplied_document_overrides(tmp_path: Path) -> None:
+    """Reapplied document-level overrides must be written to disk, not just held in memory.
+
+    Downstream stages (build-folders, build-clean-set) load document
+    metadata straight from the store, so a resynthesis that only patches
+    documents in memory would silently discard the override for them.
+    """
+    run_dir = tmp_path / "logs" / "run_001"
+    store = MetadataStore(run_dir)
+    doc_a = _make_doc(document_id="doc_a", proposal_id="prop_aaa", award_status="awarded")
+    doc_b = _make_doc(document_id="doc_b", proposal_id="prop_aaa", award_status="rejected")
+    store.write_document_metadata(doc_a, append_jsonl=False)
+    store.write_document_metadata(doc_b, append_jsonl=False)
+
+    append_human_override(
+        tmp_path,
+        HumanOverrideRecord(
+            question_id="q_test_override",
+            scope="proposal",
+            proposal_id="prop_aaa",
+            field="canonical_identity.award_status",
+            decision_type="proposal_fact",
+            affected_document_ids=["doc_a", "doc_b"],
+            previous_value=None,
+            applied_value="awarded",
+            timestamp="2026-07-14T00:00:00+00:00",
+            source="human_review",
+        ),
+    )
+
+    synthesize_all_proposals(store, use_mock=True, policies=_POLICIES)
+
+    reloaded = store.load_document_metadata_by_id()
+    assert reloaded["doc_a"].proposal_context.award_status == "awarded"
+    assert reloaded["doc_b"].proposal_context.award_status == "awarded"
+    jsonl_lines = store.all_document_metadata_jsonl.read_text(encoding="utf-8").splitlines()
+    assert len(jsonl_lines) == 2
+    assert all('"award_status": "awarded"' in line for line in jsonl_lines)
+
+
 def test_synthesize_all_proposals_resolves_policies_from_configured_path(
     tmp_path: Path, monkeypatch
 ) -> None:

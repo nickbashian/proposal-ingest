@@ -25,6 +25,7 @@ from proposal_ingest.aggregation import (
 )
 from proposal_ingest.config import load_knowledge_base_policies
 from proposal_ingest.human_overrides import (
+    canonical_field_key,
     load_human_overrides,
     output_root_from_run_dir,
     reapply_overrides_to_documents,
@@ -208,11 +209,15 @@ def synthesize_all_proposals(
     overrides = load_human_overrides(output_root_from_run_dir(store.run_dir))
 
     results: list[ProposalSynthesisResult] = []
+    all_docs: list[DocumentMetadata] = []
     for proposal_id in sorted(docs_by_proposal):
         docs = docs_by_proposal[proposal_id]
         proposal_overrides = [o for o in overrides if o.proposal_id == proposal_id]
         if proposal_overrides:
             docs = reapply_overrides_to_documents(docs, proposal_overrides)
+            for doc in docs:
+                store.write_document_metadata(doc, append_jsonl=False)
+        all_docs.extend(docs)
         logger.info("Synthesizing proposal metadata for %s (%d docs)", proposal_id, len(docs))
         try:
             metadata = synthesize_proposal_metadata(
@@ -235,6 +240,8 @@ def synthesize_all_proposals(
             ProposalSynthesisResult(proposal_id=proposal_id, metadata=metadata, json_path=json_path)
         )
 
+    if overrides:
+        store.write_document_metadata_jsonl(sorted(all_docs, key=lambda doc: doc.document_id))
     store.write_proposal_metadata_jsonl([result.metadata for result in results])
     return results
 
@@ -682,7 +689,55 @@ def _consolidate_unresolved_decisions(
     *,
     tracker_match_status: TrackerMatchStatus,
 ) -> list[UnresolvedDecision]:
+    """Group candidate decisions by canonical field key, not by raw field string.
+
+    Document-level uncertainties are namespaced under ``proposal_context.*``
+    while the tracker-conflict fallback below reports under
+    ``canonical_identity.*``; both can legitimately describe the same
+    underlying issue (for example ``award_status``). Grouping by canonical
+    key here keeps this merge consistent with
+    ``question_arbiter.stable_proposal_question_id``, which also collapses
+    on the canonical key — otherwise the two code paths could mint the same
+    question ID for two different ``UnresolvedDecision`` entries, silently
+    double-counting one issue against the per-proposal question budget.
+    """
     grouped: dict[str, dict[str, Any]] = {}
+
+    def _merge(
+        *,
+        field: str,
+        current_guess: str | None,
+        confidence: float,
+        evidence: list[str],
+        affected_document_ids: list[str],
+        downstream_impact: UncertaintyImpact,
+        reason: str,
+    ) -> None:
+        key = canonical_field_key(field)
+        bucket = grouped.setdefault(
+            key,
+            {
+                "field": field,
+                "current_guess": current_guess,
+                "confidence": confidence,
+                "evidence": [],
+                "affected_document_ids": [],
+                "downstream_impact": downstream_impact,
+                "reasons": [],
+            },
+        )
+        bucket["affected_document_ids"].extend(affected_document_ids)
+        if confidence > bucket["confidence"]:
+            bucket["confidence"] = confidence
+            bucket["current_guess"] = current_guess
+        for item in evidence:
+            if item not in bucket["evidence"]:
+                bucket["evidence"].append(item)
+        if _IMPACT_ORDER[downstream_impact] > _IMPACT_ORDER[bucket["downstream_impact"]]:
+            bucket["downstream_impact"] = downstream_impact
+        if reason not in bucket["reasons"]:
+            bucket["reasons"].append(reason)
+
     for doc in documents:
         for uncertainty in doc.uncertainties:
             if uncertainty.scope not in (
@@ -690,35 +745,35 @@ def _consolidate_unresolved_decisions(
                 UncertaintyScope.document_family,
             ):
                 continue
-            bucket = grouped.setdefault(
-                uncertainty.field,
-                {
-                    "current_guess": uncertainty.current_guess,
-                    "confidence": float(uncertainty.confidence),
-                    "evidence": [],
-                    "affected_document_ids": [],
-                    "downstream_impact": uncertainty.downstream_impact,
-                    "reasons": [],
-                },
+            _merge(
+                field=uncertainty.field,
+                current_guess=uncertainty.current_guess,
+                confidence=float(uncertainty.confidence),
+                evidence=list(uncertainty.evidence),
+                affected_document_ids=[doc.document_id],
+                downstream_impact=uncertainty.downstream_impact,
+                reason=uncertainty.reason_unresolved,
             )
-            bucket["affected_document_ids"].append(doc.document_id)
-            if float(uncertainty.confidence) > bucket["confidence"]:
-                bucket["confidence"] = float(uncertainty.confidence)
-                bucket["current_guess"] = uncertainty.current_guess
-            for item in uncertainty.evidence:
-                if item not in bucket["evidence"]:
-                    bucket["evidence"].append(item)
-            if (
-                _IMPACT_ORDER[uncertainty.downstream_impact]
-                > _IMPACT_ORDER[bucket["downstream_impact"]]
-            ):
-                bucket["downstream_impact"] = uncertainty.downstream_impact
-            if uncertainty.reason_unresolved not in bucket["reasons"]:
-                bucket["reasons"].append(uncertainty.reason_unresolved)
 
-    decisions: list[UnresolvedDecision] = [
+    if tracker_match_status != TrackerMatchStatus.matched:
+        for fallback_decision in _detect_conflicting_award_status(documents):
+            _merge(
+                field=fallback_decision.field,
+                current_guess=fallback_decision.current_guess,
+                confidence=float(fallback_decision.confidence),
+                evidence=(
+                    [fallback_decision.evidence_summary]
+                    if fallback_decision.evidence_summary
+                    else []
+                ),
+                affected_document_ids=list(fallback_decision.affected_document_ids),
+                downstream_impact=fallback_decision.downstream_impact,
+                reason=fallback_decision.reason_unresolved,
+            )
+
+    return [
         UnresolvedDecision(
-            field=field,
+            field=bucket["field"],
             scope=UncertaintyScope.proposal,
             decision_type=UnresolvedDecisionType.proposal_fact,
             current_guess=bucket["current_guess"],
@@ -728,13 +783,8 @@ def _consolidate_unresolved_decisions(
             downstream_impact=bucket["downstream_impact"],
             reason_unresolved=" ".join(bucket["reasons"]),
         )
-        for field, bucket in sorted(grouped.items())
+        for _key, bucket in sorted(grouped.items())
     ]
-
-    if tracker_match_status != TrackerMatchStatus.matched:
-        decisions.extend(_detect_conflicting_award_status(documents))
-
-    return decisions
 
 
 def _detect_conflicting_award_status(documents: list[DocumentMetadata]) -> list[UnresolvedDecision]:
