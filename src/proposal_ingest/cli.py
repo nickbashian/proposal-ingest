@@ -778,13 +778,24 @@ def evaluate_quality(
     if expected is None:
         return
 
+    expected_path = Path(expected)
+    if not expected_path.is_dir():
+        console.print(
+            f"[red]Error: expected-outcomes directory does not exist: {expected_path}[/red]"
+        )
+        raise typer.Exit(code=1)
+
+    expected_outcomes = load_expected_outcomes(expected_path)
+    if not expected_outcomes:
+        console.print(f"[red]Error: no expected-outcome fixtures found in {expected_path}[/red]")
+        raise typer.Exit(code=1)
+
     questions_by_proposal: dict[str, int] = {}
     for question in arbitration_result.questions:
         questions_by_proposal[question.proposal_id] = (
             questions_by_proposal.get(question.proposal_id, 0) + 1
         )
 
-    expected_outcomes = load_expected_outcomes(Path(expected))
     failures: list[str] = []
     checked = 0
     for result in proposal_results:

@@ -251,8 +251,6 @@ def _infer_sensitivity(stem: str, category: DocumentCategory) -> SensitivityMeta
         labels.append(SensitivityLabel.personal_info)
 
     reasons = []
-    if contains_budget:
-        reasons.append("Filename indicates budget/rate content (mock mode).")
     if contains_personal:
         reasons.append("Filename indicates personal information (mock mode).")
 
@@ -261,7 +259,7 @@ def _infer_sensitivity(stem: str, category: DocumentCategory) -> SensitivityMeta
         contains_budget_or_rates=contains_budget,
         contains_personal_info=contains_personal,
         manual_review_required=contains_personal,
-        manual_review_reasons=reasons if contains_personal else [],
+        manual_review_reasons=reasons,
     )
 
 

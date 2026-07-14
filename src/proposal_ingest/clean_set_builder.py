@@ -521,8 +521,8 @@ def _write_run_quality_report(
     report = build_run_provenance_report(
         list(proposals_by_id.values()),
         arbitrated_questions=store.load_arbitrated_questions(),
-        suppressed_count=arbitration_summary["suppressed_count"],
-        resolved_by_override_count=arbitration_summary["resolved_by_override_count"],
+        suppressed_count=arbitration_summary.get("suppressed_count", 0),
+        resolved_by_override_count=arbitration_summary.get("resolved_by_override_count", 0),
         usage_records=store.load_usage_records(),
     )
     _write_json_dict(quality_report_path, report)
