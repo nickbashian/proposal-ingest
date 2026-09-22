@@ -57,7 +57,7 @@ ALLOWED_LOOPBACK_CREDENTIAL_URI = "://".join(
     ("postgresql", "proposal_ingest:local-development-only@127.0.0.1:54329/proposal_ingest_dev")
 )
 ASSIGNMENT_PATTERN = re.compile(
-    r"^\s*[\"']?(?:[A-Z0-9]+_)*(?:PASSWORD|PASSWD|SECRET|TOKEN|API_KEY|CLIENT_SECRET|ACCESS_TOKEN|AUTH_TOKEN|BEARER_TOKEN)[\"']?"
+    r"^\s*[\"']?(?:[A-Z0-9]+_)*(?:PASSWORD|PASSWD|SECRET|TOKEN|API_KEY|CLIENT_SECRET|SECRET_ACCESS_KEY|ACCESS_TOKEN|AUTH_TOKEN|BEARER_TOKEN)[\"']?"
     r"\s*[:=]\s*(?:\"([^\"\r\n]{6,})\"|'([^'\r\n]{6,})'|([^\s#]{6,}))",
     re.IGNORECASE | re.MULTILINE,
 )

@@ -44,6 +44,15 @@ def test_secret_scanner_detects_lowercase_symbol_prefixed_assignment(tmp_path: P
     assert [finding.kind for finding in findings] == ["non-placeholder secret assignment"]
 
 
+def test_secret_scanner_detects_aws_secret_access_key_assignment(tmp_path: Path) -> None:
+    key = "_".join(("aws", "secret", "access", "key"))
+    value = "fictional-credential-value"
+
+    findings = scan_secrets.scan_text(tmp_path / "settings.env", f"{key}={value}")
+
+    assert [finding.kind for finding in findings] == ["non-placeholder secret assignment"]
+
+
 def test_secret_scanner_rejects_remote_uri_credentials_but_allows_local_fixture(
     tmp_path: Path,
 ) -> None:
