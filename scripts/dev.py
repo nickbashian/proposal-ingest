@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import importlib.util
 import json
+import math
 import os
 import platform
 import shutil
@@ -320,8 +321,13 @@ def validate_env(values: dict[str, str], *, production: bool = False) -> list[st
     ]
     if values.get("PROPOSAL_APP_ENV") not in {"local", "production"}:
         errors.append("PROPOSAL_APP_ENV must be local or production")
-    if values.get("PROPOSAL_STORAGE_BACKEND") not in SUPPORTED_STORAGE_BACKENDS:
+    storage_backend = values.get("PROPOSAL_STORAGE_BACKEND")
+    if storage_backend not in SUPPORTED_STORAGE_BACKENDS:
         errors.append("PROPOSAL_STORAGE_BACKEND must be local or s3")
+    elif storage_backend == "local" and not values.get("PROPOSAL_LOCAL_STORAGE_ROOT", "").strip():
+        errors.append("PROPOSAL_LOCAL_STORAGE_ROOT is required for local storage")
+    elif storage_backend == "s3" and not values.get("PROPOSAL_S3_BUCKET", "").strip():
+        errors.append("PROPOSAL_S3_BUCKET is required for s3 storage")
     boolean_keys = {"PROPOSAL_LOCAL_AUTH_ENABLED", "MOCK_BEDROCK", "SAVE_RAW_MODEL_RESPONSES"}
     for key in sorted(boolean_keys & values.keys()):
         if values[key].casefold() not in {"true", "false"}:
@@ -348,8 +354,8 @@ def validate_env(values: dict[str, str], *, production: bool = False) -> list[st
             amount = float(values[key])
         except ValueError:
             amount = -1
-        if amount <= 0:
-            errors.append(f"{key} must be greater than zero")
+        if not math.isfinite(amount) or amount <= 0:
+            errors.append(f"{key} must be a finite value greater than zero")
     return errors
 
 

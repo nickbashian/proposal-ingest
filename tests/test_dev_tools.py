@@ -63,6 +63,18 @@ def test_secret_scanner_rejects_database_dump_suffix(
     ]
 
 
+def test_secret_scanner_rejects_timestamped_terraform_state(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    state_file = tmp_path / "terraform.tfstate.1700000000"
+    state_file.write_text("synthetic", encoding="utf-8")
+    monkeypatch.setattr(scan_secrets, "ROOT", tmp_path)
+
+    findings = scan_secrets.scan_paths([state_file])
+
+    assert [finding.kind for finding in findings] == ["private/generated artifact path"]
+
+
 def test_secret_scanner_scans_credential_beyond_large_file_limit(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -88,6 +100,18 @@ def test_secret_scanner_fails_closed_for_unallowlisted_large_binary(
     findings = scan_secrets.scan_paths([large_file])
 
     assert [finding.kind for finding in findings] == ["unallowlisted oversized binary file"]
+
+
+def test_secret_scanner_fails_closed_for_unallowlisted_small_binary(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    binary_file = tmp_path / "small.bin"
+    binary_file.write_bytes(b"\0synthetic")
+    monkeypatch.setattr(scan_secrets, "ROOT", tmp_path)
+
+    findings = scan_secrets.scan_paths([binary_file])
+
+    assert [finding.kind for finding in findings] == ["unallowlisted binary file"]
 
 
 def test_docker_diagnostic_distinguishes_inactive_engine(
@@ -187,3 +211,32 @@ def test_config_validation_rejects_blank_required_value() -> None:
 
     assert "missing or blank setting: DATABASE_URL" in errors
     assert "PROPOSAL_STORAGE_BACKEND must be local or s3" in errors
+
+
+@pytest.mark.parametrize(
+    ("backend", "setting", "expected"),
+    [
+        ("local", "PROPOSAL_LOCAL_STORAGE_ROOT", "local storage"),
+        ("s3", "PROPOSAL_S3_BUCKET", "s3 storage"),
+    ],
+)
+def test_config_validation_requires_backend_setting(
+    backend: str, setting: str, expected: str
+) -> None:
+    values = dev.read_env_file(dev.ROOT / ".env.example")
+    values["PROPOSAL_STORAGE_BACKEND"] = backend
+    values[setting] = ""
+
+    errors = dev.validate_env(values)
+
+    assert any(expected in error for error in errors)
+
+
+@pytest.mark.parametrize("value", ["nan", "inf", "-inf"])
+def test_config_validation_rejects_non_finite_cost_limits(value: str) -> None:
+    values = dev.read_env_file(dev.ROOT / ".env.example")
+    values["SINGLE_JOB_COST_LIMIT_USD"] = value
+
+    errors = dev.validate_env(values)
+
+    assert "SINGLE_JOB_COST_LIMIT_USD must be a finite value greater than zero" in errors

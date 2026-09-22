@@ -68,7 +68,11 @@ def _forbidden_path(path: Path) -> bool:
     relative = path.relative_to(ROOT)
     parts = {part.casefold() for part in relative.parts}
     name = relative.name.casefold()
-    return bool(parts & FORBIDDEN_PATH_PARTS) or name.endswith(tuple(FORBIDDEN_SUFFIXES))
+    return (
+        bool(parts & FORBIDDEN_PATH_PARTS)
+        or name.endswith(tuple(FORBIDDEN_SUFFIXES))
+        or ".tfstate." in name
+    )
 
 
 def _is_safe_assignment(value: str) -> bool:
@@ -129,10 +133,14 @@ def scan_paths(paths: Iterable[Path]) -> list[Finding]:
             continue
         payload = path.read_bytes()
         if b"\0" in payload:
+            if not _is_allowed_binary_fixture(path):
+                findings.append(Finding(path, 0, "unallowlisted binary file"))
             continue
         try:
             text = payload.decode("utf-8")
         except UnicodeDecodeError:
+            if not _is_allowed_binary_fixture(path):
+                findings.append(Finding(path, 0, "unallowlisted non-UTF-8 file"))
             continue
         findings.extend(scan_text(path, text))
     return findings
