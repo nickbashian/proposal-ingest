@@ -74,7 +74,7 @@ db-down:
 db-reset:
 	$(PYTHON) scripts/dev.py db-reset
 
-.PHONY: app-check app-migrate app-run worker fixture-job
+.PHONY: app-check app-migrate app-run worker fixture-job fixture-slice
 app-check:
 	$(PYTHON) scripts/manage.py check
 	$(PYTHON) scripts/manage.py makemigrations --check --dry-run
@@ -90,5 +90,8 @@ worker:
 
 fixture-job:
 	$(PYTHON) scripts/manage.py fixture_job
+
+fixture-slice:
+	$(PYTHON) scripts/manage.py fixture_slice
 
 check: lint ruff spellcheck mypy secrets config-check app-check test browser-smoke

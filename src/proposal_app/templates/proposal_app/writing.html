@@ -1,0 +1,24 @@
+{% extends "proposal_app/base.html" %}{% block content %}
+<h1>{{ session.title }}</h1>
+<p><span class="label">{{ retrieval_label }}</span> <span class="label">{{ drafting_label }}</span></p>
+<section class="card">
+  <h2>Search factual evidence</h2>
+  <form method="get"><label>Query <input name="q" value="{{ query }}" size="45"></label> <button>Search local evidence</button></form>
+  {% for result in results %}<article class="card"><h3>{{ result.title }}</h3><p>{{ result.text }}</p><p class="muted">{{ result.locator_label }} · score {{ result.score }}</p><form method="post">{% csrf_token %}<input type="hidden" name="action" value="pin"><input type="hidden" name="artifact_id" value="{{ result.artifact_id }}"><input type="hidden" name="query" value="{{ query }}"><button>Pin factual evidence</button> <a href="{{ result.source_url }}">Open exact passage</a></form></article>{% empty %}{% if query %}<p>No eligible factual passages matched. Excluded and voice-only passages are not searched here.</p>{% endif %}{% endfor %}
+</section>
+<section>
+  <h2>Pinned evidence</h2>
+  <ul>{% for pin in pins %}<li>{{ pin.artifact.unit.version.source.display_path }} — {{ pin.artifact.unit.text }}</li>{% empty %}<li>No factual evidence pinned.</li>{% endfor %}</ul>
+</section>
+<section class="card">
+  <h2>Generate or regenerate</h2>
+  <form method="post">{% csrf_token %}<input type="hidden" name="action" value="generate"><label>Drafting request<textarea name="prompt" rows="3">Summarize the supported cycling result.</textarea></label><button>{% if latest %}Regenerate as a new revision{% else %}Generate deterministic draft{% endif %}</button></form>
+</section>
+{% if latest %}<section class="card">
+  <h2>Edit revision {{ latest.number }}</h2>
+  <p class="muted">{{ latest.model_revision|default:"User-edited revision" }}</p>
+  <form method="post">{% csrf_token %}<input type="hidden" name="action" value="edit"><input type="hidden" name="revision" value="{{ session.revision }}"><textarea name="text" rows="14">{{ latest.text }}</textarea><button>Save edit as new revision</button></form>
+  <form method="post" class="inline">{% csrf_token %}<input type="hidden" name="action" value="export"><button name="format" value="markdown">Export Markdown with source links</button> <button name="format" value="text">Export text with source links</button></form>
+</section>{% endif %}
+<section><h2>Revision history</h2><table><tr><th>Revision</th><th>Origin</th><th>Saved text</th></tr>{% for revision in revisions %}<tr><td>{{ revision.number }}</td><td>{{ revision.model_revision|default:"user edit" }}</td><td><pre>{{ revision.text }}</pre></td></tr>{% empty %}<tr><td colspan="3">No revisions yet.</td></tr>{% endfor %}</table></section>
+{% endblock %}

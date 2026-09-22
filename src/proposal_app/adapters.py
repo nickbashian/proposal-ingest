@@ -1,7 +1,10 @@
 """Provider-neutral interfaces. Only deterministic local execution is enabled here."""
 
+import json
+import re
 from dataclasses import dataclass
 from decimal import Decimal
+from pathlib import Path
 from typing import Iterable, Protocol
 
 from proposal_ingest.hashing import sha256_file
@@ -158,7 +161,122 @@ class FixtureAdapter:
         )
 
 
+class FixtureSliceAdapter:
+    """Load the repository-owned product-slice fixture without provider calls."""
+
+    def execute(self, payload: dict, *, idempotency_key: str) -> CallResult:
+        from django.conf import settings
+
+        path = Path(__file__).resolve().parents[2] / settings.APP["fixture_slice_path"]
+        try:
+            fixture = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+            raise ProviderFailure("fixture_unavailable") from exc
+        required = {
+            "key",
+            "title",
+            "display_path",
+            "text",
+            "locator",
+            "support_kind",
+            "initial_disposition",
+            "reason",
+        }
+        if (
+            not isinstance(fixture, dict)
+            or not isinstance(fixture.get("revision"), str)
+            or payload.get("fixture_revision") != fixture.get("revision")
+            or not isinstance(fixture.get("proposal"), str)
+            or not isinstance(fixture.get("family"), str)
+            or not isinstance(fixture.get("items"), list)
+            or any(
+                not isinstance(item, dict) or not required <= item.keys()
+                for item in fixture.get("items", [])
+            )
+        ):
+            raise ProviderFailure("fixture_invalid")
+        return CallResult(
+            {**fixture, "synthetic": True, "operation": idempotency_key},
+            Decimal("0"),
+            {"provider_calls": 0},
+        )
+
+
+class LocalRetrievalAdapter:
+    """Rank an application-filtered candidate set with deterministic lexical scoring."""
+
+    def __init__(self, candidates: list[dict]):
+        self.candidates = candidates
+
+    def retrieve(self, query: str, generations: list[str]) -> list[dict]:
+        terms = set(re.findall(r"[a-z0-9]+", query.casefold()))
+        if not terms:
+            return []
+        allowed_generations = set(generations)
+        ranked = []
+        for candidate in self.candidates:
+            if candidate["generation_id"] not in allowed_generations:
+                continue
+            searchable = f"{candidate['title']} {candidate['text']}".casefold()
+            score = sum(searchable.count(term) for term in terms)
+            if score:
+                ranked.append({**candidate, "score": score})
+        return sorted(ranked, key=lambda item: (-item["score"], item["artifact_id"]))
+
+
+class DeterministicDraftingAdapter:
+    """Create transparent local Markdown from a saved factual evidence packet."""
+
+    revision = "deterministic-local-v1"
+    evidence_start = "<!-- proposal-evidence:start -->"
+    evidence_end = "<!-- proposal-evidence:end -->"
+
+    @staticmethod
+    def _citation(item: dict) -> str:
+        locator = item["locator_label"]
+        return f"- {item['text']} " f"([Source: {item['title']} — {locator}]({item['source_url']}))"
+
+    def draft(self, packet: dict, prompt: str, *, idempotency_key: str) -> CallResult:
+        evidence = packet.get("evidence", [])
+        if not evidence or any(item.get("support_kind") != "factual" for item in evidence):
+            raise ProviderFailure("evidence_policy_block")
+        base_text = packet.get("base_text", "").strip()
+        prior_evidence = packet.get("prior_evidence", [])
+        if self.evidence_start in base_text and self.evidence_end in base_text:
+            before, remainder = base_text.split(self.evidence_start, 1)
+            _, after = remainder.split(self.evidence_end, 1)
+            base_text = (before + after).strip()
+        else:
+            removed_prior_citation = False
+            for item in prior_evidence:
+                citation = self._citation(item)
+                if citation in base_text:
+                    base_text = base_text.replace(citation, "", 1)
+                    removed_prior_citation = True
+            if removed_prior_citation:
+                base_text = base_text.replace("## Factual evidence", "", 1).strip()
+        body = (
+            f"{base_text}\n\n## Regeneration request\n\n{prompt.strip()}"
+            if base_text
+            else f"## Requested draft\n\n{prompt.strip()}"
+        )
+        citations = [self._citation(item) for item in evidence]
+        evidence_block = (
+            f"{self.evidence_start}\n## Factual evidence\n\n"
+            + "\n".join(citations)
+            + f"\n{self.evidence_end}"
+        )
+        text = body + "\n\n" + evidence_block + "\n"
+        return CallResult(
+            {"text": text, "operation": idempotency_key},
+            Decimal("0"),
+            {"provider_calls": 0},
+        )
+
+
 def adapter_for(kind: str):
-    if kind != "fixture":
-        raise ProviderFailure("adapter_disabled")
-    return FixtureAdapter()
+    if kind == "fixture":
+        return FixtureAdapter()
+    if kind == "fixture-slice":
+        return FixtureSliceAdapter()
+    raise ProviderFailure("adapter_disabled")

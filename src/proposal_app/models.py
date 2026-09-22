@@ -50,6 +50,8 @@ class SourceItem(Record):
     drive = models.CharField(max_length=200)
     item = models.CharField(max_length=500)
     display_path = models.TextField()
+    disposition = models.CharField(max_length=30, default="awaiting_decision")
+    disposition_reason = models.CharField(max_length=300, blank=True)
 
     class Meta:
         constraints = [
@@ -113,6 +115,7 @@ class ExtractedUnit(Record):
     key = models.CharField(max_length=200)
     locator = models.JSONField()
     text = models.TextField()
+    support_kind = models.CharField(max_length=30, default="factual")
 
     class Meta:
         constraints = [
@@ -174,6 +177,11 @@ class PublicationArtifact(Record):
     decision_event = models.ForeignKey(DecisionEvent, on_delete=models.PROTECT)
     blob = models.ForeignKey(ContentBlob, on_delete=models.PROTECT)
     eligible = models.BooleanField(default=False)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=["generation", "unit"], name="generation_unit_artifact")
+        ]
 
 
 class Job(Record):
@@ -268,6 +276,17 @@ class EvidencePacket(Record):
     session = models.ForeignKey(DraftSession, on_delete=models.PROTECT)
     payload = models.JSONField(default=list)
     policy_revision = models.CharField(max_length=100)
+
+
+class EvidencePin(Record):
+    session = models.ForeignKey(DraftSession, on_delete=models.PROTECT)
+    artifact = models.ForeignKey(PublicationArtifact, on_delete=models.PROTECT)
+    actor = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=["session", "artifact"], name="session_artifact_pin")
+        ]
 
 
 class DraftRevision(Record):

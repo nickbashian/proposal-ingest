@@ -5,6 +5,7 @@ from datetime import timedelta
 from decimal import Decimal
 
 from django.conf import settings
+from django.core.exceptions import PermissionDenied
 from django.db import transaction
 from django.db.models import Q, Sum
 from django.utils import timezone
@@ -178,6 +179,24 @@ def deliver(job_id):
     outbox = m.Outbox.objects.select_for_update().filter(job=job, delivered_at__isnull=True).first()
     if outbox is None or job.state != "delivering":
         return False
+    if job.kind == "fixture-slice":
+        from .workflow import deliver_fixture_import
+
+        try:
+            summary = deliver_fixture_import(job)
+        except (PermissionDenied, ValueError) as exc:
+            job.state = "failed"
+            job.stop_reason = (
+                "delivery_denied" if isinstance(exc, PermissionDenied) else "delivery_invalid"
+            )
+            job.result = {}
+            job.save(update_fields=["state", "stop_reason", "result"])
+            outbox.delivered_at = timezone.now()
+            outbox.save(update_fields=["delivered_at"])
+            m.AuditRecord.objects.create(action="job.delivery_failed", object_id=job.id)
+            return True
+        job.result = {**job.result, "import": summary}
+        job.save(update_fields=["result"])
     m.JobResult.objects.get_or_create(job=job, defaults={"value": job.result})
     outbox.delivered_at = timezone.now()
     outbox.save()
