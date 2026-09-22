@@ -74,4 +74,21 @@ db-down:
 db-reset:
 	$(PYTHON) scripts/dev.py db-reset
 
-check: lint ruff spellcheck mypy secrets config-check test browser-smoke
+.PHONY: app-check app-migrate app-run worker fixture-job
+app-check:
+	$(PYTHON) scripts/manage.py check
+	$(PYTHON) scripts/manage.py makemigrations --check --dry-run
+
+app-migrate:
+	$(PYTHON) scripts/manage.py migrate
+
+app-run:
+	$(PYTHON) scripts/manage.py runserver 127.0.0.1:8000
+
+worker:
+	$(PYTHON) scripts/manage.py worker
+
+fixture-job:
+	$(PYTHON) scripts/manage.py fixture_job
+
+check: lint ruff spellcheck mypy secrets config-check app-check test browser-smoke

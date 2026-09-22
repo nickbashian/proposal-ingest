@@ -67,3 +67,18 @@ synthesis:
   policies_path: null
   max_full_text_documents: 8
   max_full_text_chars_per_doc: 6000
+
+# Persistent application defaults. Live providers are intentionally unavailable in MVP-01.
+web_application:
+  fixture_source_root: "sample_data/fake_source_root/2025"
+  development_database_url: "postgresql://proposal_ingest:local-development-only@127.0.0.1:54329/proposal_ingest_dev"
+  session_seconds: 3600
+  request_max_bytes: 1048576
+  lease_seconds: 120
+  max_attempts: 3
+  backoff_seconds: 5
+  poll_seconds: 2
+  setup_limit_usd: "500"
+  monthly_limit_usd: "50"
+  job_limit_usd: "5"
+  fixture_reservation_usd: "0.01"

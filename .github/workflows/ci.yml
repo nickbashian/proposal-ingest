@@ -7,6 +7,18 @@ on:
 jobs:
   check:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:18.6-alpine3.24
+        env:
+          POSTGRES_DB: proposal_ingest_dev
+          POSTGRES_USER: proposal_ingest
+          POSTGRES_PASSWORD: local-development-only
+        ports:
+          - 54329:5432
+        options: >-
+          --health-cmd "pg_isready -U proposal_ingest -d proposal_ingest_dev"
+          --health-interval 2s --health-timeout 3s --health-retries 20
     permissions:
       contents: read
     env:

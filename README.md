@@ -88,6 +88,7 @@ winget install --exact --id ezwinports.make --scope user
 git clone https://github.com/nickbashian/proposal-ingest.git
 cd proposal-ingest
 py -3.13 scripts/dev.py bootstrap --with-browser
+make db-up
 make check
 make mock-run
 ```
@@ -99,6 +100,7 @@ Open a new terminal after the WinGet installation if `make` is not immediately o
 git clone https://github.com/nickbashian/proposal-ingest.git
 cd proposal-ingest
 python3.13 scripts/dev.py bootstrap --with-browser
+make db-up
 make check
 make mock-run
 ```
@@ -157,8 +159,12 @@ make browser-smoke  # local page only; no network
 ```
 
 Disposable database commands are `make db-up`, `make db-smoke`, `make db-down`, and the explicit
-destructive development-only cleanup `make db-reset`. MVP-01 owns application migrations; MVP-00's
-smoke test checks service health, restart persistence, and logical-backup output only.
+destructive development-only cleanup `make db-reset`. PostgreSQL is required for application tests.
+Run `make app-migrate`, `make fixture-job`, and `make app-run` to start the persistent application;
+run `make worker` in another terminal. Enable local sign-in explicitly in the process environment.
+See the [application operator guide](docs/mvp/implementation/MVP-01-OPERATIONS.md) for login,
+worker restart demo, production configuration, and backup/restore instructions. Application settings
+use process environment; the historical CLI's `.env` loading remains separate.
 
 VS Code workspace settings recommend the Code Spell Checker extension and keep spelling
 diagnostics at hint level so domain terms do not turn into noisy errors.

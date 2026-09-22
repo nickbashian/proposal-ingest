@@ -1,0 +1,6 @@
+{% extends "proposal_app/base.html" %}{% block content %}
+<h1>Job {{ job.key }}</h1><p>Status: <strong>{{ job.state }}</strong> · Attempts: {{ job.attempts }}</p><p>{{ job.stop_reason }}</p>
+<form method="post">{% csrf_token %}<button name="action" value="pause">Pause</button> <button name="action" value="resume">Resume</button> <button name="action" value="cancel">Cancel</button></form>
+<h2>Usage ledger</h2><table><tr><th>Attempt</th><th>Reserved USD</th><th>Accounted USD</th><th>Outcome</th></tr>{% for entry in usage %}<tr><td>{{ entry.attempt.number }}</td><td>{{ entry.reserved }}</td><td>{{ entry.charged }}</td><td>{{ entry.state }}</td></tr>{% empty %}<tr><td colspan="4">No calls dispatched.</td></tr>{% endfor %}</table>
+<h2>Result</h2><pre>{{ job.result }}</pre><p><a href="">Refresh status</a></p>
+{% endblock %}
