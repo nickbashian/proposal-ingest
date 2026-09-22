@@ -448,6 +448,8 @@ def run_checks() -> None:
         [python, "-m", "mypy", "src", "scripts"],
         [python, "scripts/scan_secrets.py"],
         [python, "scripts/dev.py", "config-check"],
+        [python, "scripts/manage.py", "check"],
+        [python, "scripts/manage.py", "makemigrations", "--check", "--dry-run"],
         [python, "-m", "pytest", "--basetemp", "tmp/pytest-basetemp-dev"],
         [python, "scripts/dev.py", "browser-smoke"],
     ]

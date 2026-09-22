@@ -1,4 +1,4 @@
-# Fully pinned Python 3.13 development environment for MVP-00.
+# Fully pinned Python 3.13 development environment for MVP-01.
 #
 # Regenerate deliberately after reviewing upgrades with:
 #   python -m pip install -e ".[dev]"
@@ -8,6 +8,17 @@
 
 annotated-doc==0.0.4
 annotated-types==0.7.0
+asgiref==3.12.1
+Authlib==1.8.0
+cffi==2.1.1
+cryptography==50.0.1
+Django==5.2.17
+joserfc==1.7.5
+psycopg==3.3.6
+psycopg-binary==3.3.6
+pycparser==3.0
+pytest-django==4.14.0
+sqlparse==0.6.0
 ast_serialize==0.5.0
 black==26.5.0
 boto3==1.43.9

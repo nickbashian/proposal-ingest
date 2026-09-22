@@ -1,0 +1,5 @@
+{% extends "proposal_app/base.html" %}{% block content %}
+<h1>Sign in</h1><p>Your collection and saved work require an authorized account.</p>
+<p><a href="/auth/start/">Sign in with Microsoft</a></p>
+{% if local_auth %}<section><h2>Local development</h2><form method="post" action="/auth/local/">{% csrf_token %}<label>Local identity <input name="subject" value="fixture-owner" required></label> <button>Sign in locally</button></form><small>Available only on this computer.</small></section>{% endif %}
+{% endblock %}

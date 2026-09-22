@@ -5,6 +5,10 @@ locked setup, browser/database smoke paths, and review guardrails. Authenticatio
 capabilities, billing, and production connections remain **unverified**;
 see `implementation/MVP-00.md` for dated evidence and exact pending owner actions.
 
+MVP-01 adds the Django/PostgreSQL application, OIDC boundary, durable worker, reservations,
+and local acceptance workflow. See `implementation/MVP-01.md` and `MVP-01-OPERATIONS.md` in
+the implementation directory. Live connections remain unverified; no deployment was provisioned.
+
 Use two status columns in the implementation report: **implemented/configured locally** and **verified in the live account**. Record date, evidence location, responsible person, and next action for anything pending. Keep credentials and sensitive account identifiers in private configuration, not this checklist or PR comments.
 
 ## Phase 0 installation and environment checklist

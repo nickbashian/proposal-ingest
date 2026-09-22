@@ -128,6 +128,14 @@ class RuntimeConfig(BaseModel):
     synthesis: SynthesisConfig = Field(default_factory=SynthesisConfig)
 
 
+def load_web_application_defaults() -> dict[str, Any]:
+    """Load web defaults without CLI path requirements or implicit .env loading."""
+    defaults = _load_yaml_config(DEFAULT_CONFIG_PATH).get("web_application")
+    if not isinstance(defaults, dict):
+        raise ValueError("web_application must be configured as a YAML mapping")
+    return dict(defaults)
+
+
 def load_runtime_config(
     config_path: str | Path | None = None,
     *,

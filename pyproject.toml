@@ -8,6 +8,10 @@ version = "0.1.0"
 description = "Local-first proposal archive ingestion and metadata pipeline"
 requires-python = ">=3.13,<3.14"
 dependencies = [
+  "Django>=5.2,<5.3",
+  "psycopg[binary]>=3.2,<4",
+  "Authlib>=1.6,<2",
+  "requests",
   "boto3",
   "botocore",
   "pydantic>=2",
@@ -23,6 +27,8 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
+  "pytest-django",
+  "joserfc>=1.6,<2",
   "black",
   "ruff",
   "codespell",
@@ -53,3 +59,7 @@ ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+DJANGO_SETTINGS_MODULE = "proposal_app.settings"
+
+[tool.setuptools.package-data]
+proposal_app = ["templates/**/*.html"]
