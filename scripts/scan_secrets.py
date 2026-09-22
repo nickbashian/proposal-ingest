@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import hashlib
 import re
 import subprocess
@@ -61,6 +62,10 @@ ASSIGNMENT_PATTERN = re.compile(
     r"\s*[:=]\s*(?:\"([^\"\r\n]{6,})\"|'([^'\r\n]{6,})'|([^\s#]{6,}))",
     re.IGNORECASE | re.MULTILINE,
 )
+SENSITIVE_NAME_PATTERN = re.compile(
+    r"(?:[A-Z0-9]+_)*(?:PASSWORD|PASSWD|SECRET|TOKEN|API_KEY|CLIENT_SECRET|SECRET_ACCESS_KEY|ACCESS_TOKEN|AUTH_TOKEN|BEARER_TOKEN)",
+    re.IGNORECASE,
+)
 SAFE_ASSIGNMENT_PATTERN = re.compile(
     r"(?:\$\{[A-Z0-9_]+\}|<[^>]+>|\*{6,}|"
     r"(?:change-me|example|placeholder|redacted)(?:[-_][A-Za-z0-9]+)*|"
@@ -101,19 +106,68 @@ def _is_safe_assignment(value: str) -> bool:
     return not value or SAFE_ASSIGNMENT_PATTERN.fullmatch(value) is not None
 
 
+def _python_constant_text(node: ast.expr) -> str | None:
+    if not isinstance(node, ast.Constant) or isinstance(node.value, (bool, type(None))):
+        return None
+    if isinstance(node.value, bytes):
+        return node.value.decode("utf-8", errors="replace")
+    if isinstance(node.value, (str, int, float, complex)):
+        return str(node.value)
+    return None
+
+
+def _python_target_names(node: ast.expr) -> list[str]:
+    if isinstance(node, ast.Name):
+        return [node.id]
+    if isinstance(node, ast.Attribute):
+        return [node.attr]
+    if isinstance(node, (ast.Tuple, ast.List)):
+        return [name for item in node.elts for name in _python_target_names(item)]
+    return []
+
+
+def _scan_python_constant_assignments(path: Path, text: str) -> list[Finding]:
+    try:
+        tree = ast.parse(text)
+    except SyntaxError:
+        return []
+    findings: list[Finding] = []
+    for node in ast.walk(tree):
+        targets: list[ast.expr]
+        value_node: ast.expr | None
+        if isinstance(node, ast.Assign):
+            targets = node.targets
+            value_node = node.value
+        elif isinstance(node, ast.AnnAssign):
+            targets = [node.target]
+            value_node = node.value
+        else:
+            continue
+        if value_node is None:
+            continue
+        value = _python_constant_text(value_node)
+        if value is None or len(value) < 6 or _is_safe_assignment(value):
+            continue
+        names = [name for target in targets for name in _python_target_names(target)]
+        if any(SENSITIVE_NAME_PATTERN.fullmatch(name) for name in names):
+            findings.append(Finding(path, node.lineno, "non-placeholder secret assignment"))
+    return findings
+
+
 def scan_text(path: Path, text: str) -> list[Finding]:
     """Return likely-secret findings for decoded repository text."""
 
-    findings: list[Finding] = []
+    is_python = path.suffix.casefold() == ".py"
+    findings = _scan_python_constant_assignments(path, text) if is_python else []
     for number, line in enumerate(text.splitlines(), start=1):
         for kind, pattern in SECRET_PATTERNS.items():
             if pattern.search(line):
                 findings.append(Finding(path, number, kind))
-        for assignment in ASSIGNMENT_PATTERN.finditer(line):
-            value = assignment.group(1) or assignment.group(2) or assignment.group(3)
-            is_python_expression = path.suffix.casefold() == ".py" and assignment.group(3)
-            if not is_python_expression and not _is_safe_assignment(value):
-                findings.append(Finding(path, number, "non-placeholder secret assignment"))
+        if not is_python:
+            for assignment in ASSIGNMENT_PATTERN.finditer(line):
+                value = assignment.group(1) or assignment.group(2) or assignment.group(3)
+                if not _is_safe_assignment(value):
+                    findings.append(Finding(path, number, "non-placeholder secret assignment"))
         for match in URI_CREDENTIAL_PATTERN.finditer(line):
             if match.group(0) != ALLOWED_LOOPBACK_CREDENTIAL_URI:
                 findings.append(Finding(path, number, "credential in URI user-info"))

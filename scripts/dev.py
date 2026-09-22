@@ -375,9 +375,22 @@ def bootstrap(*, with_browser: bool) -> None:
     _assert_safe_checkout()
     _configure_browser_cache()
     launcher = _python_launcher()
-    if not _venv_python().exists():
+    venv_python = _venv_python()
+    if venv_python.exists():
+        probe = _run(
+            [
+                str(venv_python),
+                "-c",
+                "import sys; raise SystemExit(sys.version_info[:2] != (3, 13))",
+            ]
+        )
+        if probe.returncode:
+            raise RuntimeError(
+                "Existing .venv does not use Python 3.13; remove .venv and rerun bootstrap."
+            )
+    else:
         subprocess.run([*launcher, "-m", "venv", str(VENV)], cwd=ROOT, check=True)
-    python = str(_venv_python())
+    python = str(venv_python)
     subprocess.run([python, "-m", "pip", "install", "--requirement", str(LOCK_FILE)], check=True)
     subprocess.run(
         [
@@ -433,7 +446,7 @@ def run_checks() -> None:
         [python, "-m", "mypy", "src", "scripts"],
         [python, "scripts/scan_secrets.py"],
         [python, "scripts/dev.py", "config-check"],
-        [python, "-m", "pytest", "--basetemp", "tmp/pytest-basetemp-dev"],
+        [python, "-m", "pytest", "--basetemp", ".pytest-basetemp-dev"],
         [python, "scripts/dev.py", "browser-smoke"],
     ]
     for command in commands:
@@ -607,7 +620,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             db_down(volumes=False)
         elif args.command == "db-reset":
             db_down(volumes=True)
-    except (OSError, RuntimeError, subprocess.SubprocessError) as exc:
+    except (OSError, RuntimeError, ValueError, subprocess.SubprocessError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 1
     return 0

@@ -72,6 +72,24 @@ def test_secret_scanner_detects_aws_secret_access_key_assignment(tmp_path: Path)
     assert [finding.kind for finding in findings] == ["non-placeholder secret assignment"]
 
 
+def test_secret_scanner_detects_python_constant_assignments(tmp_path: Path) -> None:
+    source = '''
+api_key = 123456
+auth_token = b"fictional-byte-secret"
+client_secret = """fictional
+multiline secret"""
+password = load_from_environment()
+'''
+
+    findings = scan_secrets.scan_text(tmp_path / "settings.py", source)
+
+    assert [(finding.line, finding.kind) for finding in findings] == [
+        (2, "non-placeholder secret assignment"),
+        (3, "non-placeholder secret assignment"),
+        (4, "non-placeholder secret assignment"),
+    ]
+
+
 def test_secret_scanner_rejects_remote_uri_credentials_but_allows_local_fixture(
     tmp_path: Path,
 ) -> None:
@@ -272,6 +290,8 @@ def test_dev_check_includes_config_validation(monkeypatch: pytest.MonkeyPatch) -
     config_command = next(command for command in calls if command[-1] == "config-check")
     pytest_command = next(command for command in calls if "pytest" in command)
     assert calls.index(config_command) < calls.index(pytest_command)
+    basetemp = Path(pytest_command[pytest_command.index("--basetemp") + 1])
+    assert basetemp.parent == Path(".")
 
 
 def test_bootstrap_refuses_onedrive_checkout(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -279,6 +299,39 @@ def test_bootstrap_refuses_onedrive_checkout(monkeypatch: pytest.MonkeyPatch) ->
 
     with pytest.raises(RuntimeError, match="under OneDrive"):
         dev._assert_safe_checkout()
+
+
+def test_bootstrap_rejects_existing_non_313_environment(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    python = tmp_path / "python"
+    python.write_text("placeholder", encoding="utf-8")
+    monkeypatch.setattr(dev, "_assert_safe_checkout", lambda: None)
+    monkeypatch.setattr(dev, "_configure_browser_cache", lambda: tmp_path)
+    monkeypatch.setattr(dev, "_python_launcher", lambda: ["python3.13"])
+    monkeypatch.setattr(dev, "_venv_python", lambda: python)
+    monkeypatch.setattr(
+        dev,
+        "_run",
+        lambda command, **kwargs: CompletedProcess(command, 1, "", "wrong version"),
+    )
+
+    with pytest.raises(RuntimeError, match="remove .venv and rerun bootstrap"):
+        dev.bootstrap(with_browser=False)
+
+
+def test_config_cli_handles_malformed_env_without_traceback(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    env_file = tmp_path / "malformed.env"
+    env_file.write_text("DUPLICATE=value\nDUPLICATE=again\n", encoding="utf-8")
+
+    result = dev.main(["config-check", "--path", str(env_file)])
+
+    captured = capsys.readouterr()
+    assert result == 1
+    assert "empty or duplicate key" in captured.err
+    assert "Traceback" not in captured.err
 
 
 def test_config_validation_rejects_local_auth_in_production() -> None:
