@@ -9,6 +9,10 @@ MVP-01 adds the Django/PostgreSQL application, OIDC boundary, durable worker, re
 and local acceptance workflow. See `implementation/MVP-01.md` and `MVP-01-OPERATIONS.md` in
 the implementation directory. Live connections remain unverified; no deployment was provisioned.
 
+MVP-02 adds the worker-loaded synthetic family and complete local review-to-export product slice.
+See `implementation/MVP-02.md` and `MVP-02-OPERATIONS.md`. It needs no live credential and makes no
+provider call; all connection statuses below remain unchanged.
+
 Use two status columns in the implementation report: **implemented/configured locally** and **verified in the live account**. Record date, evidence location, responsible person, and next action for anything pending. Keep credentials and sensitive account identifiers in private configuration, not this checklist or PR comments.
 
 ## Phase 0 installation and environment checklist

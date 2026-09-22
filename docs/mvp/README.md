@@ -81,6 +81,7 @@ Each PR receives a focused handoff, a small internal implementation plan, tests 
 
 ## Current status
 
-Planning is complete. MVP-00 implementation evidence is maintained in
-`docs/mvp/implementation/MVP-00.md`; later MVPs remain not started until their dependencies merge.
-No cloud resources or private-data connections are created by MVP-00.
+Planning is complete. MVP-00 and MVP-01 are merged; their implementation evidence is maintained in
+`docs/mvp/implementation/`. MVP-02's local product-slice implementation and demo are recorded there
+for its review boundary. No cloud resource, private-data connection, or paid provider call is
+created by MVP-02.
