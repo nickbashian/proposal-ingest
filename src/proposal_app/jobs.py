@@ -42,6 +42,7 @@ def claim():
         )
     if job.attempts >= settings.APP["max_attempts"]:
         job.state, job.stop_reason = "failed", "attempt_limit"
+        job.lease_token, job.lease_until = None, None
         job.save()
         return None
     job.attempts += 1

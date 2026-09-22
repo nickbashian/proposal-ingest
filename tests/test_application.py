@@ -281,6 +281,9 @@ def test_budget_retry_unknown_and_late_cancellation(actors):
     assert jobs.reserve(attempt.id, ".02")
     assert jobs.reserve(attempt.id, ".02") is None
     services.control_job(actors[0], job.id, "cancel")
+    attempt.refresh_from_db()
+    assert attempt.state == "canceled" and attempt.finished_at is not None
+    assert m.UsageReservation.objects.get(attempt=attempt).state == "unknown"
     assert not jobs.finish(attempt.id, result=result(".01"))
     assert not jobs.deliver(job.id)
     assert not m.JobResult.objects.exists()

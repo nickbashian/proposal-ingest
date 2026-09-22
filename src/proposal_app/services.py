@@ -79,6 +79,13 @@ def control_job(user, job_id, action):
         if action == "pause" and job.state != "paused":
             job.resume_state = job.state
         job.state = "paused" if action == "pause" else "canceled"
+    if job.lease_token:
+        m.Attempt.objects.filter(token=job.lease_token, state__in=["claimed", "dispatched"]).update(
+            state=job.state, finished_at=timezone.now()
+        )
+        m.UsageReservation.objects.filter(attempt__token=job.lease_token, state="reserved").update(
+            state="unknown"
+        )
     job.lease_token = None
     job.lease_until = None
     job.save()
