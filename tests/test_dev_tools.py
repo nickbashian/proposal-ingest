@@ -276,7 +276,9 @@ def test_mock_run_is_forced_to_synthetic_source_and_mock_mode(
     assert command[-1] == "--mock-bedrock"
 
 
-def test_dev_check_includes_config_validation(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_dev_check_includes_config_validation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     calls: list[list[str]] = []
 
     def fake_subprocess_run(command: list[str], **_: object) -> CompletedProcess[str]:
@@ -284,6 +286,7 @@ def test_dev_check_includes_config_validation(monkeypatch: pytest.MonkeyPatch) -
         return CompletedProcess(command, 0, "", "")
 
     monkeypatch.setattr(dev.subprocess, "run", fake_subprocess_run)
+    monkeypatch.setattr(dev, "ROOT", tmp_path)
 
     dev.run_checks()
 
@@ -291,7 +294,8 @@ def test_dev_check_includes_config_validation(monkeypatch: pytest.MonkeyPatch) -
     pytest_command = next(command for command in calls if "pytest" in command)
     assert calls.index(config_command) < calls.index(pytest_command)
     basetemp = Path(pytest_command[pytest_command.index("--basetemp") + 1])
-    assert basetemp.parent == Path(".")
+    assert basetemp.parent == Path("tmp")
+    assert (tmp_path / "tmp").is_dir()
 
 
 def test_bootstrap_refuses_onedrive_checkout(monkeypatch: pytest.MonkeyPatch) -> None:

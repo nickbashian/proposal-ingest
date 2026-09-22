@@ -438,6 +438,7 @@ def browser_smoke() -> None:
 def run_checks() -> None:
     """Run the same no-network, no-provider checks used by CI."""
 
+    (ROOT / "tmp").mkdir(parents=True, exist_ok=True)
     python = str(_venv_python() if _venv_python().exists() else Path(sys.executable))
     commands = [
         [python, "-m", "black", "--check", "src", "tests", "scripts"],
@@ -446,7 +447,7 @@ def run_checks() -> None:
         [python, "-m", "mypy", "src", "scripts"],
         [python, "scripts/scan_secrets.py"],
         [python, "scripts/dev.py", "config-check"],
-        [python, "-m", "pytest", "--basetemp", ".pytest-basetemp-dev"],
+        [python, "-m", "pytest", "--basetemp", "tmp/pytest-basetemp-dev"],
         [python, "scripts/dev.py", "browser-smoke"],
     ]
     for command in commands:

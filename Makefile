@@ -53,6 +53,7 @@ mypy:
 	$(PYTHON) -m mypy src scripts
 
 test:
+	$(PYTHON) -c "from pathlib import Path; Path('tmp').mkdir(parents=True, exist_ok=True)"
 	$(PYTHON) -m pytest $(PYTEST_ARGS)
 
 browser-smoke:
