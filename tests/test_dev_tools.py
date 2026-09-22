@@ -80,6 +80,18 @@ def test_secret_scanner_detects_aws_secret_access_key_assignment(tmp_path: Path)
     assert [finding.kind for finding in findings] == ["non-placeholder secret assignment"]
 
 
+def test_secret_scanner_detects_docker_auth_config_assignments(tmp_path: Path) -> None:
+    value = "fictional-registry-credential"
+
+    text_findings = scan_secrets.scan_text(tmp_path / "settings.env", f"DOCKER_AUTH_CONFIG={value}")
+    python_findings = scan_secrets.scan_text(
+        tmp_path / "settings.py", f'DOCKER_AUTH_CONFIG = "{value}"'
+    )
+
+    assert [finding.kind for finding in text_findings] == ["non-placeholder secret assignment"]
+    assert [finding.kind for finding in python_findings] == ["non-placeholder secret assignment"]
+
+
 @pytest.mark.parametrize("key", ["apiKey", "clientSecret", "accessToken", "authToken"])
 def test_secret_scanner_detects_camel_case_assignment_keys(tmp_path: Path, key: str) -> None:
     findings = scan_secrets.scan_text(
