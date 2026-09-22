@@ -30,6 +30,43 @@ make db-smoke             # disposable PostgreSQL service smoke test
 
 After every code change, run `make check` to verify CI would pass.
 
+### Windows PATH behavior in Codex tasks
+
+Codex command shells inherit the app's process environment. A task opened before a tool was
+installed or before the user PATH changed can report that `make`, `py`, `python`, `winget`, or `cr`
+is missing even though the tool is installed and works in a newly opened terminal. Do not reinstall
+or declare setup broken based only on `Get-Command` in that stale shell.
+
+First compare the inherited PATH with the current persistent Windows paths and refresh it in the
+task shell:
+
+```powershell
+$machinePath = [Environment]::GetEnvironmentVariable('Path', 'Machine')
+$userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
+$env:Path = "$machinePath;$userPath"
+Get-Command make, py, python, cr -All -ErrorAction SilentlyContinue
+```
+
+If the refreshed shell still cannot resolve Python, use the repository environment directly. This
+also avoids launcher and PATH ambiguity:
+
+```powershell
+& '.venv\Scripts\python.exe' scripts/dev.py diagnose
+& '.venv\Scripts\python.exe' scripts/dev.py check  # CI-equivalent fallback for make check
+```
+
+For first-time bootstrap, the normal `py -3.13` command remains preferred. A standard per-user
+Python installation can be invoked without a username-specific path when the launcher is stale:
+
+```powershell
+$python313 = Join-Path $env:LOCALAPPDATA 'Programs\Python\Python313\python.exe'
+& $python313 scripts/dev.py bootstrap --with-browser
+```
+
+CodeRabbit's standard per-user executable is similarly available at
+`$env:LOCALAPPDATA\Programs\coderabbit\cr.exe`. Open a new Codex task or restart the app when a
+freshly installed executable must be resolved normally in all subsequent commands.
+
 ## Architecture
 
 - **Python owns all orchestration** — Bedrock is a dumb model endpoint only; no tool use, no orchestration on the model side.
