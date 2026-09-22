@@ -430,6 +430,7 @@ def run_checks() -> None:
         [python, "-m", "codespell_lib"],
         [python, "-m", "mypy", "src", "scripts"],
         [python, "scripts/scan_secrets.py"],
+        [python, "scripts/dev.py", "config-check"],
         [python, "-m", "pytest", "--basetemp", "tmp/pytest-basetemp-dev"],
         [python, "scripts/dev.py", "browser-smoke"],
     ]

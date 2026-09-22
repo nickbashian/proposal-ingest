@@ -34,6 +34,20 @@ def test_secret_scanner_requires_an_entire_placeholder_value(tmp_path: Path) -> 
     assert [finding.kind for finding in findings] == ["non-placeholder secret assignment"]
 
 
+def test_secret_scanner_rejects_remote_uri_credentials_but_allows_local_fixture(
+    tmp_path: Path,
+) -> None:
+    remote = "postgresql://" + "service:super-secret@db.example.com:5432/proposals"
+
+    remote_findings = scan_secrets.scan_text(tmp_path / "remote.env", remote)
+    local_findings = scan_secrets.scan_text(
+        tmp_path / ".env.example", scan_secrets.ALLOWED_LOOPBACK_CREDENTIAL_URI
+    )
+
+    assert [finding.kind for finding in remote_findings] == ["credential in URI user-info"]
+    assert local_findings == []
+
+
 def test_secret_scanner_rejects_private_artifact_path(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -183,6 +197,22 @@ def test_mock_run_is_forced_to_synthetic_source_and_mock_mode(
     )
     assert command[command.index("--output-root") + 1] == str((tmp_path / "output").resolve())
     assert command[-1] == "--mock-bedrock"
+
+
+def test_dev_check_includes_config_validation(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[list[str]] = []
+
+    def fake_subprocess_run(command: list[str], **_: object) -> CompletedProcess[str]:
+        calls.append(command)
+        return CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr(dev.subprocess, "run", fake_subprocess_run)
+
+    dev.run_checks()
+
+    config_command = next(command for command in calls if command[-1] == "config-check")
+    pytest_command = next(command for command in calls if "pytest" in command)
+    assert calls.index(config_command) < calls.index(pytest_command)
 
 
 def test_bootstrap_refuses_onedrive_checkout(monkeypatch: pytest.MonkeyPatch) -> None:

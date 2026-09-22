@@ -35,6 +35,12 @@ SECRET_PATTERNS = {
     "Slack token": re.compile(r"\bxox[baprs]-[A-Za-z0-9-]{20,}\b"),
     "private key": re.compile(r"-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----"),
 }
+URI_CREDENTIAL_PATTERN = re.compile(
+    r"\b[a-z][a-z0-9+.-]*://[^\s/:@]+:[^\s/@]+@[^\s\"']+", re.IGNORECASE
+)
+ALLOWED_LOOPBACK_CREDENTIAL_URI = "://".join(
+    ("postgresql", "proposal_ingest:local-development-only@127.0.0.1:54329/proposal_ingest_dev")
+)
 ASSIGNMENT_PATTERN = re.compile(
     r"\b(?:[A-Z0-9]+_)*(?:PASSWORD|PASSWD|SECRET|TOKEN|API_KEY|CLIENT_SECRET|ACCESS_TOKEN|AUTH_TOKEN|BEARER_TOKEN)\b"
     r"\s*[:=]\s*[\"']?([A-Za-z0-9][A-Za-z0-9+/_=.-]{5,})"
@@ -90,6 +96,9 @@ def scan_text(path: Path, text: str) -> list[Finding]:
         assignment = ASSIGNMENT_PATTERN.search(line)
         if assignment and not _is_safe_assignment(assignment.group(1)):
             findings.append(Finding(path, number, "non-placeholder secret assignment"))
+        for match in URI_CREDENTIAL_PATTERN.finditer(line):
+            if match.group(0) != ALLOWED_LOOPBACK_CREDENTIAL_URI:
+                findings.append(Finding(path, number, "credential in URI user-info"))
     return findings
 
 
