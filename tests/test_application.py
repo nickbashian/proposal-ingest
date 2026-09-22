@@ -163,6 +163,12 @@ def test_local_login_loopback_logout_and_csrf(actors, settings):
     assert client.get("/").status_code == 200
     assert client.post("/logout/").status_code == 302
     assert client.get("/").status_code == 401
+    assert (
+        client.post(
+            "/auth/local/", {"subject": "alice"}, HTTP_HOST="[::1]:8000", REMOTE_ADDR="::1"
+        ).status_code
+        == 302
+    )
     settings.MODE = "production"
     assert (
         client.post("/auth/local/", {"subject": "alice"}, HTTP_HOST="localhost").status_code == 403
@@ -391,6 +397,21 @@ def test_pause_resume_completed_call_does_not_repeat_dispatch(actors):
     assert job.attempts == 1
 
 
+def test_success_clears_old_error_and_canceled_result_is_hidden(actors):
+    job = new_job(actors)
+    m.Job.objects.filter(pk=job.id).update(stop_reason="old-timeout")
+    attempt = jobs.claim()
+    jobs.reserve(attempt.id, ".01")
+    jobs.finish(attempt.id, result=CallResult({"text": "unpublished-result"}, Decimal(0), {}))
+    client = Client()
+    client.force_login(actors[0])
+    assert b"unpublished-result" not in client.get(f"/jobs/{job.id}/").content
+    assert jobs.deliver(job.id)
+    job.refresh_from_db()
+    assert job.stop_reason == ""
+    assert b"unpublished-result" in client.get(f"/jobs/{job.id}/").content
+
+
 def test_legacy_import_is_read_only_and_idempotent(actors, tmp_path):
     path = tmp_path / "legacy.jsonl"
     raw = json.dumps(
@@ -501,9 +522,13 @@ def test_decision_optimistic_append_and_eligibility(actors):
     generation = m.PublicationGeneration.objects.create(
         proposal=family.proposal, revision=1, state="active"
     )
-    artifact = m.PublicationArtifact.objects.create(
-        generation=generation, unit=unit, decision_event=event, blob=version.blob, eligible=True
+    curated_blob = m.ContentBlob.objects.create(
+        sha256=hashlib.sha256(b"curated excerpt").hexdigest(), size=len(b"curated excerpt")
     )
+    artifact = m.PublicationArtifact.objects.create(
+        generation=generation, unit=unit, decision_event=event, blob=curated_blob, eligible=True
+    )
+    assert artifact.blob_id != unit.version.blob_id
     assert services.eligible_artifacts(alice, collection.id, [artifact.id]).count() == 1
     m.PublicationArtifact.objects.filter(pk=artifact.id).update(eligible=False)
     assert not services.eligible_artifacts(alice, collection.id, [artifact.id]).exists()
@@ -565,6 +590,43 @@ def test_local_storage_immutable_and_rejects_bad_keys(tmp_path):
     (storage.root / digest).write_bytes(b"corrupted")
     with pytest.raises(ValueError):
         storage.get(digest)
+
+
+def test_storage_synchronizes_parent_and_installed_object(tmp_path, monkeypatch):
+    from proposal_app import storage as module
+
+    root = tmp_path / "nested" / "objects"
+    content = b"synthetic durable object"
+    digest = hashlib.sha256(content).hexdigest()
+    calls = []
+    original = module._sync_directory
+
+    def observe(path):
+        calls.append((path, (root / digest).exists()))
+        original(path)
+
+    monkeypatch.setattr(module, "_sync_directory", observe)
+    store = LocalObjectStorage(root)
+    store.put_immutable(digest, content)
+    assert (tmp_path, False) in calls
+    assert calls[-1] == (root, True)
+    calls.clear()
+    store.put_immutable(digest, content)
+    assert calls == [(root, True)]
+    monkeypatch.setattr(module, "DIRECTORY_FSYNC", False)
+    with pytest.raises(ValueError):
+        LocalObjectStorage(root, require_durable=True)
+
+
+def test_fixture_command_rejects_existing_nonlocal_identity():
+    user = get_user_model().objects.create_user(username="fixture-owner")
+    m.Identity.objects.create(
+        user=user, issuer="https://identity.example.test", subject="not-local", allowed=True
+    )
+    with pytest.raises(CommandError):
+        call_command("fixture_job")
+    assert not m.Job.objects.exists()
+    assert not m.CollectionAccess.objects.exists()
 
 
 @pytest.mark.parametrize(

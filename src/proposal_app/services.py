@@ -171,7 +171,9 @@ def observe_source(
     source.display_path = path
     source.save(update_fields=["display_path"])
     digest = hashlib.sha256(content).hexdigest()
-    key = LocalObjectStorage(settings.LOCAL_STORAGE_ROOT).put_immutable(digest, content)
+    key = LocalObjectStorage(
+        settings.LOCAL_STORAGE_ROOT, require_durable=settings.MODE == "production"
+    ).put_immutable(digest, content)
     blob, _ = m.ContentBlob.objects.get_or_create(
         sha256=digest, defaults={"size": len(content), "storage_key": key}
     )

@@ -167,6 +167,8 @@ class PublicationGeneration(Record):
 
 
 class PublicationArtifact(Record):
+    """Curated bytes have their own blob; units reference the original source version."""
+
     generation = models.ForeignKey(PublicationGeneration, on_delete=models.PROTECT)
     unit = models.ForeignKey(ExtractedUnit, on_delete=models.PROTECT)
     decision_event = models.ForeignKey(DecisionEvent, on_delete=models.PROTECT)

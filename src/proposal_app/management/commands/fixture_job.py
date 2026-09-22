@@ -18,9 +18,17 @@ class Command(BaseCommand):
         user, _ = get_user_model().objects.get_or_create(username="fixture-owner")
         user.set_unusable_password()
         user.save()
-        m.Identity.objects.get_or_create(
+        identity, _ = m.Identity.objects.get_or_create(
             user=user, defaults={"issuer": "local", "subject": "fixture-owner", "allowed": True}
         )
+        if (
+            identity.issuer != "local"
+            or identity.subject != "fixture-owner"
+            or not identity.allowed
+        ):
+            raise CommandError(
+                "Existing fixture identity is different or revoked; operator action required"
+            )
         collection, _ = m.Collection.objects.get_or_create(name="Synthetic foundation")
         m.CollectionAccess.objects.get_or_create(collection=collection, user=user)
         job = services.create_job(user, collection.id, "fixture-" + uuid.uuid4().hex)

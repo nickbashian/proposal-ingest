@@ -181,6 +181,7 @@ def deliver(job_id):
     outbox.delivered_at = timezone.now()
     outbox.save()
     job.state = "succeeded"
+    job.stop_reason = ""
     job.save()
     m.AuditRecord.objects.create(action="job.completed", object_id=job.id)
     return True

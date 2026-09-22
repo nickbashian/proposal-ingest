@@ -5,12 +5,12 @@ from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from urllib.parse import parse_qsl, unquote, urlparse
 
-import yaml
 from django.core.exceptions import ImproperlyConfigured
 
+from proposal_ingest.config import load_web_application_defaults
+
 ROOT = Path(__file__).resolve().parents[2]
-with (ROOT / "config/default_config.yaml").open(encoding="utf-8") as stream:
-    APP = yaml.safe_load(stream)["web_application"]
+APP = load_web_application_defaults()
 
 MODE = os.environ.get("PROPOSAL_APP_ENV", "local")
 LOCAL_AUTH = os.environ.get("PROPOSAL_LOCAL_AUTH_ENABLED", "false").lower() == "true"

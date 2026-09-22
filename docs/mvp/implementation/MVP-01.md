@@ -25,7 +25,7 @@ existing default YAML. Legacy JSONL stays behind a read-only import service.
 | 01-D | Atomic per-attempt/global setup/month/job reservations, unknown outcome retention, late reconciliation, bounded retries, invalid-cost rejection, disabled live adapters | Real provider billing and quotas pending |
 | 01-E | Database services own state; read-only idempotent legacy import retains corrections, deterministic local handler, documented Graph/Bedrock error-shape tests, application eligibility boundary | SharePoint/Bedrock/S3/Managed KB/drafting implementations belong to later cards |
 
-Local `make check` passed: **407 tests**, Black, Ruff, codespell, mypy, secret/private-artifact
+Local `make check` passed: **410 tests**, Black, Ruff, codespell, mypy, secret/private-artifact
 scanner, configuration validation, Django system checks, migration drift check, and Chromium smoke.
 Fresh development migrations and fixture job completion also passed. Review and hosted CI
 dispositions are finalized in the PR. Test suites:
@@ -53,6 +53,20 @@ is recorded on PR #15 rather than inferred from the initial review.
   instructions deliberately use the nonsynced `.codex` cache. Explicit overrides still work.
 - Additional author checks corrected documented Bedrock 408/424 unknown-outcome accounting and
   preserved the completed-call delivery stage across repeated pause/resume without redispatch.
+- CodeRabbit's second review requested directory synchronization for immutable object installation.
+  POSIX storage now synchronizes newly created parent entries and the installed object directory,
+  including concurrent-existing-object cases. Windows remains development-only for this adapter's
+  process-restart guarantee; production writes require POSIX directory synchronization.
+- Supplemental Copilot findings: fixed IPv6 local login, stale success messages, existing fixture
+  identity validation, and shared YAML loading through `proposal_ingest.config`. Pending delivery
+  is already preserved across pause/resume; unpublished results are hidden in the job screen.
+  Declined source/artifact blob equality because curated excerpts must differ from original bytes;
+  the provenance test explicitly exercises that required separation.
+
+Development database evidence: a private logical backup preceded additive migrations 0003/0004.
+After restarting/recreating the PostgreSQL container with its retained volume, the database still
+held one succeeded fixture job, one JobResult, and one usage reservation. The running loopback demo
+returned HTTP 200 for login and HTTP 401 for the anonymous collection route.
 
 ## Remaining connections and handoff
 

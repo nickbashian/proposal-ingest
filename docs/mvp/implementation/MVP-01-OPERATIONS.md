@@ -115,6 +115,10 @@ memberships. The local storage adapter verifies hashes and installs completed fi
 without overwriting existing bytes. Configure `PROPOSAL_LOCAL_STORAGE_ROOT` outside source roots;
 the default is ignored `tmp/app_storage`. Back up this directory alongside the database. A database
 rollback can leave an unreferenced immutable object; no automatic deletion is performed.
+Production local storage requires a POSIX filesystem with directory fsync: object installation and
+new parent directories are synchronized before the database can commit. Windows is supported for
+development process restart testing, but its local adapter does not claim power-loss durability and
+refuses production writes. The planned Linux deployment meets this platform contract.
 ExtractedUnit binds its locator to one source version and extractor revision. Database triggers
 prevent parent/owner reassignment and history mutation, and validate cross-session packets,
 membership collections, and publication provenance. Decision events are append-only with optimistic

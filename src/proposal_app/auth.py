@@ -1,6 +1,7 @@
 """OIDC signature/issuer/audience/nonce verification through maintained Authlib."""
 
 import ipaddress
+from urllib.parse import urlsplit
 
 from authlib.integrations.django_client import OAuth
 from django.conf import settings
@@ -104,12 +105,12 @@ def local_login(request):
         loopback = ipaddress.ip_address(request.META.get("REMOTE_ADDR", "")).is_loopback
     except ValueError:
         loopback = False
-    host = request.get_host().split(":")[0]
+    host = urlsplit("//" + request.get_host()).hostname
     if (
         settings.MODE != "local"
         or not settings.LOCAL_AUTH
         or not loopback
-        or host not in {"127.0.0.1", "localhost"}
+        or host not in {"127.0.0.1", "localhost", "::1"}
     ):
         return HttpResponse("Local sign-in disabled", status=403)
     identity = Identity.objects.filter(
