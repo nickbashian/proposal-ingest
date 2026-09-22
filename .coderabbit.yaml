@@ -1,0 +1,24 @@
+language: en-US
+early_access: false
+
+reviews:
+  profile: assertive
+  request_changes_workflow: false
+  path_filters:
+    - "!source_documents/**"
+    - "!processed_output/**"
+    - "!proposal-assistant-output/**"
+    - "!logs/**"
+    - "!private_data/**"
+    - "!private_evaluations/**"
+    - "!private_screenshots/**"
+    - "!raw_model_responses/**"
+    - "!db_dumps/**"
+    - "!**/*.dump"
+    - "!**/*.sql.gz"
+    - "!**/*.tfstate"
+    - "!**/*.tfstate.*"
+  auto_review:
+    enabled: true
+    auto_incremental_review: true
+    drafts: false

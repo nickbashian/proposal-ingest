@@ -1,0 +1,507 @@
+import hashlib
+from pathlib import Path
+from subprocess import CompletedProcess
+
+import pytest
+
+from scripts import dev, scan_secrets
+
+
+def test_secret_scanner_accepts_placeholders_and_rejects_credentials(tmp_path: Path) -> None:
+    safe = scan_secrets.scan_text(
+        tmp_path / ".env.example", "CLIENT_SECRET=<set-in-secret-store>\n"
+    )
+    access_key = "AKIA" + "A" * 16
+    unsafe = scan_secrets.scan_text(tmp_path / "settings.env", f"AWS_ACCESS_KEY_ID={access_key}\n")
+
+    assert safe == []
+    assert [finding.kind for finding in unsafe] == ["AWS access key"]
+
+
+def test_secret_scanner_detects_stateless_github_installation_token(tmp_path: Path) -> None:
+    token = "ghs_" + "12345" + "_" + "header.payload.signature"
+
+    findings = scan_secrets.scan_text(tmp_path / "settings.env", f"TOKEN={token}\n")
+
+    assert any(finding.kind == "GitHub token" for finding in findings)
+
+
+def test_secret_scanner_reports_assignment_without_echoing_value(tmp_path: Path) -> None:
+    assignment = "_".join(("CLIENT", "SECRET")) + "=" + "real-value\n"
+    findings = scan_secrets.scan_text(tmp_path / "settings.env", assignment)
+
+    assert len(findings) == 1
+    assert findings[0].kind == "non-placeholder secret assignment"
+    assert "real-value" not in repr(findings[0])
+
+
+def test_secret_scanner_requires_an_entire_placeholder_value(tmp_path: Path) -> None:
+    assignment = "_".join(("CLIENT", "SECRET")) + "=" + "false-but-real\n"
+
+    findings = scan_secrets.scan_text(tmp_path / "settings.env", assignment)
+
+    assert [finding.kind for finding in findings] == ["non-placeholder secret assignment"]
+
+
+def test_secret_scanner_rejects_environment_expansion_with_default(tmp_path: Path) -> None:
+    key = "_".join(("client", "secret"))
+    assignment = f"{key}=${{CLIENT_SECRET:-real-value}}"
+
+    findings = scan_secrets.scan_text(tmp_path / "settings.env", assignment)
+
+    assert [finding.kind for finding in findings] == ["non-placeholder secret assignment"]
+
+
+def test_secret_scanner_checks_every_assignment_on_one_line(tmp_path: Path) -> None:
+    safe_key = "_".join(("client", "secret"))
+    unsafe_key = "_".join(("access", "token"))
+    assignments = f"{safe_key}=<set-in-secret-store> {unsafe_key}=real-value"
+
+    findings = scan_secrets.scan_text(tmp_path / "settings.env", assignments)
+
+    assert [finding.kind for finding in findings] == ["non-placeholder secret assignment"]
+
+
+def test_secret_scanner_detects_lowercase_symbol_prefixed_assignment(tmp_path: Path) -> None:
+    key = "_".join(("client", "secret"))
+    value = "!" + "real-value"
+
+    findings = scan_secrets.scan_text(tmp_path / "settings.env", f'{key}="{value}"')
+
+    assert [finding.kind for finding in findings] == ["non-placeholder secret assignment"]
+
+
+def test_secret_scanner_detects_aws_secret_access_key_assignment(tmp_path: Path) -> None:
+    key = "_".join(("aws", "secret", "access", "key"))
+    value = "fictional-credential-value"
+
+    findings = scan_secrets.scan_text(tmp_path / "settings.env", f"{key}={value}")
+
+    assert [finding.kind for finding in findings] == ["non-placeholder secret assignment"]
+
+
+def test_secret_scanner_detects_docker_auth_config_assignments(tmp_path: Path) -> None:
+    value = "fictional-registry-credential"
+
+    text_findings = scan_secrets.scan_text(tmp_path / "settings.env", f"DOCKER_AUTH_CONFIG={value}")
+    python_findings = scan_secrets.scan_text(
+        tmp_path / "settings.py", f'DOCKER_AUTH_CONFIG = "{value}"'
+    )
+
+    assert [finding.kind for finding in text_findings] == ["non-placeholder secret assignment"]
+    assert [finding.kind for finding in python_findings] == ["non-placeholder secret assignment"]
+
+
+@pytest.mark.parametrize("key", ["apiKey", "clientSecret", "accessToken", "authToken"])
+def test_secret_scanner_detects_camel_case_assignment_keys(tmp_path: Path, key: str) -> None:
+    findings = scan_secrets.scan_text(
+        tmp_path / "settings.json", f'{{"{key}": "fictional-credential-value"}}'
+    )
+
+    assert [finding.kind for finding in findings] == ["non-placeholder secret assignment"]
+
+
+def test_secret_scanner_detects_python_constant_assignments(tmp_path: Path) -> None:
+    source = '''
+api_key = 123456
+auth_token = b"fictional-byte-secret"
+client_secret = """fictional
+multiline secret"""
+password = load_from_environment()
+'''
+
+    findings = scan_secrets.scan_text(tmp_path / "settings.py", source)
+
+    assert [(finding.line, finding.kind) for finding in findings] == [
+        (2, "non-placeholder secret assignment"),
+        (3, "non-placeholder secret assignment"),
+        (4, "non-placeholder secret assignment"),
+    ]
+
+
+def test_secret_scanner_rejects_remote_uri_credentials_but_allows_local_fixture(
+    tmp_path: Path,
+) -> None:
+    remote = "postgresql://" + "service:super-secret@db.example.com:5432/proposals"
+
+    remote_findings = scan_secrets.scan_text(tmp_path / "remote.env", remote)
+    local_findings = scan_secrets.scan_text(
+        tmp_path / ".env.example", scan_secrets.ALLOWED_LOOPBACK_CREDENTIAL_URI
+    )
+
+    assert [finding.kind for finding in remote_findings] == ["credential in URI user-info"]
+    assert local_findings == []
+
+
+def test_secret_scanner_rejects_private_artifact_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    private_file = tmp_path / "private_data" / "source.txt"
+    private_file.parent.mkdir()
+    private_file.write_text("fictional", encoding="utf-8")
+    monkeypatch.setattr(scan_secrets, "ROOT", tmp_path)
+
+    findings = scan_secrets.scan_paths([private_file])
+
+    assert [(finding.line, finding.kind) for finding in findings] == [
+        (0, "private/generated artifact path")
+    ]
+
+
+@pytest.mark.parametrize(
+    "directory",
+    ["source_documents", "processed_output", "proposal-assistant-output", "logs"],
+)
+def test_secret_scanner_rejects_all_never_commit_directories(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, directory: str
+) -> None:
+    private_file = tmp_path / directory / "ordinary-private-prose.txt"
+    private_file.parent.mkdir()
+    private_file.write_text("fictional private prose", encoding="utf-8")
+    monkeypatch.setattr(scan_secrets, "ROOT", tmp_path)
+
+    findings = scan_secrets.scan_paths([private_file])
+
+    assert [(finding.line, finding.kind) for finding in findings] == [
+        (0, "private/generated artifact path")
+    ]
+
+
+def test_secret_scanner_rejects_database_dump_suffix(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    dump_file = tmp_path / "backup.sql.gz"
+    dump_file.write_bytes(b"synthetic")
+    monkeypatch.setattr(scan_secrets, "ROOT", tmp_path)
+
+    findings = scan_secrets.scan_paths([dump_file])
+
+    assert [(finding.line, finding.kind) for finding in findings] == [
+        (0, "private/generated artifact path")
+    ]
+
+
+def test_secret_scanner_rejects_timestamped_terraform_state(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    state_file = tmp_path / "terraform.tfstate.1700000000"
+    state_file.write_text("synthetic", encoding="utf-8")
+    monkeypatch.setattr(scan_secrets, "ROOT", tmp_path)
+
+    findings = scan_secrets.scan_paths([state_file])
+
+    assert [finding.kind for finding in findings] == ["private/generated artifact path"]
+
+
+def test_secret_scanner_scans_credential_beyond_large_file_limit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    large_file = tmp_path / "large.txt"
+    access_key = "AKIA" + "B" * 16
+    large_file.write_text(
+        "x" * (scan_secrets.MAX_FILE_SIZE + 1) + "\n" + access_key, encoding="utf-8"
+    )
+    monkeypatch.setattr(scan_secrets, "ROOT", tmp_path)
+
+    findings = scan_secrets.scan_paths([large_file])
+
+    assert any(finding.kind == "AWS access key" for finding in findings)
+
+
+def test_secret_scanner_fails_closed_for_unallowlisted_large_binary(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    large_file = tmp_path / "large.bin"
+    large_file.write_bytes(b"\0" * (scan_secrets.MAX_FILE_SIZE + 1))
+    monkeypatch.setattr(scan_secrets, "ROOT", tmp_path)
+
+    findings = scan_secrets.scan_paths([large_file])
+
+    assert [finding.kind for finding in findings] == ["unallowlisted oversized binary file"]
+
+
+def test_secret_scanner_fails_closed_for_oversized_multiline_python(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    large_file = tmp_path / "large.py"
+    multiline_assignment = "api_" + "key = (\n    'fictional-secret-value'\n)\n"
+    large_file.write_text(
+        "#" * (scan_secrets.MAX_FILE_SIZE + 1) + "\n" + multiline_assignment,
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(scan_secrets, "ROOT", tmp_path)
+
+    findings = scan_secrets.scan_paths([large_file])
+
+    assert [finding.kind for finding in findings] == ["unallowlisted oversized Python file"]
+
+
+def test_secret_scanner_fails_closed_for_unallowlisted_small_binary(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    binary_file = tmp_path / "small.bin"
+    binary_file.write_bytes(b"\0synthetic")
+    monkeypatch.setattr(scan_secrets, "ROOT", tmp_path)
+
+    findings = scan_secrets.scan_paths([binary_file])
+
+    assert [finding.kind for finding in findings] == ["unallowlisted binary file"]
+
+
+def test_binary_fixture_allowlist_requires_matching_digest(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    binary_file = tmp_path / "fixtures" / "synthetic.bin"
+    binary_file.parent.mkdir()
+    original = b"\0synthetic"
+    binary_file.write_bytes(original)
+    monkeypatch.setattr(scan_secrets, "ROOT", tmp_path)
+    monkeypatch.setattr(
+        scan_secrets,
+        "ALLOWED_BINARY_FIXTURE_DIGESTS",
+        {"fixtures/synthetic.bin": hashlib.sha256(original).hexdigest()},
+    )
+
+    assert scan_secrets.scan_paths([binary_file]) == []
+
+    binary_file.write_bytes(b"\0changed")
+    findings = scan_secrets.scan_paths([binary_file])
+    assert [finding.kind for finding in findings] == ["unallowlisted binary file"]
+
+
+def test_docker_diagnostic_distinguishes_inactive_engine(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        dev,
+        "_tool_version",
+        lambda name, arguments=("--version",): dev.CheckResult(name, "PASS", "Docker 28"),
+    )
+
+    def fake_run(command: list[str], **_: object) -> CompletedProcess[str]:
+        if command[1:3] == ["compose", "version"]:
+            return CompletedProcess(command, 0, "Docker Compose v2", "")
+        return CompletedProcess(command, 1, "", "engine unavailable")
+
+    monkeypatch.setattr(dev, "_run", fake_run)
+
+    results = dev._docker_results()
+
+    assert [result.status for result in results] == ["PASS", "PASS", "WARN"]
+    assert "inactive or unreachable" in results[-1].detail
+
+
+def test_python_diagnostic_rejects_314(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(dev.sys, "version_info", (3, 14, 0))
+    monkeypatch.setattr(dev.platform, "python_version", lambda: "3.14.0")
+
+    result = dev._python_result()
+
+    assert result.status == "FAIL"
+    assert "require Python 3.13 exactly" in result.detail
+
+
+def test_linux_browser_install_includes_system_dependencies(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[list[str]] = []
+
+    def fake_subprocess_run(command: list[str], **_: object) -> CompletedProcess[str]:
+        calls.append(command)
+        return CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr(dev.sys, "platform", "linux")
+    monkeypatch.setattr(dev.subprocess, "run", fake_subprocess_run)
+
+    dev.install_browser()
+
+    assert calls == [[dev.sys.executable, "-m", "playwright", "install", "--with-deps", "chromium"]]
+
+
+def test_mock_run_is_forced_to_synthetic_source_and_mock_mode(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls: list[list[str]] = []
+
+    def fake_subprocess_run(command: list[str], **_: object) -> CompletedProcess[str]:
+        calls.append(command)
+        return CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr(dev.subprocess, "run", fake_subprocess_run)
+
+    dev.mock_run(tmp_path / "output")
+
+    command = calls[0]
+    assert command[2:4] == ["proposal_ingest.cli", "run-all"]
+    assert command[command.index("--source-root") + 1] == str(
+        dev.ROOT / "sample_data" / "fake_source_root"
+    )
+    assert command[command.index("--output-root") + 1] == str((tmp_path / "output").resolve())
+    assert command[-1] == "--mock-bedrock"
+
+
+def test_blank_browser_cache_setting_uses_nonsynced_default(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("PLAYWRIGHT_BROWSERS_PATH", "   ")
+    monkeypatch.setattr(dev.Path, "home", lambda: tmp_path)
+
+    configured = dev._configure_browser_cache()
+
+    expected = tmp_path / ".codex" / "proposal-ingest" / "playwright"
+    assert configured == expected
+    assert dev.os.environ["PLAYWRIGHT_BROWSERS_PATH"] == str(expected)
+
+
+def test_db_up_pulls_before_starting_postgres(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[tuple[list[str], int]] = []
+
+    def fake_compose(arguments: list[str], *, timeout: int = 60) -> CompletedProcess[str]:
+        calls.append((arguments, timeout))
+        return CompletedProcess(arguments, 0, "", "")
+
+    monkeypatch.setattr(dev, "_compose", fake_compose)
+
+    dev.db_up()
+
+    assert calls == [
+        (["pull", "--quiet", "postgres"], 600),
+        (["up", "--detach", "--wait", "postgres"], 180),
+    ]
+
+
+def test_dev_check_includes_config_validation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls: list[list[str]] = []
+
+    def fake_subprocess_run(command: list[str], **_: object) -> CompletedProcess[str]:
+        calls.append(command)
+        return CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr(dev.subprocess, "run", fake_subprocess_run)
+    monkeypatch.setattr(dev, "ROOT", tmp_path)
+
+    dev.run_checks()
+
+    config_command = next(command for command in calls if command[-1] == "config-check")
+    pytest_command = next(command for command in calls if "pytest" in command)
+    assert calls.index(config_command) < calls.index(pytest_command)
+    basetemp = Path(pytest_command[pytest_command.index("--basetemp") + 1])
+    assert basetemp.parent == Path("tmp")
+    assert (tmp_path / "tmp").is_dir()
+
+
+def test_bootstrap_refuses_onedrive_checkout(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(dev, "ROOT", Path("C:/Users/example/OneDrive/project"))
+
+    with pytest.raises(RuntimeError, match="under OneDrive"):
+        dev._assert_safe_checkout()
+
+
+def test_bootstrap_rejects_existing_non_313_environment(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    python = tmp_path / "python"
+    python.write_text("placeholder", encoding="utf-8")
+    monkeypatch.setattr(dev, "_assert_safe_checkout", lambda: None)
+    monkeypatch.setattr(dev, "_configure_browser_cache", lambda: tmp_path)
+    monkeypatch.setattr(dev, "_python_launcher", lambda: ["python3.13"])
+    monkeypatch.setattr(dev, "_venv_python", lambda: python)
+    monkeypatch.setattr(
+        dev,
+        "_run",
+        lambda command, **kwargs: CompletedProcess(command, 1, "", "wrong version"),
+    )
+
+    with pytest.raises(RuntimeError, match="remove .venv and rerun bootstrap"):
+        dev.bootstrap(with_browser=False)
+
+
+def test_config_cli_handles_malformed_env_without_traceback(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    env_file = tmp_path / "malformed.env"
+    env_file.write_text("DUPLICATE=value\nDUPLICATE=again\n", encoding="utf-8")
+
+    result = dev.main(["config-check", "--path", str(env_file)])
+
+    captured = capsys.readouterr()
+    assert result == 1
+    assert "empty or duplicate key" in captured.err
+    assert "Traceback" not in captured.err
+
+
+def test_config_validation_rejects_local_auth_in_production() -> None:
+    values = dev.read_env_file(dev.ROOT / ".env.example")
+    values["PROPOSAL_APP_ENV"] = "production"
+
+    errors = dev.validate_env(values)
+
+    assert "PROPOSAL_LOCAL_AUTH_ENABLED must be false in production" in errors
+    assert "ENTRA_TENANT_ID is required in production" in errors
+
+
+def test_production_validation_rejects_whitespace_only_entra_setting() -> None:
+    values = dev.read_env_file(dev.ROOT / ".env.example")
+    values.update(
+        {
+            "PROPOSAL_APP_ENV": "production",
+            "PROPOSAL_LOCAL_AUTH_ENABLED": "false",
+            "ENTRA_TENANT_ID": "   ",
+            "ENTRA_CLIENT_ID": "fictional-client",
+            "ENTRA_REDIRECT_URI": "https://example.invalid/callback",
+        }
+    )
+
+    errors = dev.validate_env(values)
+
+    assert "ENTRA_TENANT_ID is required in production" in errors
+
+
+def test_explicit_production_validation_requires_production_environment() -> None:
+    values = dev.read_env_file(dev.ROOT / ".env.example")
+
+    errors = dev.validate_env(values, production=True)
+
+    assert "PROPOSAL_APP_ENV must be production with --production" in errors
+
+
+def test_config_validation_rejects_blank_required_value() -> None:
+    values = dev.read_env_file(dev.ROOT / ".env.example")
+    values["DATABASE_URL"] = "   "
+    values["PROPOSAL_STORAGE_BACKEND"] = "unsupported"
+
+    errors = dev.validate_env(values)
+
+    assert "missing or blank setting: DATABASE_URL" in errors
+    assert "PROPOSAL_STORAGE_BACKEND must be local or s3" in errors
+
+
+@pytest.mark.parametrize(
+    ("backend", "setting", "expected"),
+    [
+        ("local", "PROPOSAL_LOCAL_STORAGE_ROOT", "local storage"),
+        ("s3", "PROPOSAL_S3_BUCKET", "s3 storage"),
+    ],
+)
+def test_config_validation_requires_backend_setting(
+    backend: str, setting: str, expected: str
+) -> None:
+    values = dev.read_env_file(dev.ROOT / ".env.example")
+    values["PROPOSAL_STORAGE_BACKEND"] = backend
+    values[setting] = ""
+
+    errors = dev.validate_env(values)
+
+    assert any(expected in error for error in errors)
+
+
+@pytest.mark.parametrize("value", ["nan", "inf", "-inf"])
+def test_config_validation_rejects_non_finite_cost_limits(value: str) -> None:
+    values = dev.read_env_file(dev.ROOT / ".env.example")
+    values["SINGLE_JOB_COST_LIMIT_USD"] = value
+
+    errors = dev.validate_env(values)
+
+    assert "SINGLE_JOB_COST_LIMIT_USD must be a finite value greater than zero" in errors

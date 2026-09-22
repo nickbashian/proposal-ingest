@@ -20,12 +20,23 @@ source_documents/
 processed_output/
 proposal-assistant-output/
 raw_model_responses/
+private_data/
+private_evaluations/
+private_screenshots/
+db_dumps/
 logs/
 *.log
+*.dump
+*.sql.gz
+*.tfstate
+*.tfstate.*
 
 # Pipeline run output directories (written to output-root at runtime)
 run_*/
 tmp/
+playwright-report/
+test-results/
+.playwright/
 
 # OS/editor
 .DS_Store

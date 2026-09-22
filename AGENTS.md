@@ -2,31 +2,76 @@
 
 ## Project Overview
 
-Local-first batch pipeline that scans a **read-only** proposal archive, extracts metadata via Amazon Bedrock (Claude), supports a human Q&A correction loop, and exports a clean document set + S3 manifest for RAG ingestion.
+This repository contains a reusable local-first proposal-ingestion CLI and the sequential 2025
+Proposal Knowledge Base product build.
 
-See [README.md](README.md) for setup and [docs/02_system_architecture.md](docs/02_system_architecture.md) for the core design principles.
+The active implementation authority is [docs/mvp/README.md](docs/mvp/README.md), together with its
+PR playbook, setup checklist, and acceptance matrix. The root `docs/00`–`14` set records the CLI
+prototype and historical 2024 pilot; it is not the active phase order.
 
 ## Build & Test
 
 ```bash
-pip install -e ".[dev]"   # first-time setup
+py -3.13 scripts/dev.py bootstrap --with-browser  # Windows first-time setup
+# python3.13 scripts/dev.py bootstrap --with-browser  # Linux
 
-make check                # format check (black) + spell check + types (mypy) + tests (pytest) — CI gate
-make lint                 # black --check on src/ and tests/
+make check                # canonical local/CI gate, including secrets and browser smoke
+make diagnose             # installed-tool/service/sign-in status; no installation
+make mock-run             # synthetic pipeline; no AWS calls
+make lint                 # black --check on src/, tests/, and scripts/
 make format               # black formatter
 make spellcheck           # codespell
 make precommit-install    # install local git hooks
 make precommit-run        # run hooks across all files
-make mypy                 # mypy src/ only
-pytest                    # tests only
+make mypy                 # mypy src/ and scripts/
+make secrets              # credentials/private artifact guard
+make db-smoke             # disposable PostgreSQL service smoke test
 ```
 
 After every code change, run `make check` to verify CI would pass.
+
+### Windows PATH behavior in Codex tasks
+
+Codex command shells inherit the app's process environment. A task opened before a tool was
+installed or before the user PATH changed can report that `make`, `py`, `python`, `winget`, or `cr`
+is missing even though the tool is installed and works in a newly opened terminal. Do not reinstall
+or declare setup broken based only on `Get-Command` in that stale shell.
+
+First compare the inherited PATH with the current persistent Windows paths and refresh it in the
+task shell:
+
+```powershell
+$machinePath = [Environment]::GetEnvironmentVariable('Path', 'Machine')
+$userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
+$env:Path = "$machinePath;$userPath"
+Get-Command make, py, python, cr -All -ErrorAction SilentlyContinue
+```
+
+If the refreshed shell still cannot resolve Python, use the repository environment directly. This
+also avoids launcher and PATH ambiguity:
+
+```powershell
+& '.venv\Scripts\python.exe' scripts/dev.py diagnose
+& '.venv\Scripts\python.exe' scripts/dev.py check  # CI-equivalent fallback for make check
+```
+
+For first-time bootstrap, the normal `py -3.13` command remains preferred. A standard per-user
+Python installation can be invoked without a username-specific path when the launcher is stale:
+
+```powershell
+$python313 = Join-Path $env:LOCALAPPDATA 'Programs\Python\Python313\python.exe'
+& $python313 scripts/dev.py bootstrap --with-browser
+```
+
+CodeRabbit's standard per-user executable is similarly available at
+`$env:LOCALAPPDATA\Programs\coderabbit\cr.exe`. Open a new Codex task or restart the app when a
+freshly installed executable must be resolved normally in all subsequent commands.
 
 ## Architecture
 
 - **Python owns all orchestration** — Bedrock is a dumb model endpoint only; no tool use, no orchestration on the model side.
 - **Source root is always read-only.** All output (inventory, metadata, clean copies) goes to `--output-root`. Never write to `source_root`.
+- **Private material stays out of Git and public review.** Follow `docs/mvp/FIXTURE_AND_DATA_POLICY.md`.
 - **Two-pass AI design**: Pass 1 classifies each document; Pass 2 re-runs low-confidence docs (threshold `0.65`) using branch context. See [docs/04_processing_pipeline.md](docs/04_processing_pipeline.md).
 - **Run-scoped output** — every run produces a `logs/run_YYYYMMDD_HHMMSS_<short_random>` directory with a `run_manifest.json` capturing config, git commit, and mock/real Bedrock mode.
 - **Schema versioned** — `app.schema_version: "0.1.0"`. Pydantic models in `schemas.py` enforce all metadata contracts. JSON Schemas are in `schemas/`.
@@ -49,13 +94,17 @@ After every code change, run `make check` to verify CI would pass.
 | `config.py` | Merges `config/default_config.yaml` with CLI overrides |
 | `prompts.py` | Loads prompt templates from `prompts/*.md` |
 
-## Implementation Phases
+## Implementation roadmap
 
-The project is built in **13 sequential phases** — never skip ahead. See [docs/10_implementation_plan.md](docs/10_implementation_plan.md) for the full phase list with acceptance criteria.
+The active product is built in **11 sequential PRs, MVP-00 through MVP-10**. Read the selected card
+in [docs/mvp/PR_PLAYBOOK.md](docs/mvp/PR_PLAYBOOK.md) and do not build later cards except for an
+explicit shared contract.
 
-Current status: **Phases 1-11 complete** (scanner through folder synthesis). Phase 12 clean-set and S3 manifest work is next.
+The CLI prototype's clean-set, proposal synthesis, arbitration, and quality-output work is already
+implemented. The old Phase 13 2024 pilot remains incomplete history and is not the next product task.
 
-Build the next phase only after its acceptance criteria pass. Do not wire together modules that belong to a later phase.
+Consult `docs/mvp/implementation/` for the last completed product acceptance IDs and pending live
+connections. Start each new card from merged `main`.
 
 ## Conventions
 
@@ -69,7 +118,7 @@ Build the next phase only after its acceptance criteria pass. Do not wire togeth
 
 ## Critical Pitfalls
 
-- **Phase 12 is still a stub** — `build-clean-set` still prints a placeholder message until the clean-set/S3 manifest phase is implemented.
+- **MVP numbering is separate from prototype phases.** Never infer active scope from the archived roadmap.
 - **`tracker.path` is `null` in default config** — tracker ingestion is skipped unless a tracker path is provided by CLI, environment, or config.
 - **Bedrock model ID** `us.anthropic.claude-opus-4-6-v1` — use the Bedrock inference profile ID for Phase 5 smoke tests; the raw foundation model ID is rejected for on-demand Converse calls in this account.
 - **OCR is disabled** (`ocr_enabled: false`) — scanned PDFs without embedded text will return empty extractions silently; this is by design for the MVP.
@@ -94,4 +143,5 @@ Build the next phase only after its acceptance criteria pass. Do not wire togeth
 | [docs/06_aws_bedrock_setup.md](docs/06_aws_bedrock_setup.md) | AWS profile, Bedrock region, model ARN setup |
 | [docs/07_human_review_workflow.md](docs/07_human_review_workflow.md) | Question loop and answer application workflow |
 | [docs/09_testing_plan.md](docs/09_testing_plan.md) | Test strategy and coverage targets |
-| [docs/10_implementation_plan.md](docs/10_implementation_plan.md) | **Phase-by-phase build sequence with acceptance criteria** |
+| [docs/10_implementation_plan.md](docs/10_implementation_plan.md) | Archived CLI prototype phase history |
+| [docs/mvp/README.md](docs/mvp/README.md) | **Active product roadmap and execution order** |

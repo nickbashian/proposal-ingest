@@ -19,7 +19,7 @@ repos:
         args: ["--line-length=100"]
 
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.9.10
+    rev: v0.15.13
     hooks:
       - id: ruff
         args: ["--fix"]
@@ -29,3 +29,12 @@ repos:
     hooks:
       - id: codespell
         args: ["--config=.codespellrc"]
+
+  - repo: local
+    hooks:
+      - id: secret-private-artifact-scan
+        name: secret and private artifact scan
+        entry: python scripts/scan_secrets.py
+        language: python
+        language_version: python3.13
+        pass_filenames: false
