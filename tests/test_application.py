@@ -16,6 +16,7 @@ import pytest
 from authlib.integrations.django_client import OAuth
 from django.contrib.auth import get_user_model
 from django.core.exceptions import PermissionDenied
+from django.core.management import call_command, CommandError
 from django.db import IntegrityError, close_old_connections, connection, transaction
 from django.http import Http404
 from django.test import Client
@@ -31,12 +32,14 @@ from proposal_app.adapters import (
     capability,
     normalize_error,
 )
+from proposal_app.storage import LocalObjectStorage
 
 pytestmark = pytest.mark.django_db
 
 
 @pytest.fixture
-def actors():
+def actors(settings, tmp_path):
+    settings.LOCAL_STORAGE_ROOT = tmp_path / "objects"
     users = []
     collection = m.Collection.objects.create(name="Synthetic collection")
     for name in ("alice", "bob"):
@@ -57,7 +60,7 @@ def new_job(actors):
 
 
 @pytest.mark.django_db(transaction=True)
-def test_source_identity_and_memberships(actors):
+def test_source_identity_and_memberships(actors, settings):
     alice, _, collection = actors
     versions = []
     for item in ("path-a", "path-b"):
@@ -79,6 +82,10 @@ def test_source_identity_and_memberships(actors):
     assert m.ProposalMembership.objects.count() == 2
     assert m.SourceItem.objects.count() == 2
     assert versions[0].upstream_version is None
+    assert (
+        LocalObjectStorage(settings.LOCAL_STORAGE_ROOT).get(versions[0].blob.storage_key)
+        == b"synthetic identical bytes"
+    )
     with pytest.raises(IntegrityError), transaction.atomic():
         m.SourceVersion.objects.create(
             source=versions[0].source, observation_key="observed-1", blob=versions[0].blob
@@ -303,6 +310,9 @@ def test_pause_resume_budget_and_quota(actors):
     assert jobs.reserve(attempt.id, "6") is None
     job.refresh_from_db()
     assert job.state == "budget_stopped"
+    assert job.lease_token is None and job.lease_until is None
+    attempt.refresh_from_db()
+    assert attempt.state == "budget_stopped" and attempt.finished_at
     services.control_job(actors[0], job.id, "resume")
     attempt = jobs.claim()
     jobs.reserve(attempt.id, ".01")
@@ -366,6 +376,21 @@ def test_outbox_cancel_before_delivery_and_disabled_adapter(actors):
     assert not m.UsageReservation.objects.filter(attempt__job=other).exists()
 
 
+def test_pause_resume_completed_call_does_not_repeat_dispatch(actors):
+    job = new_job(actors)
+    attempt = jobs.claim()
+    jobs.reserve(attempt.id, ".01")
+    jobs.finish(attempt.id, result=result())
+    services.control_job(actors[0], job.id, "pause")
+    services.control_job(actors[0], job.id, "pause")
+    assert not jobs.deliver(job.id)
+    services.control_job(actors[0], job.id, "resume")
+    assert jobs.deliver(job.id)
+    job.refresh_from_db()
+    assert job.state == "succeeded"
+    assert job.attempts == 1
+
+
 def test_legacy_import_is_read_only_and_idempotent(actors, tmp_path):
     path = tmp_path / "legacy.jsonl"
     raw = json.dumps(
@@ -386,7 +411,8 @@ def test_legacy_import_is_read_only_and_idempotent(actors, tmp_path):
         ({"error": {"code": "accessDenied"}}, 403, False, False, False),
         ({"Error": {"Code": "ThrottlingException"}}, 429, True, False, False),
         ({"Error": {"Code": "ServiceQuotaExceededException"}}, 400, False, False, True),
-        ({"Error": {"Code": "ModelTimeoutException"}}, 504, True, True, False),
+        ({"Error": {"Code": "ModelTimeoutException"}}, 408, True, True, False),
+        ({"Error": {"Code": "ModelErrorException"}}, 424, True, True, False),
     ],
 )
 def test_provider_error_contract(payload, status, retry, unknown, quota):
@@ -454,6 +480,8 @@ def test_decision_optimistic_append_and_eligibility(actors):
         family="fixture",
     )
     family = m.VersionFamily.objects.get()
+    with pytest.raises(IntegrityError), transaction.atomic():
+        m.ProposalMembership.objects.all().delete()
     unit = m.ExtractedUnit.objects.create(
         version=version, extractor_revision="v1", key="page1", locator={"page": 1}, text="fictional"
     )
@@ -488,6 +516,88 @@ def test_invalid_costs_never_dispatch(actors, value):
     with pytest.raises(ValueError):
         jobs.reserve(attempt.id, value)
     assert not m.UsageReservation.objects.exists()
+
+
+def test_operator_revocation_removes_grant_without_creating_collection(actors):
+    alice, _, collection = actors
+    call_command(
+        "allow_identity",
+        "alice",
+        issuer="local",
+        subject="alice",
+        collection=collection.name,
+        revoke=True,
+    )
+    assert not m.CollectionAccess.objects.filter(user=alice).exists()
+    assert not m.Identity.objects.get(user=alice).allowed
+    call_command(
+        "allow_identity",
+        "alice",
+        issuer="local",
+        subject="alice",
+        collection="does-not-exist",
+        revoke=True,
+    )
+    assert not m.Collection.objects.filter(name="does-not-exist").exists()
+    with pytest.raises(CommandError):
+        call_command(
+            "allow_identity",
+            "unknown",
+            issuer="local",
+            subject="unknown",
+            collection="unknown",
+            revoke=True,
+        )
+    assert not get_user_model().objects.filter(username="unknown").exists()
+
+
+def test_local_storage_immutable_and_rejects_bad_keys(tmp_path):
+    storage = LocalObjectStorage(tmp_path / "output")
+    content = b"synthetic preserved bytes"
+    digest = hashlib.sha256(content).hexdigest()
+    assert storage.put_immutable(digest, content) == digest
+    assert storage.put_immutable(digest, content) == digest
+    assert storage.get(digest) == content
+    with pytest.raises(ValueError):
+        storage.put_immutable(digest, b"different")
+    with pytest.raises(ValueError):
+        storage.get("../outside")
+    (storage.root / digest).write_bytes(b"corrupted")
+    with pytest.raises(ValueError):
+        storage.get(digest)
+
+
+@pytest.mark.parametrize(
+    "query,production,valid",
+    [
+        ("sslmode=require", False, True),
+        ("sslmode=verify-full", True, True),
+        ("sslmode=prefer", True, False),
+        ("sslmode=verify-full&sslmode=disable", True, False),
+        ("unsupported=option", False, False),
+    ],
+)
+def test_database_url_options_fail_closed(query, production, valid):
+    env = dict(os.environ)
+    env.update(
+        PROPOSAL_APP_ENV="production" if production else "local",
+        PROPOSAL_LOCAL_AUTH_ENABLED="false",
+        DATABASE_URL="postgresql://localhost/synthetic?" + query,
+        PROPOSAL_SECRET_KEY=uuid.uuid4().hex + uuid.uuid4().hex,
+        OIDC_ISSUER="https://identity.example.test/tenant/v2.0",
+        ENTRA_CLIENT_ID="synthetic",
+        ENTRA_CLIENT_SECRET="synthetic-test-only",
+        ENTRA_REDIRECT_URI="https://app.example.test/auth/callback/",
+        PROPOSAL_ALLOWED_HOSTS="app.example.test, other.example.test ",
+    )
+    code = "import json; from proposal_app import settings; print(json.dumps([settings.DATABASES['default']['OPTIONS'], settings.ALLOWED_HOSTS]))"
+    proc = subprocess.run([sys.executable, "-c", code], env=env, capture_output=True, text=True)
+    assert (proc.returncode == 0) is valid
+    if valid:
+        options, hosts = json.loads(proc.stdout)
+        assert options["sslmode"] == query.split("=")[1]
+        if production:
+            assert hosts == ["app.example.test", "other.example.test"]
 
 
 @pytest.mark.django_db(transaction=True)

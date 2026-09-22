@@ -19,7 +19,9 @@ from proposal_app import models as m, services
 def child_environment():
     db = connection.settings_dict
     env = dict(os.environ)
-    authority = f"{quote(db['USER'])}:{quote(db['PASSWORD'])}@{db['HOST']}:{db['PORT']}"
+    authority = (
+        f"{quote(db['USER'], safe='')}:{quote(db['PASSWORD'], safe='')}@{db['HOST']}:{db['PORT']}"
+    )
     env["DATABASE_URL"] = urlunparse(("postgresql", authority, "/" + db["NAME"], "", "", ""))
     env["JOB_LEASE_SECONDS"] = "2"
     env["PROPOSAL_LOCAL_AUTH_ENABLED"] = "true"

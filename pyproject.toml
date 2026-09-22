@@ -28,6 +28,7 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
   "pytest-django",
+  "joserfc>=1.6,<2",
   "black",
   "ruff",
   "codespell",

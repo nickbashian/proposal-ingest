@@ -187,6 +187,7 @@ class Job(Record):
     lease_until = models.DateTimeField(null=True)
     available_at = models.DateTimeField(default=timezone.now)
     stop_reason = models.CharField(max_length=100, blank=True)
+    resume_state = models.CharField(max_length=30, blank=True)
     budget = models.DecimalField(max_digits=12, decimal_places=6)
 
     class Meta:

@@ -12,6 +12,7 @@ from django.http import Http404
 from django.utils import timezone
 
 from . import models as m
+from .storage import LocalObjectStorage
 
 
 def authorize(user, collection_id):
@@ -70,8 +71,13 @@ def control_job(user, job_id, action):
     if action == "resume":
         if job.state not in {"paused", "budget_stopped", "quota_stopped", "disabled"}:
             raise ValueError("Job is not stopped")
-        job.state = "queued"
+        job.state = (
+            "delivering" if job.state == "paused" and job.resume_state == "delivering" else "queued"
+        )
+        job.resume_state = ""
     else:
+        if action == "pause" and job.state != "paused":
+            job.resume_state = job.state
         job.state = "paused" if action == "pause" else "canceled"
     job.lease_token = None
     job.lease_until = None
@@ -164,9 +170,14 @@ def observe_source(
         raise PermissionDenied
     source.display_path = path
     source.save(update_fields=["display_path"])
+    digest = hashlib.sha256(content).hexdigest()
+    key = LocalObjectStorage(settings.LOCAL_STORAGE_ROOT).put_immutable(digest, content)
     blob, _ = m.ContentBlob.objects.get_or_create(
-        sha256=hashlib.sha256(content).hexdigest(), defaults={"size": len(content)}
+        sha256=digest, defaults={"size": len(content), "storage_key": key}
     )
+    if not blob.storage_key:
+        blob.storage_key = key
+        blob.save(update_fields=["storage_key"])
     version, _ = m.SourceVersion.objects.get_or_create(
         source=source,
         observation_key=observation_key,

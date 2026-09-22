@@ -36,7 +36,7 @@ make check
 .venv/Scripts/python.exe -m pytest tests/test_application.py tests/test_application_process.py -v
 ```
 
-These tests create a disposable PostgreSQL **test database**, apply both migrations, exercise
+These tests create a disposable PostgreSQL **test database**, apply all migrations, exercise
 constraints, signed synthetic OIDC tokens, ownership, concurrent workers/reservations, and open
 Chromium against the actual application. The process test injects latency only into the local
 adapter, kills the real management worker after its reservation commits, waits for expiry, then
@@ -52,7 +52,9 @@ signature, expiration, exact issuer, and audience validation. Configure `OIDC_IS
 tenant-specific Entra v2 issuer and set `ENTRA_CLIENT_ID`, `ENTRA_CLIENT_SECRET`, and
 `ENTRA_REDIRECT_URI`. Production additionally needs a strong `PROPOSAL_SECRET_KEY`, explicit
 `DATABASE_URL`, and `PROPOSAL_ALLOWED_HOSTS`. TLS terminates at a correctly configured deployment
-boundary; forwarded headers are not trusted by this foundation.
+boundary; forwarded headers are not trusted by this foundation. Production database URLs must
+include `sslmode=verify-full` (or `verify-ca`); libpq's `PGSSLROOTCERT` can supply the private CA
+file. Unsupported/repeated URL query options are rejected instead of silently discarded.
 
 Provision an exact subject through a trusted operator terminal (identifiers stay private):
 
@@ -60,7 +62,9 @@ Provision an exact subject through a trusted operator terminal (identifiers stay
 python scripts/manage.py allow_identity USERNAME --issuer ISSUER --subject SUBJECT --collection COLLECTION
 ```
 
-Repeat with `--revoke` to revoke access immediately, including existing sessions. Issuer + subject
+Repeat with `--revoke` to revoke identity access immediately, including existing sessions, and
+remove the named collection grant. Revoking an unknown identity is an error and creates no records.
+Issuer + subject
 is the identity; email/display name is never an enrollment credential. Successful login never
 creates an allowlist entry. Logout is POST with CSRF and destroys the application session; it does
 not terminate other Microsoft applications' sessions. OIDC start requests account selection again.
@@ -106,7 +110,11 @@ $100. This is an application variable-cost boundary, not a claim that hosting fi
 
 SourceItem uses connector/tenant/site/drive/item identity. SourceVersion stores an observation key,
 optional upstream version/ETag, content blob, and observed time. Unknown historical versions remain
-null. Equal bytes can share a blob while retaining distinct items and proposal memberships.
+null. Equal bytes share an immutable local object while retaining distinct items and proposal
+memberships. The local storage adapter verifies hashes and installs completed files atomically
+without overwriting existing bytes. Configure `PROPOSAL_LOCAL_STORAGE_ROOT` outside source roots;
+the default is ignored `tmp/app_storage`. Back up this directory alongside the database. A database
+rollback can leave an unreferenced immutable object; no automatic deletion is performed.
 ExtractedUnit binds its locator to one source version and extractor revision. Database triggers
 prevent parent/owner reassignment and history mutation, and validate cross-session packets,
 membership collections, and publication provenance. Decision events are append-only with optimistic

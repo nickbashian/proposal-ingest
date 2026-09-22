@@ -94,7 +94,10 @@ def reserve(attempt_id, estimate):
         account.committed + estimate > account.limit for account in accounts
     ):
         job.state, job.stop_reason = "budget_stopped", "reservation_exceeds_limit"
+        job.lease_token, job.lease_until = None, None
         job.save()
+        attempt.state, attempt.finished_at = "budget_stopped", timezone.now()
+        attempt.save(update_fields=["state", "finished_at"])
         return None
     reservation = m.UsageReservation.objects.create(
         attempt=attempt, reserved=estimate, charged=estimate

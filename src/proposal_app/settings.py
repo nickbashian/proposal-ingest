@@ -3,7 +3,7 @@
 import os
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
-from urllib.parse import unquote, urlparse
+from urllib.parse import parse_qsl, unquote, urlparse
 
 import yaml
 from django.core.exceptions import ImproperlyConfigured
@@ -28,7 +28,8 @@ if MODE == "production":
     if not all((SECRET_KEY, OIDC_ISSUER, OIDC_CLIENT_ID, OIDC_CLIENT_SECRET, OIDC_REDIRECT_URI)):
         raise ImproperlyConfigured("Production requires secret key and complete OIDC settings")
     if len(SECRET_KEY) < 50 or not all(
-        urlparse(value).scheme == "https" for value in (OIDC_ISSUER, OIDC_REDIRECT_URI)
+        urlparse(value).scheme == "https" and bool(urlparse(value).hostname)
+        for value in (OIDC_ISSUER, OIDC_REDIRECT_URI)
     ):
         raise ImproperlyConfigured("Production requires a strong secret and HTTPS OIDC URLs")
 else:
@@ -36,7 +37,7 @@ else:
 
 DEBUG = False
 ALLOWED_HOSTS = (
-    os.environ.get("PROPOSAL_ALLOWED_HOSTS", "").split(",")
+    [host.strip() for host in os.environ.get("PROPOSAL_ALLOWED_HOSTS", "").split(",")]
     if MODE == "production"
     else ["localhost", "127.0.0.1", "[::1]", "testserver"]
 )
@@ -45,15 +46,30 @@ if MODE == "production" and (not all(ALLOWED_HOSTS) or "*" in ALLOWED_HOSTS):
 database = urlparse(os.environ.get("DATABASE_URL", APP["development_database_url"]))
 if database.scheme not in {"postgres", "postgresql"}:
     raise ImproperlyConfigured("DATABASE_URL must identify PostgreSQL")
+query_pairs = parse_qsl(database.query, keep_blank_values=True)
+database_query = dict(query_pairs)
+if set(database_query) - {"sslmode"} or len(query_pairs) != len(database_query):
+    raise ImproperlyConfigured("DATABASE_URL contains unsupported or repeated query parameters")
+if "sslmode" in database_query and database_query["sslmode"] not in {
+    "disable",
+    "allow",
+    "prefer",
+    "require",
+    "verify-ca",
+    "verify-full",
+}:
+    raise ImproperlyConfigured("DATABASE_URL contains an invalid sslmode")
+if MODE == "production" and database_query.get("sslmode") not in {"verify-ca", "verify-full"}:
+    raise ImproperlyConfigured("Production DATABASE_URL requires a verifying sslmode")
 DATABASES = {
     "default": {
         "ENGINE": "django.db.backends.postgresql",
-        "NAME": database.path.lstrip("/"),
+        "NAME": unquote(database.path.lstrip("/")),
         "USER": unquote(database.username or ""),
         "PASSWORD": unquote(database.password or ""),
         "HOST": database.hostname,
         "PORT": database.port or 5432,
-        "OPTIONS": {"connect_timeout": 5},
+        "OPTIONS": {"connect_timeout": 5, **database_query},
     }
 }
 INSTALLED_APPS = [
@@ -100,6 +116,9 @@ SECURE_HSTS_INCLUDE_SUBDOMAINS = MODE == "production"
 SECURE_HSTS_PRELOAD = MODE == "production"
 # Do not trust proxy/forwarded headers without an explicit deployment decision.
 DATA_UPLOAD_MAX_MEMORY_SIZE = APP["request_max_bytes"]
+LOCAL_STORAGE_ROOT = Path(
+    os.environ.get("PROPOSAL_LOCAL_STORAGE_ROOT", str(ROOT / APP["local_storage_root"]))
+)
 
 for key in ("lease_seconds", "max_attempts", "backoff_seconds", "poll_seconds"):
     APP[key] = int(os.environ.get("JOB_" + key.upper(), APP[key]))

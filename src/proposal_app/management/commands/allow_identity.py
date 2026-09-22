@@ -19,18 +19,34 @@ class Command(BaseCommand):
 
     @transaction.atomic
     def handle(self, *args, **options):
+        if options["revoke"]:
+            identity = m.Identity.objects.filter(
+                user__username=options["username"],
+                issuer=options["issuer"],
+                subject=options["subject"],
+            ).first()
+            if identity is None:
+                raise CommandError("No matching identity to revoke")
+            identity.allowed = False
+            identity.save(update_fields=["allowed"])
+            m.CollectionAccess.objects.filter(
+                user=identity.user, collection__name=options["collection"]
+            ).delete()
+            m.AuditRecord.objects.create(action="identity.revoked", object_id=identity.id)
+            self.stdout.write("Identity access updated.")
+            return
         user, _ = get_user_model().objects.get_or_create(username=options["username"])
         identity, _ = m.Identity.objects.get_or_create(
             user=user, defaults={"issuer": options["issuer"], "subject": options["subject"]}
         )
         if identity.issuer != options["issuer"] or identity.subject != options["subject"]:
             raise CommandError("Existing identity differs; refusing reassignment")
-        identity.allowed = not options["revoke"]
+        identity.allowed = True
         identity.save()
         collection, _ = m.Collection.objects.get_or_create(name=options["collection"])
         m.CollectionAccess.objects.get_or_create(user=user, collection=collection)
         m.AuditRecord.objects.create(
-            action="identity.revoked" if options["revoke"] else "identity.allowed",
+            action="identity.allowed",
             object_id=identity.id,
         )
         self.stdout.write("Identity access updated.")

@@ -92,15 +92,16 @@ def normalize_error(payload: dict, status: int) -> ProviderFailure:
         else "provider_error"
     )
     quota = code in {"ServiceQuotaExceededException", "insufficient_quota"}
-    retryable = status in {429, 500, 502, 503, 504} or code in {
+    retryable = status in {408, 424, 429, 500, 502, 503, 504} or code in {
         "ThrottlingException",
         "ModelNotReadyException",
+        "ModelTimeoutException",
     }
     # Server failures can follow a charged operation; retain the upper reservation.
     return ProviderFailure(
         "quota" if quota else "transient" if retryable else "denied",
         retryable=retryable,
-        unknown=status >= 500,
+        unknown=status in {408, 424} or status >= 500 or code == "ModelTimeoutException",
         quota=quota,
     )
 

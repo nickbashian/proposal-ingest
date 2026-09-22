@@ -25,12 +25,34 @@ existing default YAML. Legacy JSONL stays behind a read-only import service.
 | 01-D | Atomic per-attempt/global setup/month/job reservations, unknown outcome retention, late reconciliation, bounded retries, invalid-cost rejection, disabled live adapters | Real provider billing and quotas pending |
 | 01-E | Database services own state; read-only idempotent legacy import retains corrections, deterministic local handler, documented Graph/Bedrock error-shape tests, application eligibility boundary | SharePoint/Bedrock/S3/Managed KB/drafting implementations belong to later cards |
 
-Local `make check` passed: **398 tests**, Black, Ruff, codespell, mypy, secret/private-artifact
+Local `make check` passed: **407 tests**, Black, Ruff, codespell, mypy, secret/private-artifact
 scanner, configuration validation, Django system checks, migration drift check, and Chromium smoke.
 Fresh development migrations and fixture job completion also passed. Review and hosted CI
 dispositions are finalized in the PR. Test suites:
 `tests/test_application.py`, `tests/test_application_process.py`; operator/demo/backup instructions:
 [MVP-01-OPERATIONS.md](MVP-01-OPERATIONS.md).
+
+## Review fixes
+
+Initial full GitHub review covered `e35c533`:
+[CodeRabbit review](https://github.com/nickbashian/proposal-ingest/pull/15#pullrequestreview-5283405533).
+Both Windows and hosted Linux checks passed that initial commit. The supplemental CLI review
+reported ten findings (including a duplicate URL validation finding) and eight unreviewed files;
+the complete GitHub review is the authoritative coverage record. Final-commit review/CI status
+is recorded on PR #15 rather than inferred from the initial review.
+
+- Fixed budget-stop lease/attempt closure with assertions for the finished attempt.
+- Fixed revocation to remove the named grant and never create users/identities/collections/grants.
+- Preserved and validated database `sslmode`, requiring certificate verification in production;
+  added settings subprocess tests and a direct `joserfc` development dependency.
+- Pinned development/CI PostgreSQL to its inspected image digest, normalized allowed hosts,
+  required OIDC URL hostnames, and encoded all credential characters in test database URLs.
+- Preserved membership provenance against deletion through an additive migration.
+- Added immutable local byte storage and corruption/hash/key tests; observations retain bytes.
+- Declined the CLI suggestion to use Playwright's OS cache: MVP-00's bootstrap and repository
+  instructions deliberately use the nonsynced `.codex` cache. Explicit overrides still work.
+- Additional author checks corrected documented Bedrock 408/424 unknown-outcome accounting and
+  preserved the completed-call delivery stage across repeated pause/resume without redispatch.
 
 ## Remaining connections and handoff
 
