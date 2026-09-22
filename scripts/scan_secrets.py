@@ -15,10 +15,14 @@ ROOT = Path(__file__).resolve().parents[1]
 MAX_FILE_SIZE = 2 * 1024 * 1024
 FORBIDDEN_PATH_PARTS = {
     "db_dumps",
+    "logs",
     "private_data",
     "private_evaluations",
     "private_screenshots",
+    "processed_output",
+    "proposal-assistant-output",
     "raw_model_responses",
+    "source_documents",
 }
 FORBIDDEN_SUFFIXES = {".dump", ".sql.gz", ".tfstate", ".tfstate.backup"}
 ALLOWED_BINARY_FIXTURE_DIGESTS = {
@@ -58,12 +62,12 @@ ALLOWED_LOOPBACK_CREDENTIAL_URI = "://".join(
     ("postgresql", "proposal_ingest:local-development-only@127.0.0.1:54329/proposal_ingest_dev")
 )
 ASSIGNMENT_PATTERN = re.compile(
-    r"\b[\"']?(?:[A-Z0-9]+_)*(?:PASSWORD|PASSWD|SECRET|TOKEN|API_KEY|CLIENT_SECRET|SECRET_ACCESS_KEY|ACCESS_TOKEN|AUTH_TOKEN|BEARER_TOKEN)[\"']?"
+    r"\b[\"']?(?:[A-Z0-9]+_)*(?:PASSWORD|PASSWD|SECRET|TOKEN|API_?KEY|CLIENT_?SECRET|SECRET_?ACCESS_?KEY|ACCESS_?TOKEN|AUTH_?TOKEN|BEARER_?TOKEN)[\"']?"
     r"\s*[:=]\s*(?:\"([^\"\r\n]{6,})\"|'([^'\r\n]{6,})'|([^\s#]{6,}))",
     re.IGNORECASE | re.MULTILINE,
 )
 SENSITIVE_NAME_PATTERN = re.compile(
-    r"(?:[A-Z0-9]+_)*(?:PASSWORD|PASSWD|SECRET|TOKEN|API_KEY|CLIENT_SECRET|SECRET_ACCESS_KEY|ACCESS_TOKEN|AUTH_TOKEN|BEARER_TOKEN)",
+    r"(?:[A-Z0-9]+_)*(?:PASSWORD|PASSWD|SECRET|TOKEN|API_?KEY|CLIENT_?SECRET|SECRET_?ACCESS_?KEY|ACCESS_?TOKEN|AUTH_?TOKEN|BEARER_?TOKEN)",
     re.IGNORECASE,
 )
 SAFE_ASSIGNMENT_PATTERN = re.compile(

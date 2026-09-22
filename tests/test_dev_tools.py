@@ -72,6 +72,15 @@ def test_secret_scanner_detects_aws_secret_access_key_assignment(tmp_path: Path)
     assert [finding.kind for finding in findings] == ["non-placeholder secret assignment"]
 
 
+@pytest.mark.parametrize("key", ["apiKey", "clientSecret", "accessToken", "authToken"])
+def test_secret_scanner_detects_camel_case_assignment_keys(tmp_path: Path, key: str) -> None:
+    findings = scan_secrets.scan_text(
+        tmp_path / "settings.json", f'{{"{key}": "fictional-credential-value"}}'
+    )
+
+    assert [finding.kind for finding in findings] == ["non-placeholder secret assignment"]
+
+
 def test_secret_scanner_detects_python_constant_assignments(tmp_path: Path) -> None:
     source = '''
 api_key = 123456
@@ -110,6 +119,25 @@ def test_secret_scanner_rejects_private_artifact_path(
     private_file = tmp_path / "private_data" / "source.txt"
     private_file.parent.mkdir()
     private_file.write_text("fictional", encoding="utf-8")
+    monkeypatch.setattr(scan_secrets, "ROOT", tmp_path)
+
+    findings = scan_secrets.scan_paths([private_file])
+
+    assert [(finding.line, finding.kind) for finding in findings] == [
+        (0, "private/generated artifact path")
+    ]
+
+
+@pytest.mark.parametrize(
+    "directory",
+    ["source_documents", "processed_output", "proposal-assistant-output", "logs"],
+)
+def test_secret_scanner_rejects_all_never_commit_directories(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, directory: str
+) -> None:
+    private_file = tmp_path / directory / "ordinary-private-prose.txt"
+    private_file.parent.mkdir()
+    private_file.write_text("fictional private prose", encoding="utf-8")
     monkeypatch.setattr(scan_secrets, "ROOT", tmp_path)
 
     findings = scan_secrets.scan_paths([private_file])
@@ -345,6 +373,23 @@ def test_config_validation_rejects_local_auth_in_production() -> None:
     errors = dev.validate_env(values)
 
     assert "PROPOSAL_LOCAL_AUTH_ENABLED must be false in production" in errors
+    assert "ENTRA_TENANT_ID is required in production" in errors
+
+
+def test_production_validation_rejects_whitespace_only_entra_setting() -> None:
+    values = dev.read_env_file(dev.ROOT / ".env.example")
+    values.update(
+        {
+            "PROPOSAL_APP_ENV": "production",
+            "PROPOSAL_LOCAL_AUTH_ENABLED": "false",
+            "ENTRA_TENANT_ID": "   ",
+            "ENTRA_CLIENT_ID": "fictional-client",
+            "ENTRA_REDIRECT_URI": "https://example.invalid/callback",
+        }
+    )
+
+    errors = dev.validate_env(values)
+
     assert "ENTRA_TENANT_ID is required in production" in errors
 
 

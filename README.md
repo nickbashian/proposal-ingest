@@ -383,6 +383,6 @@ tested code, a completed CodeRabbit review disposition, and Nicholas's manual me
 ```bash
 git switch -c codex/mvp-NN-short-purpose
 # ... implement, test ...
-git push origin feature/scanner-inventory
+git push origin codex/mvp-NN-short-purpose
 # open a pull request
 ```

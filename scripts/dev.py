@@ -338,7 +338,7 @@ def validate_env(values: dict[str, str], *, production: bool = False) -> list[st
         if values.get("PROPOSAL_LOCAL_AUTH_ENABLED", "").casefold() != "false":
             errors.append("PROPOSAL_LOCAL_AUTH_ENABLED must be false in production")
         for key in ("ENTRA_TENANT_ID", "ENTRA_CLIENT_ID", "ENTRA_REDIRECT_URI"):
-            if not values.get(key):
+            if not values.get(key, "").strip():
                 errors.append(f"{key} is required in production")
     for key in ("JOB_WORKER_CONCURRENCY", "JOB_LEASE_SECONDS", "JOB_MAX_RETRIES"):
         if key not in values:

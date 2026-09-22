@@ -5,6 +5,10 @@ reviews:
   profile: assertive
   request_changes_workflow: false
   path_filters:
+    - "!source_documents/**"
+    - "!processed_output/**"
+    - "!proposal-assistant-output/**"
+    - "!logs/**"
     - "!private_data/**"
     - "!private_evaluations/**"
     - "!private_screenshots/**"
