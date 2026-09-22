@@ -35,6 +35,25 @@ def test_secret_scanner_requires_an_entire_placeholder_value(tmp_path: Path) -> 
     assert [finding.kind for finding in findings] == ["non-placeholder secret assignment"]
 
 
+def test_secret_scanner_rejects_environment_expansion_with_default(tmp_path: Path) -> None:
+    key = "_".join(("client", "secret"))
+    assignment = f"{key}=${{CLIENT_SECRET:-real-value}}"
+
+    findings = scan_secrets.scan_text(tmp_path / "settings.env", assignment)
+
+    assert [finding.kind for finding in findings] == ["non-placeholder secret assignment"]
+
+
+def test_secret_scanner_checks_every_assignment_on_one_line(tmp_path: Path) -> None:
+    safe_key = "_".join(("client", "secret"))
+    unsafe_key = "_".join(("access", "token"))
+    assignments = f"{safe_key}=<set-in-secret-store> {unsafe_key}=real-value"
+
+    findings = scan_secrets.scan_text(tmp_path / "settings.env", assignments)
+
+    assert [finding.kind for finding in findings] == ["non-placeholder secret assignment"]
+
+
 def test_secret_scanner_detects_lowercase_symbol_prefixed_assignment(tmp_path: Path) -> None:
     key = "_".join(("client", "secret"))
     value = "!" + "real-value"

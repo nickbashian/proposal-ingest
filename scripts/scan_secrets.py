@@ -57,12 +57,12 @@ ALLOWED_LOOPBACK_CREDENTIAL_URI = "://".join(
     ("postgresql", "proposal_ingest:local-development-only@127.0.0.1:54329/proposal_ingest_dev")
 )
 ASSIGNMENT_PATTERN = re.compile(
-    r"^\s*[\"']?(?:[A-Z0-9]+_)*(?:PASSWORD|PASSWD|SECRET|TOKEN|API_KEY|CLIENT_SECRET|SECRET_ACCESS_KEY|ACCESS_TOKEN|AUTH_TOKEN|BEARER_TOKEN)[\"']?"
+    r"\b[\"']?(?:[A-Z0-9]+_)*(?:PASSWORD|PASSWD|SECRET|TOKEN|API_KEY|CLIENT_SECRET|SECRET_ACCESS_KEY|ACCESS_TOKEN|AUTH_TOKEN|BEARER_TOKEN)[\"']?"
     r"\s*[:=]\s*(?:\"([^\"\r\n]{6,})\"|'([^'\r\n]{6,})'|([^\s#]{6,}))",
     re.IGNORECASE | re.MULTILINE,
 )
 SAFE_ASSIGNMENT_PATTERN = re.compile(
-    r"(?:\$\{[A-Z0-9_]+(?::-[^}]*)?\}|<[^>]+>|\*{6,}|"
+    r"(?:\$\{[A-Z0-9_]+\}|<[^>]+>|\*{6,}|"
     r"(?:change-me|example|placeholder|redacted)(?:[-_][A-Za-z0-9]+)*|"
     r"local-development-only)",
     re.IGNORECASE,
@@ -109,8 +109,7 @@ def scan_text(path: Path, text: str) -> list[Finding]:
         for kind, pattern in SECRET_PATTERNS.items():
             if pattern.search(line):
                 findings.append(Finding(path, number, kind))
-        assignment = ASSIGNMENT_PATTERN.search(line)
-        if assignment:
+        for assignment in ASSIGNMENT_PATTERN.finditer(line):
             value = assignment.group(1) or assignment.group(2) or assignment.group(3)
             is_python_expression = path.suffix.casefold() == ".py" and assignment.group(3)
             if not is_python_expression and not _is_safe_assignment(value):
