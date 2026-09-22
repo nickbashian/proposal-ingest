@@ -63,6 +63,33 @@ def test_secret_scanner_rejects_database_dump_suffix(
     ]
 
 
+def test_secret_scanner_scans_credential_beyond_large_file_limit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    large_file = tmp_path / "large.txt"
+    access_key = "AKIA" + "B" * 16
+    large_file.write_text(
+        "x" * (scan_secrets.MAX_FILE_SIZE + 1) + "\n" + access_key, encoding="utf-8"
+    )
+    monkeypatch.setattr(scan_secrets, "ROOT", tmp_path)
+
+    findings = scan_secrets.scan_paths([large_file])
+
+    assert any(finding.kind == "AWS access key" for finding in findings)
+
+
+def test_secret_scanner_fails_closed_for_unallowlisted_large_binary(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    large_file = tmp_path / "large.bin"
+    large_file.write_bytes(b"\0" * (scan_secrets.MAX_FILE_SIZE + 1))
+    monkeypatch.setattr(scan_secrets, "ROOT", tmp_path)
+
+    findings = scan_secrets.scan_paths([large_file])
+
+    assert [finding.kind for finding in findings] == ["unallowlisted oversized binary file"]
+
+
 def test_docker_diagnostic_distinguishes_inactive_engine(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -149,3 +176,14 @@ def test_config_validation_rejects_local_auth_in_production() -> None:
 
     assert "PROPOSAL_LOCAL_AUTH_ENABLED must be false in production" in errors
     assert "ENTRA_TENANT_ID is required in production" in errors
+
+
+def test_config_validation_rejects_blank_required_value() -> None:
+    values = dev.read_env_file(dev.ROOT / ".env.example")
+    values["DATABASE_URL"] = "   "
+    values["PROPOSAL_STORAGE_BACKEND"] = "unsupported"
+
+    errors = dev.validate_env(values)
+
+    assert "missing or blank setting: DATABASE_URL" in errors
+    assert "PROPOSAL_STORAGE_BACKEND must be local or s3" in errors

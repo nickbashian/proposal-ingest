@@ -19,6 +19,15 @@ FORBIDDEN_PATH_PARTS = {
     "raw_model_responses",
 }
 FORBIDDEN_SUFFIXES = {".dump", ".sql.gz", ".tfstate", ".tfstate.backup"}
+ALLOWED_BINARY_FIXTURES = {
+    "sample_data/fake_source_root/2025/2025 Fake DOE SBIR Battery Project/Budget.xlsx",
+    "sample_data/fake_source_root/2025/2025 Fake DOE SBIR Battery Project/FOA Instructions.pdf",
+    "sample_data/fake_source_root/2025/2025 Fake DOE SBIR Battery Project/Quad Chart.pdf",
+    "sample_data/fake_source_root/2025/2025 Fake DOE SBIR Battery Project/Quad Chart.pptx",
+    "sample_data/fake_source_root/2025/2025 Fake DOE SBIR Battery Project/Support Letter.docx",
+    "sample_data/fake_source_root/2025/2025 Fake DOE SBIR Battery Project/Technical Volume FINAL.docx",
+    "sample_data/fake_source_root/General/Empower Grant Activities/Grants In Progress/fake_grants_tracker.xlsx",
+}
 
 SECRET_PATTERNS = {
     "AWS access key": re.compile(r"\b(?:AKIA|ASIA)[0-9A-Z]{16}\b"),
@@ -80,6 +89,29 @@ def scan_text(path: Path, text: str) -> list[Finding]:
     return findings
 
 
+def _with_line_offset(findings: Iterable[Finding], offset: int) -> list[Finding]:
+    return [Finding(item.path, item.line + offset, item.kind) for item in findings]
+
+
+def _scan_large_file(path: Path) -> list[Finding]:
+    """Scan oversized UTF-8 text incrementally and fail closed on binary data."""
+
+    findings: list[Finding] = []
+    try:
+        with path.open("r", encoding="utf-8") as handle:
+            for number, line in enumerate(handle, start=1):
+                if "\0" in line:
+                    return [Finding(path, 0, "unallowlisted oversized binary file")]
+                findings.extend(_with_line_offset(scan_text(path, line), number - 1))
+    except UnicodeDecodeError:
+        return [Finding(path, 0, "unallowlisted oversized non-UTF-8 file")]
+    return findings
+
+
+def _is_allowed_binary_fixture(path: Path) -> bool:
+    return path.relative_to(ROOT).as_posix() in ALLOWED_BINARY_FIXTURES
+
+
 def scan_paths(paths: Iterable[Path]) -> list[Finding]:
     """Scan repository paths without printing sensitive matched values."""
 
@@ -91,6 +123,9 @@ def scan_paths(paths: Iterable[Path]) -> list[Finding]:
             findings.append(Finding(path, 0, "private/generated artifact path"))
             continue
         if path.stat().st_size > MAX_FILE_SIZE:
+            if _is_allowed_binary_fixture(path):
+                continue
+            findings.extend(_scan_large_file(path))
             continue
         payload = path.read_bytes()
         if b"\0" in payload:

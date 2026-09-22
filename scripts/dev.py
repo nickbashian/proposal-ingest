@@ -32,6 +32,7 @@ ENV_REQUIRED_KEYS = {
     "MONTHLY_VARIABLE_COST_LIMIT_USD",
     "SINGLE_JOB_COST_LIMIT_USD",
 }
+SUPPORTED_STORAGE_BACKENDS = {"local", "s3"}
 
 
 def _configure_browser_cache() -> Path:
@@ -313,9 +314,14 @@ def read_env_file(path: Path) -> dict[str, str]:
 def validate_env(values: dict[str, str], *, production: bool = False) -> list[str]:
     """Return actionable setting-name errors while never exposing secret values."""
 
-    errors = [f"missing setting: {key}" for key in sorted(ENV_REQUIRED_KEYS - values.keys())]
+    errors = [
+        f"missing or blank setting: {key}"
+        for key in sorted(key for key in ENV_REQUIRED_KEYS if not values.get(key, "").strip())
+    ]
     if values.get("PROPOSAL_APP_ENV") not in {"local", "production"}:
         errors.append("PROPOSAL_APP_ENV must be local or production")
+    if values.get("PROPOSAL_STORAGE_BACKEND") not in SUPPORTED_STORAGE_BACKENDS:
+        errors.append("PROPOSAL_STORAGE_BACKEND must be local or s3")
     boolean_keys = {"PROPOSAL_LOCAL_AUTH_ENABLED", "MOCK_BEDROCK", "SAVE_RAW_MODEL_RESPONSES"}
     for key in sorted(boolean_keys & values.keys()):
         if values[key].casefold() not in {"true", "false"}:
