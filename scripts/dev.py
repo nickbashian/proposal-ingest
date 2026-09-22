@@ -19,7 +19,7 @@ ROOT = Path(__file__).resolve().parents[1]
 VENV = ROOT / ".venv"
 LOCK_FILE = ROOT / "requirements-dev.lock"
 COMPOSE_FILE = ROOT / "compose.dev.yml"
-MINIMUM_PYTHON = (3, 13)
+REQUIRED_PYTHON = (3, 13)
 ENV_REQUIRED_KEYS = {
     "PROPOSAL_APP_ENV",
     "PROPOSAL_LOCAL_AUTH_ENABLED",
@@ -91,11 +91,11 @@ def _tool_version(name: str, arguments: Sequence[str] = ("--version",)) -> Check
 
 def _python_result() -> CheckResult:
     version = platform.python_version()
-    if sys.version_info[:2] < MINIMUM_PYTHON:
+    if sys.version_info[:2] != REQUIRED_PYTHON:
         return CheckResult(
             "Python",
             "FAIL",
-            f"running {version}; Python 3.13 or newer is required",
+            f"running {version}; this lock and project require Python 3.13 exactly",
             "Run this command with py -3.13 on Windows or python3.13 on Linux.",
         )
     return CheckResult("Python", "PASS", f"{version} ({sys.executable})")
@@ -271,16 +271,18 @@ def _venv_python() -> Path:
 
 
 def _python_launcher() -> list[str]:
-    if sys.version_info[:2] >= MINIMUM_PYTHON:
+    if sys.version_info[:2] == REQUIRED_PYTHON:
         return [sys.executable]
     candidates = (["py", "-3.13"], ["python3.13"])
     for candidate in candidates:
         if not shutil.which(candidate[0]):
             continue
-        probe = _run([*candidate, "-c", "import sys; raise SystemExit(sys.version_info < (3, 13))"])
+        probe = _run(
+            [*candidate, "-c", "import sys; raise SystemExit(sys.version_info[:2] != (3, 13))"]
+        )
         if probe.returncode == 0:
             return list(candidate)
-    raise RuntimeError("Python 3.13 or newer is required; no compatible interpreter was found.")
+    raise RuntimeError("Python 3.13 is required; no exact 3.13 interpreter was found.")
 
 
 def _assert_safe_checkout() -> None:
@@ -377,7 +379,18 @@ def bootstrap(*, with_browser: bool) -> None:
         check=True,
     )
     if with_browser:
-        subprocess.run([python, "-m", "playwright", "install", "chromium"], check=True)
+        subprocess.run([python, "scripts/dev.py", "install-browser"], cwd=ROOT, check=True)
+
+
+def install_browser() -> None:
+    """Install Chromium in the shared cache plus supported Linux libraries."""
+
+    _configure_browser_cache()
+    command = [sys.executable, "-m", "playwright", "install"]
+    if sys.platform.startswith("linux"):
+        command.append("--with-deps")
+    command.append("chromium")
+    subprocess.run(command, cwd=ROOT, check=True)
 
 
 def browser_smoke() -> None:
@@ -524,6 +537,7 @@ def _build_parser() -> argparse.ArgumentParser:
     bootstrap_parser.add_argument("--with-browser", action="store_true", help="Install Chromium")
 
     subparsers.add_parser("check", help="Run the complete local/CI check path")
+    subparsers.add_parser("install-browser", help="Install Chromium in the shared tooling cache")
     subparsers.add_parser("browser-smoke", help="Launch Chromium against a local page")
 
     config_parser = subparsers.add_parser(
@@ -560,6 +574,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             return 1 if any(result.status in failing for result in results) else 0
         if args.command == "bootstrap":
             bootstrap(with_browser=args.with_browser)
+        elif args.command == "install-browser":
+            install_browser()
         elif args.command == "check":
             run_checks()
         elif args.command == "browser-smoke":

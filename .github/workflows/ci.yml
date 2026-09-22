@@ -20,7 +20,7 @@ jobs:
       - name: Install locked dependencies
         run: python scripts/dev.py bootstrap
       - name: Install Chromium and Linux dependencies
-        run: .venv/bin/python -m playwright install --with-deps chromium
+        run: .venv/bin/python scripts/dev.py install-browser
       - name: Canonical checks
         run: make check
       - name: Existing mock pipeline

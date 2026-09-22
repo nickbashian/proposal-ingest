@@ -26,6 +26,14 @@ def test_secret_scanner_reports_assignment_without_echoing_value(tmp_path: Path)
     assert "real-value" not in repr(findings[0])
 
 
+def test_secret_scanner_requires_an_entire_placeholder_value(tmp_path: Path) -> None:
+    assignment = "_".join(("CLIENT", "SECRET")) + "=" + "false-but-real\n"
+
+    findings = scan_secrets.scan_text(tmp_path / "settings.env", assignment)
+
+    assert [finding.kind for finding in findings] == ["non-placeholder secret assignment"]
+
+
 def test_secret_scanner_rejects_private_artifact_path(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -35,6 +43,20 @@ def test_secret_scanner_rejects_private_artifact_path(
     monkeypatch.setattr(scan_secrets, "ROOT", tmp_path)
 
     findings = scan_secrets.scan_paths([private_file])
+
+    assert [(finding.line, finding.kind) for finding in findings] == [
+        (0, "private/generated artifact path")
+    ]
+
+
+def test_secret_scanner_rejects_database_dump_suffix(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    dump_file = tmp_path / "backup.sql.gz"
+    dump_file.write_bytes(b"synthetic")
+    monkeypatch.setattr(scan_secrets, "ROOT", tmp_path)
+
+    findings = scan_secrets.scan_paths([dump_file])
 
     assert [(finding.line, finding.kind) for finding in findings] == [
         (0, "private/generated artifact path")
@@ -61,6 +83,33 @@ def test_docker_diagnostic_distinguishes_inactive_engine(
 
     assert [result.status for result in results] == ["PASS", "PASS", "WARN"]
     assert "inactive or unreachable" in results[-1].detail
+
+
+def test_python_diagnostic_rejects_314(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(dev.sys, "version_info", (3, 14, 0))
+    monkeypatch.setattr(dev.platform, "python_version", lambda: "3.14.0")
+
+    result = dev._python_result()
+
+    assert result.status == "FAIL"
+    assert "require Python 3.13 exactly" in result.detail
+
+
+def test_linux_browser_install_includes_system_dependencies(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[list[str]] = []
+
+    def fake_subprocess_run(command: list[str], **_: object) -> CompletedProcess[str]:
+        calls.append(command)
+        return CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr(dev.sys, "platform", "linux")
+    monkeypatch.setattr(dev.subprocess, "run", fake_subprocess_run)
+
+    dev.install_browser()
+
+    assert calls == [[dev.sys.executable, "-m", "playwright", "install", "--with-deps", "chromium"]]
 
 
 def test_mock_run_is_forced_to_synthetic_source_and_mock_mode(

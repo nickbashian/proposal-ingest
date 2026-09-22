@@ -18,7 +18,7 @@ FORBIDDEN_PATH_PARTS = {
     "private_screenshots",
     "raw_model_responses",
 }
-FORBIDDEN_SUFFIXES = {".tfstate", ".tfstate.backup"}
+FORBIDDEN_SUFFIXES = {".dump", ".sql.gz", ".tfstate", ".tfstate.backup"}
 
 SECRET_PATTERNS = {
     "AWS access key": re.compile(r"\b(?:AKIA|ASIA)[0-9A-Z]{16}\b"),
@@ -27,22 +27,14 @@ SECRET_PATTERNS = {
     "private key": re.compile(r"-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----"),
 }
 ASSIGNMENT_PATTERN = re.compile(
-    r"\b[A-Z0-9_]*(?:PASSWORD|PASSWD|SECRET|TOKEN|API_KEY|CLIENT_SECRET)[A-Z0-9_]*\b"
+    r"\b(?:[A-Z0-9]+_)*(?:PASSWORD|PASSWD|SECRET|TOKEN|API_KEY|CLIENT_SECRET|ACCESS_TOKEN|AUTH_TOKEN|BEARER_TOKEN)\b"
     r"\s*[:=]\s*[\"']?([A-Za-z0-9][A-Za-z0-9+/_=.-]{5,})"
 )
-SAFE_ASSIGNMENT_MARKERS = (
-    "${",
-    "<",
-    "change-me",
-    "example",
-    "local-development",
-    "placeholder",
-    "redacted",
-    "********",
-    "false",
-    "none",
-    "null",
-    "true",
+SAFE_ASSIGNMENT_PATTERN = re.compile(
+    r"(?:\$\{[A-Z0-9_]+(?::-[^}]*)?\}|<[^>]+>|\*{6,}|"
+    r"(?:change-me|example|placeholder|redacted)(?:[-_][A-Za-z0-9]+)*|"
+    r"local-development-only)",
+    re.IGNORECASE,
 )
 
 
@@ -66,13 +58,12 @@ def _repository_paths() -> list[Path]:
 def _forbidden_path(path: Path) -> bool:
     relative = path.relative_to(ROOT)
     parts = {part.casefold() for part in relative.parts}
-    suffixes = "".join(relative.suffixes).casefold()
-    return bool(parts & FORBIDDEN_PATH_PARTS) or suffixes in FORBIDDEN_SUFFIXES
+    name = relative.name.casefold()
+    return bool(parts & FORBIDDEN_PATH_PARTS) or name.endswith(tuple(FORBIDDEN_SUFFIXES))
 
 
 def _is_safe_assignment(value: str) -> bool:
-    normalized = value.casefold()
-    return not value or any(marker in normalized for marker in SAFE_ASSIGNMENT_MARKERS)
+    return not value or SAFE_ASSIGNMENT_PATTERN.fullmatch(value) is not None
 
 
 def scan_text(path: Path, text: str) -> list[Finding]:

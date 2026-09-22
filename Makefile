@@ -17,7 +17,7 @@ install:
 	$(BOOTSTRAP_PYTHON) scripts/dev.py bootstrap --with-browser
 
 install-browser:
-	$(PYTHON) -m playwright install chromium
+	$(PYTHON) scripts/dev.py install-browser
 
 diagnose:
 	$(PYTHON) scripts/dev.py diagnose
