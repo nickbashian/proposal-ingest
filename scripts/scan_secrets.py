@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import re
 import subprocess
 import sys
@@ -19,14 +20,28 @@ FORBIDDEN_PATH_PARTS = {
     "raw_model_responses",
 }
 FORBIDDEN_SUFFIXES = {".dump", ".sql.gz", ".tfstate", ".tfstate.backup"}
-ALLOWED_BINARY_FIXTURES = {
-    "sample_data/fake_source_root/2025/2025 Fake DOE SBIR Battery Project/Budget.xlsx",
-    "sample_data/fake_source_root/2025/2025 Fake DOE SBIR Battery Project/FOA Instructions.pdf",
-    "sample_data/fake_source_root/2025/2025 Fake DOE SBIR Battery Project/Quad Chart.pdf",
-    "sample_data/fake_source_root/2025/2025 Fake DOE SBIR Battery Project/Quad Chart.pptx",
-    "sample_data/fake_source_root/2025/2025 Fake DOE SBIR Battery Project/Support Letter.docx",
-    "sample_data/fake_source_root/2025/2025 Fake DOE SBIR Battery Project/Technical Volume FINAL.docx",
-    "sample_data/fake_source_root/General/Empower Grant Activities/Grants In Progress/fake_grants_tracker.xlsx",
+ALLOWED_BINARY_FIXTURE_DIGESTS = {
+    "sample_data/fake_source_root/2025/2025 Fake DOE SBIR Battery Project/Budget.xlsx": (
+        "f451b74b55537d93463eb7c97e25d12f269d7a3e3bc4c477dcb0cebc7709ac96"
+    ),
+    "sample_data/fake_source_root/2025/2025 Fake DOE SBIR Battery Project/FOA Instructions.pdf": (
+        "17a85d19c3ef448bd8a7472ede3938bccb8dd2ffe0c062bc3876282f210eeeb1"
+    ),
+    "sample_data/fake_source_root/2025/2025 Fake DOE SBIR Battery Project/Quad Chart.pdf": (
+        "bf342904441bde51526d12d4c02570ba4a11478456646064a163ea400400c937"
+    ),
+    "sample_data/fake_source_root/2025/2025 Fake DOE SBIR Battery Project/Quad Chart.pptx": (
+        "0f277aca48a9a86964d115a4ca9f2b3d3a19db00b34afbb59e112bfcfb8f3caf"
+    ),
+    "sample_data/fake_source_root/2025/2025 Fake DOE SBIR Battery Project/Support Letter.docx": (
+        "f36671d713e1fe6542c0eab782f264f4b7fcbd0644cb110111a2b92db2359372"
+    ),
+    "sample_data/fake_source_root/2025/2025 Fake DOE SBIR Battery Project/Technical Volume FINAL.docx": (
+        "34cf8e87670bb0935494054e9a0fccd72b09cbd885b3b9f3a2a7b46336ad470a"
+    ),
+    "sample_data/fake_source_root/General/Empower Grant Activities/Grants In Progress/fake_grants_tracker.xlsx": (
+        "a214f795dad46e77e994f02ec628a83ae6cf15ac84101dd333d0106ccad9aaf2"
+    ),
 }
 
 SECRET_PATTERNS = {
@@ -42,8 +57,9 @@ ALLOWED_LOOPBACK_CREDENTIAL_URI = "://".join(
     ("postgresql", "proposal_ingest:local-development-only@127.0.0.1:54329/proposal_ingest_dev")
 )
 ASSIGNMENT_PATTERN = re.compile(
-    r"\b(?:[A-Z0-9]+_)*(?:PASSWORD|PASSWD|SECRET|TOKEN|API_KEY|CLIENT_SECRET|ACCESS_TOKEN|AUTH_TOKEN|BEARER_TOKEN)\b"
-    r"\s*[:=]\s*[\"']?([A-Za-z0-9][A-Za-z0-9+/_=.-]{5,})"
+    r"^\s*[\"']?(?:[A-Z0-9]+_)*(?:PASSWORD|PASSWD|SECRET|TOKEN|API_KEY|CLIENT_SECRET|ACCESS_TOKEN|AUTH_TOKEN|BEARER_TOKEN)[\"']?"
+    r"\s*[:=]\s*(?:\"([^\"\r\n]{6,})\"|'([^'\r\n]{6,})'|([^\s#]{6,}))",
+    re.IGNORECASE | re.MULTILINE,
 )
 SAFE_ASSIGNMENT_PATTERN = re.compile(
     r"(?:\$\{[A-Z0-9_]+(?::-[^}]*)?\}|<[^>]+>|\*{6,}|"
@@ -94,8 +110,11 @@ def scan_text(path: Path, text: str) -> list[Finding]:
             if pattern.search(line):
                 findings.append(Finding(path, number, kind))
         assignment = ASSIGNMENT_PATTERN.search(line)
-        if assignment and not _is_safe_assignment(assignment.group(1)):
-            findings.append(Finding(path, number, "non-placeholder secret assignment"))
+        if assignment:
+            value = assignment.group(1) or assignment.group(2) or assignment.group(3)
+            is_python_expression = path.suffix.casefold() == ".py" and assignment.group(3)
+            if not is_python_expression and not _is_safe_assignment(value):
+                findings.append(Finding(path, number, "non-placeholder secret assignment"))
         for match in URI_CREDENTIAL_PATTERN.finditer(line):
             if match.group(0) != ALLOWED_LOOPBACK_CREDENTIAL_URI:
                 findings.append(Finding(path, number, "credential in URI user-info"))
@@ -122,7 +141,13 @@ def _scan_large_file(path: Path) -> list[Finding]:
 
 
 def _is_allowed_binary_fixture(path: Path) -> bool:
-    return path.relative_to(ROOT).as_posix() in ALLOWED_BINARY_FIXTURES
+    relative = path.relative_to(ROOT).as_posix()
+    expected_digest = ALLOWED_BINARY_FIXTURE_DIGESTS.get(relative)
+    if expected_digest is None:
+        return False
+    with path.open("rb") as handle:
+        actual_digest = hashlib.file_digest(handle, "sha256").hexdigest()
+    return actual_digest == expected_digest
 
 
 def scan_paths(paths: Iterable[Path]) -> list[Finding]:

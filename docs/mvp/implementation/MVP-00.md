@@ -20,7 +20,7 @@ untracked `-A8.git` were preserved.
 
 | ID | Status | Evidence |
 |---|---|---|
-| 00-A | Passed on Windows; Linux CI pending PR | GNU Make 4.4.1 ran literal `make check`: Black, Ruff, codespell, mypy, configuration/secret scans, 319 tests, and Chromium smoke all passed. Linux uses the same Make target in `.github/workflows/ci.yml`; final hosted evidence is recorded in the PR. Python is constrained to exactly 3.13 and the 3.12 fallback was removed. |
+| 00-A | Passed on Windows; Linux CI pending PR | GNU Make 4.4.1 ran literal `make check`: Black, Ruff, codespell, mypy, configuration/secret scans, 321 tests, and Chromium smoke all passed. Linux uses the same Make target in `.github/workflows/ci.yml`; final hosted evidence is recorded in the PR. Python is constrained to exactly 3.13 and the 3.12 fallback was removed. |
 | 00-B | Passed | Locked bootstrap completed from `requirements-dev.lock`; Chromium installed beneath the nonsynced `.codex` root. `make mock-run` processed the synthetic fixture with no AWS call: 6 inventoried, 5/5 eligible analyzed, 5 copied, 1 excluded, 6 manifest rows. Output stayed under `tmp/mvp00-mock`. |
 | 00-C | Passed | `scripts/dev.py diagnose` reports Git/Python/Make/Docker/Compose/AWS CLI/GitHub CLI/Node/Playwright/CodeRabbit separately and distinguishes absent executable, inactive service, and missing/unverified sign-in. The pinned PostgreSQL 18.6 service passed health, restart-persistence, and logical-backup checks; `db-reset` removed its disposable volume. |
 | 00-D | Passed locally; hosted CI pending PR | Local/CI use `make check`, ordinary CI forces mock mode and disables AWS metadata access, and the repository scanner rejects common credentials and forbidden private-artifact paths without printing values. Synthetic provenance and private-data policy are documented. GitHub readback confirmed auto-merge disabled and `main` protected with current branch plus `check` required, admins included, conversation resolution, and force-push/deletion disabled. |
@@ -86,6 +86,14 @@ live verification.
 - **Fourth dispositions:** Both were fixed. The direct check and Make/CI paths now run the same
   configuration validation, and URI credentials fail the repository guard with one exact documented
   loopback development URI exception. Two regression tests cover these corrections.
+- **Fifth reviewed commit:** `f82b737` (full committed diff against `main`).
+- **Fifth result:** Three unique substantiated findings (one was duplicated): the local pre-commit
+  scanner used the ambient interpreter, symbol-prefixed/lowercase secret assignments could evade the
+  heuristic, and binary-fixture exceptions trusted paths without content verification.
+- **Fifth dispositions:** All were fixed. Pre-commit creates a Python 3.13 hook environment, assignment
+  detection supports lowercase keys and quoted symbol-prefixed values without treating Python
+  expressions as credentials, and every binary exception requires its recorded SHA-256. Two
+  regression tests cover the scanner changes; the managed pre-commit hook passed.
 - **Final verification:** Pending review of the final fix commit; the result is also recorded in the
   PR before merge.
 

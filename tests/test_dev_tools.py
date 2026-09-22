@@ -1,3 +1,4 @@
+import hashlib
 from pathlib import Path
 from subprocess import CompletedProcess
 
@@ -30,6 +31,15 @@ def test_secret_scanner_requires_an_entire_placeholder_value(tmp_path: Path) -> 
     assignment = "_".join(("CLIENT", "SECRET")) + "=" + "false-but-real\n"
 
     findings = scan_secrets.scan_text(tmp_path / "settings.env", assignment)
+
+    assert [finding.kind for finding in findings] == ["non-placeholder secret assignment"]
+
+
+def test_secret_scanner_detects_lowercase_symbol_prefixed_assignment(tmp_path: Path) -> None:
+    key = "_".join(("client", "secret"))
+    value = "!" + "real-value"
+
+    findings = scan_secrets.scan_text(tmp_path / "settings.env", f'{key}="{value}"')
 
     assert [finding.kind for finding in findings] == ["non-placeholder secret assignment"]
 
@@ -125,6 +135,27 @@ def test_secret_scanner_fails_closed_for_unallowlisted_small_binary(
 
     findings = scan_secrets.scan_paths([binary_file])
 
+    assert [finding.kind for finding in findings] == ["unallowlisted binary file"]
+
+
+def test_binary_fixture_allowlist_requires_matching_digest(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    binary_file = tmp_path / "fixtures" / "synthetic.bin"
+    binary_file.parent.mkdir()
+    original = b"\0synthetic"
+    binary_file.write_bytes(original)
+    monkeypatch.setattr(scan_secrets, "ROOT", tmp_path)
+    monkeypatch.setattr(
+        scan_secrets,
+        "ALLOWED_BINARY_FIXTURE_DIGESTS",
+        {"fixtures/synthetic.bin": hashlib.sha256(original).hexdigest()},
+    )
+
+    assert scan_secrets.scan_paths([binary_file]) == []
+
+    binary_file.write_bytes(b"\0changed")
+    findings = scan_secrets.scan_paths([binary_file])
     assert [finding.kind for finding in findings] == ["unallowlisted binary file"]
 
 
