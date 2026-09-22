@@ -1,5 +1,9 @@
 # proposal-ingest
 
+The September 2026 product build follows [the MVP implementation playbook](docs/mvp/README.md):
+11 sequential PRs covering this development baseline, a private drafting application, live
+integrations, and bounded 2025 expansion. MVP numbering is separate from the historical CLI phases.
+
 Local-first document ingestion and metadata pipeline for a historical grant/proposal archive.
 
 ## What this tool does
@@ -27,8 +31,10 @@ Local-first document ingestion and metadata pipeline for a historical grant/prop
 
 ```
 proposal-ingest/
-  pyproject.toml            Python project definition and dependency list
+  pyproject.toml            Python project definition and dependency groups
+  requirements-dev.lock     Fully pinned Python 3.13 development environment
   Makefile                  Developer shortcuts (install, lint, test, check)
+  compose.dev.yml           Disposable loopback-only PostgreSQL development service
   .env.example              Environment variable template (copy to .env)
   .gitignore                Excludes confidential data, environments, build artifacts
   .github/workflows/ci.yml  GitHub Actions CI (Black, Ruff, spell check, mypy, pytest — no real Bedrock)
@@ -40,40 +46,78 @@ proposal-ingest/
   schemas/                  JSON Schema definitions for metadata records
   src/proposal_ingest/      Python package source
   tests/                    pytest test suite
-  sample_data/              Fake synthetic proposal files for local testing (no real data)
+  sample_data/              Documented synthetic proposal files (no real data)
   sample_outputs/           Reference output column layouts and example JSONL
   docs/                     Full specification documents
 ```
 
 ## Setup
 
-### Requirements
+### Requirements and diagnosis
 
-- Python 3.13 (fallback: 3.12 if a dependency causes friction)
-- Git
-- AWS CLI with a configured named profile (for Bedrock calls only)
+- Python 3.13 (3.12 is not supported by the package contract)
+- Git and GNU Make
+- Docker Desktop/Engine with the Compose plugin for the disposable PostgreSQL service
+- AWS CLI only for explicitly requested live Bedrock work; it is not needed for setup or mock runs
+
+Keep the checkout and Python environment outside OneDrive. No Node dependency is currently used. If
+a later phase adds one, install it beneath the user's `.codex` root rather than this checkout.
+
+Diagnose before installing or reconnecting tools:
+
+```powershell
+# Windows
+py -3.13 scripts/dev.py diagnose
+```
+
+```bash
+# Linux
+python3.13 scripts/dev.py diagnose
+```
+
+The report distinguishes missing executables, an inactive Docker service, and missing GitHub/AWS/
+CodeRabbit sign-in. Live AWS identity and local Chromium launch are opt-in via `--check-auth` and
+`--check-browser`.
 
 ### Install
 
-```bash
+```powershell
+# Windows (install GNU Make once if diagnose reports it missing)
+winget install --exact --id ezwinports.make --scope user
+
 git clone https://github.com/nickbashian/proposal-ingest.git
 cd proposal-ingest
-
-# Create and activate a virtual environment
-python -m venv .venv
-.venv\Scripts\activate       # Windows
-# source .venv/bin/activate  # macOS/Linux
-
-# Install the package and dev dependencies
-pip install -e ".[dev]"
+py -3.13 scripts/dev.py bootstrap --with-browser
+make check
+make mock-run
 ```
+
+Open a new terminal after the WinGet installation if `make` is not immediately on `PATH`.
+
+```bash
+# Ubuntu/Linux; install Python 3.13, GNU Make, and Docker using supported OS packages first.
+git clone https://github.com/nickbashian/proposal-ingest.git
+cd proposal-ingest
+python3.13 scripts/dev.py bootstrap --with-browser
+make check
+make mock-run
+```
+
+Bootstrap creates `.venv`, installs `requirements-dev.lock`, installs the package editable without
+re-resolving dependencies, and places Chromium under `~/.codex/proposal-ingest/playwright` by
+default. It refuses a checkout under OneDrive. The existing mock pipeline uses only synthetic data,
+requires no AWS credentials, and writes under `tmp/mvp00-mock`.
 
 ### Configure
 
 Copy `.env.example` to `.env` and fill in your local paths:
 
+```powershell
+Copy-Item .env.example .env
+```
+
 ```bash
-copy .env.example .env
+cp .env.example .env
 ```
 
 **Critical `.env` fields:**
@@ -88,7 +132,8 @@ copy .env.example .env
 ### Verify dev tooling
 
 ```bash
-make check   # runs Black check, Ruff, spell check, mypy, pytest
+# Black, Ruff, spelling, mypy, secrets/private-artifact scan, pytest, local Chromium
+make check
 ```
 
 Install the local git hook once per clone:
@@ -104,10 +149,16 @@ make format  # black src tests
 make lint    # black --check src tests
 make ruff    # ruff check src tests
 make spellcheck  # codespell
+make secrets  # likely credentials and forbidden private artifact paths
 make precommit-run  # pre-commit run --all-files
-make mypy    # mypy src
+make mypy    # mypy src scripts
 make test    # pytest
+make browser-smoke  # local page only; no network
 ```
+
+Disposable database commands are `make db-up`, `make db-smoke`, `make db-down`, and the explicit
+destructive development-only cleanup `make db-reset`. MVP-01 owns application migrations; MVP-00's
+smoke test checks service health, restart persistence, and logical-backup output only.
 
 VS Code workspace settings recommend the Code Spell Checker extension and keep spelling
 diagnostics at hint level so domain terms do not turn into noisy errors.
@@ -127,10 +178,7 @@ bypasses all AWS calls for local and CI testing.
 ## First mock run (no AWS required)
 
 ```bash
-proposal-ingest run-all \
-  --source-root sample_data/fake_source_root \
-  --output-root tmp/mock_output \
-  --mock-bedrock
+make mock-run
 ```
 
 ## First Bedrock smoke test
@@ -274,9 +322,15 @@ processed_output/
 
 ## Implementation status
 
-Phases 1 through 12, plus Phase 14 (proposal-level synthesis), Phase 15
-(proposal-level question arbitration), and the issue #9 end-to-end quality
-benchmark / proposal-aware RAG output work, are complete:
+The active product roadmap is [MVP-00 through MVP-10](docs/mvp/README.md). MVP-00 provides the
+reproducible development baseline in this repository. MVP-01 and later application work must follow
+the acceptance boundaries in `docs/mvp/PR_PLAYBOOK.md`.
+
+The reusable CLI prototype predates that roadmap. Its historical phases 1–12 and 14–16 are
+implemented; its 2024 Phase 13 pilot remains a separate, incomplete historical effort and is not a
+prerequisite for the 2025 product.
+
+Implemented prototype capabilities include:
 
 - Phase 1 — scanner and inventory
 - Phase 2 — file rules and PowerPoint handling
@@ -301,18 +355,8 @@ Current implementation boundary:
 - Use `--mock-bedrock` for local and CI-safe runs; real Bedrock paths require valid AWS credentials and model access.
 - `run-all` now finishes by building the clean set and manifest unless critical review questions remain open.
 
-See `docs/10_implementation_plan.md` for the phase-by-phase status and `docs/11_copilot_agent_prompts.md`
-for the ready-to-use Copilot/agent prompts for later phases.
-
-**Suggested branch order:**
-
-1. `feature/scanner-inventory` — Prompt 2 in the spec
-2. `feature/metadata-models` — Prompt 4
-3. `feature/mock-bedrock` — Prompt 5
-4. `feature/bedrock-smoke-test` — Prompt 6
-5. `feature/document-analysis` — Prompts 7–8
-6. `feature/question-loop` — Prompt 9
-7. `feature/folder-clean-output` — Prompts 10–11
+See `docs/10_implementation_plan.md` and `docs/13_phase13_pilot_status.md` for archived prototype
+history, not the next implementation sequence.
 
 ## Safety and confidentiality
 
@@ -322,19 +366,22 @@ for the ready-to-use Copilot/agent prompts for later phases.
 - Source proposal documents (`source_documents/`)
 - Processed output (`processed_output/`, `proposal-assistant-output/`)
 - Raw model responses (`raw_model_responses/`)
+- Private data, evaluations, screenshots, database dumps, or infrastructure state
 - Logs (`logs/`, `*.log`)
 - The grants tracker workbook
 - Any file containing personal, financial, or partner-confidential information
 
-The `.gitignore` blocks these paths by default. If in doubt, check with `git status` before
-every commit.
+The `.gitignore` blocks common paths, and `make secrets` scans candidate repository files. Neither
+is an access-control boundary. Follow `docs/mvp/FIXTURE_AND_DATA_POLICY.md` and inspect `git status`
+before every commit.
 
 ## Contributing
 
-Use feature branches. Target `main` only with working, tested code.
+Use `codex/mvp-NN-short-purpose` branches for the product roadmap. Target `main` only with working,
+tested code, a completed CodeRabbit review disposition, and Nicholas's manual merge.
 
 ```bash
-git checkout -b feature/scanner-inventory
+git switch -c codex/mvp-NN-short-purpose
 # ... implement, test ...
 git push origin feature/scanner-inventory
 # open a pull request

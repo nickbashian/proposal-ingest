@@ -1,5 +1,9 @@
 # 10 — Implementation Plan
 
+> **Archived prototype roadmap.** This document records the CLI build and the incomplete historical
+> 2024 pilot. New product work follows `docs/mvp/README.md` and `docs/mvp/PR_PLAYBOOK.md`; MVP
+> numbering is intentionally separate.
+
 ## Build strategy
 
 Use small, testable increments. Avoid starting with Bedrock. Build the local state machine first, then add AI calls.

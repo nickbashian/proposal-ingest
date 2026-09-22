@@ -1,5 +1,8 @@
 # Phase 13 Pilot Test Status
 
+> **Historical 2024 pilot record.** This effort remains incomplete and is not a prerequisite or
+> active phase for the 2025 Proposal Knowledge Base roadmap in `docs/mvp/README.md`.
+
 Date: 2026-05-18
 
 ## Purpose

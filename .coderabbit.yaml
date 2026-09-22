@@ -1,0 +1,15 @@
+language: en-US
+early_access: false
+
+reviews:
+  profile: assertive
+  request_changes_workflow: false
+  path_filters:
+    - "!private_data/**"
+    - "!private_evaluations/**"
+    - "!private_screenshots/**"
+    - "!raw_model_responses/**"
+  auto_review:
+    enabled: true
+    auto_incremental_review: true
+    drafts: false

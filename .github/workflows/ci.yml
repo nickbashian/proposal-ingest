@@ -5,24 +5,23 @@ on:
   pull_request:
 
 jobs:
-  test:
+  check:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      AWS_EC2_METADATA_DISABLED: "true"
+      MOCK_BEDROCK: "true"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.13"
-      - name: Install
-        run: |
-          python -m pip install --upgrade pip
-          python -m pip install -e ".[dev]"
-      - name: Black format check
-        run: black --check src tests
-      - name: Ruff
-        run: ruff check src tests
-      - name: Spell check
-        run: codespell
-      - name: Mypy
-        run: mypy src
-      - name: Pytest
-        run: pytest
+      - name: Install locked dependencies
+        run: python scripts/dev.py bootstrap
+      - name: Install Chromium and Linux dependencies
+        run: .venv/bin/python -m playwright install --with-deps chromium
+      - name: Canonical checks
+        run: make check
+      - name: Existing mock pipeline
+        run: make mock-run

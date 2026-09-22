@@ -1,0 +1,102 @@
+from pathlib import Path
+from subprocess import CompletedProcess
+
+import pytest
+
+from scripts import dev, scan_secrets
+
+
+def test_secret_scanner_accepts_placeholders_and_rejects_credentials(tmp_path: Path) -> None:
+    safe = scan_secrets.scan_text(
+        tmp_path / ".env.example", "CLIENT_SECRET=<set-in-secret-store>\n"
+    )
+    access_key = "AKIA" + "A" * 16
+    unsafe = scan_secrets.scan_text(tmp_path / "settings.env", f"AWS_ACCESS_KEY_ID={access_key}\n")
+
+    assert safe == []
+    assert [finding.kind for finding in unsafe] == ["AWS access key"]
+
+
+def test_secret_scanner_reports_assignment_without_echoing_value(tmp_path: Path) -> None:
+    assignment = "_".join(("CLIENT", "SECRET")) + "=" + "real-value\n"
+    findings = scan_secrets.scan_text(tmp_path / "settings.env", assignment)
+
+    assert len(findings) == 1
+    assert findings[0].kind == "non-placeholder secret assignment"
+    assert "real-value" not in repr(findings[0])
+
+
+def test_secret_scanner_rejects_private_artifact_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    private_file = tmp_path / "private_data" / "source.txt"
+    private_file.parent.mkdir()
+    private_file.write_text("fictional", encoding="utf-8")
+    monkeypatch.setattr(scan_secrets, "ROOT", tmp_path)
+
+    findings = scan_secrets.scan_paths([private_file])
+
+    assert [(finding.line, finding.kind) for finding in findings] == [
+        (0, "private/generated artifact path")
+    ]
+
+
+def test_docker_diagnostic_distinguishes_inactive_engine(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        dev,
+        "_tool_version",
+        lambda name, arguments=("--version",): dev.CheckResult(name, "PASS", "Docker 28"),
+    )
+
+    def fake_run(command: list[str], **_: object) -> CompletedProcess[str]:
+        if command[1:3] == ["compose", "version"]:
+            return CompletedProcess(command, 0, "Docker Compose v2", "")
+        return CompletedProcess(command, 1, "", "engine unavailable")
+
+    monkeypatch.setattr(dev, "_run", fake_run)
+
+    results = dev._docker_results()
+
+    assert [result.status for result in results] == ["PASS", "PASS", "WARN"]
+    assert "inactive or unreachable" in results[-1].detail
+
+
+def test_mock_run_is_forced_to_synthetic_source_and_mock_mode(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls: list[list[str]] = []
+
+    def fake_subprocess_run(command: list[str], **_: object) -> CompletedProcess[str]:
+        calls.append(command)
+        return CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr(dev.subprocess, "run", fake_subprocess_run)
+
+    dev.mock_run(tmp_path / "output")
+
+    command = calls[0]
+    assert command[2:4] == ["proposal_ingest.cli", "run-all"]
+    assert command[command.index("--source-root") + 1] == str(
+        dev.ROOT / "sample_data" / "fake_source_root"
+    )
+    assert command[command.index("--output-root") + 1] == str((tmp_path / "output").resolve())
+    assert command[-1] == "--mock-bedrock"
+
+
+def test_bootstrap_refuses_onedrive_checkout(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(dev, "ROOT", Path("C:/Users/example/OneDrive/project"))
+
+    with pytest.raises(RuntimeError, match="under OneDrive"):
+        dev._assert_safe_checkout()
+
+
+def test_config_validation_rejects_local_auth_in_production() -> None:
+    values = dev.read_env_file(dev.ROOT / ".env.example")
+    values["PROPOSAL_APP_ENV"] = "production"
+
+    errors = dev.validate_env(values)
+
+    assert "PROPOSAL_LOCAL_AUTH_ENABLED must be false in production" in errors
+    assert "ENTRA_TENANT_ID is required in production" in errors

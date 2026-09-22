@@ -1,0 +1,69 @@
+# MVP-00 implementation report
+
+- **Date:** 2026-09-22
+- **Branch:** `codex/mvp-00-environment-guardrails`
+- **Base:** `4143a328aef2ee773806b0f17d7f7da375adac9c`
+- **Coding agent:** Codex
+- **Migration/rollback:** No application migration. Revert repository tooling/configuration changes;
+  `make db-reset` removes only the named disposable development database volume.
+
+## Baseline reconciliation
+
+Before changes, Python 3.13.13 passed Black, Ruff, codespell, mypy, and all 296 tests. The code and
+root README showed that prototype phases 1–12 and 14–16 were implemented, while `AGENTS.md` and the
+GitHub phase instruction incorrectly called Phase 12 a stub/next task. The current commit matched the
+planning baseline. The supplied version 0.2 product specification itself was not present; its name
+and SHA-256 remain recorded in `docs/mvp/README.md`. Existing user planning files and the unrelated
+untracked `-A8.git` were preserved.
+
+## Acceptance evidence
+
+| ID | Status | Evidence |
+|---|---|---|
+| 00-A | Passed on Windows; Linux CI pending PR | GNU Make 4.4.1 ran literal `make check`: Black, Ruff, codespell, mypy, configuration/secret scans, 303 tests, and Chromium smoke all passed. Linux uses the same Make target in `.github/workflows/ci.yml`; final hosted evidence is recorded in the PR. Python is constrained to 3.13 and the 3.12 fallback was removed. |
+| 00-B | Passed | Locked bootstrap completed from `requirements-dev.lock`; Chromium installed beneath the nonsynced `.codex` root. `make mock-run` processed the synthetic fixture with no AWS call: 6 inventoried, 5/5 eligible analyzed, 5 copied, 1 excluded, 6 manifest rows. Output stayed under `tmp/mvp00-mock`. |
+| 00-C | Passed | `scripts/dev.py diagnose` reports Git/Python/Make/Docker/Compose/AWS CLI/GitHub CLI/Node/Playwright/CodeRabbit separately and distinguishes absent executable, inactive service, and missing/unverified sign-in. The pinned PostgreSQL 18.6 service passed health, restart-persistence, and logical-backup checks; `db-reset` removed its disposable volume. |
+| 00-D | Passed locally; hosted CI pending PR | Local/CI use `make check`, ordinary CI forces mock mode and disables AWS metadata access, and the repository scanner rejects common credentials and forbidden private-artifact paths without printing values. Synthetic provenance and private-data policy are documented. GitHub readback confirmed auto-merge disabled and `main` protected with current branch plus `check` required, admins included, conversation resolution, and force-push/deletion disabled. |
+| 00-E | Passed | `AGENTS.md`, root README, GitHub instructions, and old roadmap/pilot headers now identify the MVP roadmap as active. Read-only sources, config-driven behavior, mock mode, checks, and historical pilot status are preserved. |
+| 00-F | Passed locally; GitHub App optional | CodeRabbit CLI 0.8.0 was installed from an inspected official installer. `cr auth status` succeeded and `cr doctor` reported 9/9 checks passing. Final-diff review evidence and dispositions are added below. The GitHub App remains optional because a full local CLI review satisfies the playbook. |
+
+## Environment and connection matrix
+
+“Verified live” means an account/service interaction occurred; installed software alone is not a
+live verification.
+
+| Item | Implemented/configured locally | Verified in live account | Responsible / next action |
+|---|---|---|---|
+| Python/dependencies | Python 3.13.13; pinned lock; bootstrap passed | Not applicable | Agent; CI repeats on Linux |
+| GNU Make/checks | Make 4.4.1; canonical target passed | GitHub-hosted run pending PR | Agent |
+| Browser tooling | Playwright 1.63.0; local Chromium render passed | Not applicable | Agent |
+| Docker/PostgreSQL | Engine 28.4.0; Compose 2.39.2; PostgreSQL smoke/cleanup passed | Not applicable | Agent; start Docker Desktop when developing |
+| GitHub | CLI authenticated; public repository; protected `main`; auto-merge off | Repository settings read back 2026-09-22 | Nicholas retains final merge authority |
+| CodeRabbit | CLI 0.8.0 authenticated; doctor passed | Local review service reachable | Agent records final review below; GitHub App optional |
+| AWS | CLI and named profile detected | No identity, billing, model, quota, or region capability probe | Nicholas/agent in the MVP-08 connection session |
+| Entra/SharePoint | Empty settings contract only | Not connected | Tenant administrator plus agent in MVP-08 |
+| TypeSafe/Jev | Disabled empty settings contract only | Terms and account unverified | Nicholas/agent at MVP-05/08 decision gate |
+| Production hosting/storage | Not provisioned by design | Not connected | MVP-08 after offline implementation and cost review |
+
+## Design and data decisions
+
+- `decisions/0001-product-foundation.md` records the proposed Django/PostgreSQL/database-worker,
+  adapter, OIDC, deployment, and no-Node defaults. Merge is the owner confirmation gate.
+- The source archive remains read-only. Repository fixtures are fictional and carry explicit
+  provenance. Private excerpts, screenshots, evaluations, prompts/responses, dumps, and state files
+  stay outside Git and CodeRabbit.
+- PostgreSQL is setup-only in MVP-00. Application models, migrations, worker startup, and browser
+  application flows remain MVP-01/02 scope.
+
+## CodeRabbit review
+
+- **Reviewed commit/diff:** Pending final local review.
+- **Review result:** Pending.
+- **Finding dispositions:** Pending.
+
+## Known limitations and next handoff
+
+- Hosted Linux CI cannot be called passed until the branch is pushed and the PR check completes.
+- No production/account capability was inferred from installed CLIs or templates.
+- MVP-01 starts only after this PR merges. It owns the durable Django application, PostgreSQL
+  migrations, authenticated shell, durable worker/jobs, and adapter contracts.
