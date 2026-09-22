@@ -291,6 +291,14 @@ def test_config_validation_rejects_local_auth_in_production() -> None:
     assert "ENTRA_TENANT_ID is required in production" in errors
 
 
+def test_explicit_production_validation_requires_production_environment() -> None:
+    values = dev.read_env_file(dev.ROOT / ".env.example")
+
+    errors = dev.validate_env(values, production=True)
+
+    assert "PROPOSAL_APP_ENV must be production with --production" in errors
+
+
 def test_config_validation_rejects_blank_required_value() -> None:
     values = dev.read_env_file(dev.ROOT / ".env.example")
     values["DATABASE_URL"] = "   "

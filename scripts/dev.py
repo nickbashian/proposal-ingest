@@ -332,6 +332,8 @@ def validate_env(values: dict[str, str], *, production: bool = False) -> list[st
     for key in sorted(boolean_keys & values.keys()):
         if values[key].casefold() not in {"true", "false"}:
             errors.append(f"{key} must be true or false")
+    if production and values.get("PROPOSAL_APP_ENV") != "production":
+        errors.append("PROPOSAL_APP_ENV must be production with --production")
     if production or values.get("PROPOSAL_APP_ENV") == "production":
         if values.get("PROPOSAL_LOCAL_AUTH_ENABLED", "").casefold() != "false":
             errors.append("PROPOSAL_LOCAL_AUTH_ENABLED must be false in production")
