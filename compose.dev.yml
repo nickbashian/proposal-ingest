@@ -15,7 +15,7 @@ services:
       timeout: 3s
       retries: 20
     volumes:
-      - proposal_ingest_postgres:/var/lib/postgresql/18/docker
+      - proposal_ingest_postgres:/var/lib/postgresql
 
 volumes:
   proposal_ingest_postgres:

@@ -18,6 +18,14 @@ def test_secret_scanner_accepts_placeholders_and_rejects_credentials(tmp_path: P
     assert [finding.kind for finding in unsafe] == ["AWS access key"]
 
 
+def test_secret_scanner_detects_stateless_github_installation_token(tmp_path: Path) -> None:
+    token = "ghs_" + "12345" + "_" + "header.payload.signature"
+
+    findings = scan_secrets.scan_text(tmp_path / "settings.env", f"TOKEN={token}\n")
+
+    assert any(finding.kind == "GitHub token" for finding in findings)
+
+
 def test_secret_scanner_reports_assignment_without_echoing_value(tmp_path: Path) -> None:
     assignment = "_".join(("CLIENT", "SECRET")) + "=" + "real-value\n"
     findings = scan_secrets.scan_text(tmp_path / "settings.env", assignment)
@@ -200,6 +208,22 @@ def test_secret_scanner_fails_closed_for_unallowlisted_large_binary(
     assert [finding.kind for finding in findings] == ["unallowlisted oversized binary file"]
 
 
+def test_secret_scanner_fails_closed_for_oversized_multiline_python(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    large_file = tmp_path / "large.py"
+    multiline_assignment = "api_" + "key = (\n    'fictional-secret-value'\n)\n"
+    large_file.write_text(
+        "#" * (scan_secrets.MAX_FILE_SIZE + 1) + "\n" + multiline_assignment,
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(scan_secrets, "ROOT", tmp_path)
+
+    findings = scan_secrets.scan_paths([large_file])
+
+    assert [finding.kind for finding in findings] == ["unallowlisted oversized Python file"]
+
+
 def test_secret_scanner_fails_closed_for_unallowlisted_small_binary(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -302,6 +326,36 @@ def test_mock_run_is_forced_to_synthetic_source_and_mock_mode(
     )
     assert command[command.index("--output-root") + 1] == str((tmp_path / "output").resolve())
     assert command[-1] == "--mock-bedrock"
+
+
+def test_blank_browser_cache_setting_uses_nonsynced_default(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("PLAYWRIGHT_BROWSERS_PATH", "   ")
+    monkeypatch.setattr(dev.Path, "home", lambda: tmp_path)
+
+    configured = dev._configure_browser_cache()
+
+    expected = tmp_path / ".codex" / "proposal-ingest" / "playwright"
+    assert configured == expected
+    assert dev.os.environ["PLAYWRIGHT_BROWSERS_PATH"] == str(expected)
+
+
+def test_db_up_pulls_before_starting_postgres(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[tuple[list[str], int]] = []
+
+    def fake_compose(arguments: list[str], *, timeout: int = 60) -> CompletedProcess[str]:
+        calls.append((arguments, timeout))
+        return CompletedProcess(arguments, 0, "", "")
+
+    monkeypatch.setattr(dev, "_compose", fake_compose)
+
+    dev.db_up()
+
+    assert calls == [
+        (["pull", "--quiet", "postgres"], 600),
+        (["up", "--detach", "--wait", "postgres"], 180),
+    ]
 
 
 def test_dev_check_includes_config_validation(

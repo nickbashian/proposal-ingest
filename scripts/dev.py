@@ -40,8 +40,9 @@ def _configure_browser_cache() -> Path:
     """Keep browser tooling in the owner's nonsynced Codex root by default."""
 
     default = Path.home() / ".codex" / "proposal-ingest" / "playwright"
-    configured = Path(os.environ.setdefault("PLAYWRIGHT_BROWSERS_PATH", str(default)))
-    return configured
+    if not os.environ.get("PLAYWRIGHT_BROWSERS_PATH", "").strip():
+        os.environ["PLAYWRIGHT_BROWSERS_PATH"] = str(default)
+    return Path(os.environ["PLAYWRIGHT_BROWSERS_PATH"])
 
 
 @dataclass(frozen=True)
@@ -480,7 +481,10 @@ def _compose(arguments: Sequence[str], *, timeout: int = 60) -> subprocess.Compl
 
 
 def db_up() -> None:
-    result = _compose(["up", "--detach", "--wait", "postgres"], timeout=60)
+    pull = _compose(["pull", "--quiet", "postgres"], timeout=600)
+    if pull.returncode:
+        raise RuntimeError(_combined_output(pull))
+    result = _compose(["up", "--detach", "--wait", "postgres"], timeout=180)
     if result.returncode:
         raise RuntimeError(_combined_output(result))
 

@@ -2,7 +2,7 @@
 
 This checklist is owned by MVP-00 and updated in every PR. MVP-00 added repository diagnostics,
 locked setup, browser/database smoke paths, and review guardrails. Authentication, cloud
-capabilities, billing, a running Docker engine, and production connections remain **unverified**;
+capabilities, billing, and production connections remain **unverified**;
 see `implementation/MVP-00.md` for dated evidence and exact pending owner actions.
 
 Use two status columns in the implementation report: **implemented/configured locally** and **verified in the live account**. Record date, evidence location, responsible person, and next action for anything pending. Keep credentials and sensitive account identifiers in private configuration, not this checklist or PR comments.
@@ -13,15 +13,15 @@ Use two status columns in the implementation report: **implemented/configured lo
 |---|---|---|
 | Working copy | Existing clone at `C:\dev\Proposal RAG Assistant`; baseline commit in overview | Preserve unrelated edits/untracked files; branch from verified merged main. Keep code/dependencies outside OneDrive. |
 | Python | Existing `.venv` runs Python 3.13.13 and tests | Lock compatible runtime/development dependencies; test fresh environment setup. Document interpreter selection and portable Windows/Linux commands. |
-| Make | Not on PATH | Install an appropriate GNU Make distribution or documented equivalent entry point that makes literal `make check` work; fix Makefile interpreter detection for Windows/Linux. Fail immediately on each failing component. |
-| PostgreSQL | Not checked | Install/run a pinned local container via Docker Compose; test migrations, persistence, backups, and cleanup confined to disposable development data. Use PostgreSQL in concurrency/integration CI tests. |
-| Docker | CLI present; engine not checked | Check engine/Compose availability and resource allocation before installation; document native-Windows/WSL prerequisites and how to start/stop the development stack. |
+| Make | GNU Make 4.4.1 ran the canonical Windows gate | Keep literal `make check` working on documented Windows and Linux paths; fail immediately on each failing component. |
+| PostgreSQL | PostgreSQL 18.6 service health, restart persistence, logical backup, and disposable cleanup passed | Keep MVP-00 validation limited to the disposable service. MVP-01 owns application migrations and database integration tests. |
+| Docker | Engine 28.4.0 and Compose 2.39.2 ran the PostgreSQL smoke path | Document native-Windows/WSL prerequisites and how to start/stop the development stack. |
 | Git/GitHub CLI | Executables present | Verify repository remote and `gh auth status`; inspect visibility and required-check capabilities. Configure PR template, checks, and Nicholas-only merge workflow within available account features. |
-| Formatting/tests | Black/Ruff/codespell/mypy/pytest passed | Align locked versions with hooks/CI; one canonical check path. Add migration drift, browser flow, dependency/secret checks as relevant to new application code. |
-| Browser tests | Not checked | Use a maintained browser test runner, preferably Python Playwright to avoid a separate frontend build. Install supported browser binaries and document CI setup. If Node packages are needed, use the `.codex` root per owner instruction. |
+| Formatting/tests | Black/Ruff/codespell/mypy and 341 pytest cases passed | Keep locked versions aligned with hooks/CI and preserve one canonical check path. Add migration drift and application checks in their owning MVPs. |
+| Browser tests | Python Playwright 1.63.0 Chromium smoke passed locally and in CI | Keep browser binaries in the nonsynced `.codex` cache and preserve the Linux dependency installation path. |
 | Node/assets | Node executable present | No Node installation is needed merely because this is a web app. If selected, declare/lock modules in repo but install/use at the owner's `.codex` root; support isolated per-project dependencies beneath that root. No dependencies in synced directories. |
 | AWS CLI | Executable present | Verify version and named-profile/SSO setup when connecting; do not run a model smoke test as a default setup step. |
-| CodeRabbit | Not checked | Prefer GitHub app review for durable findings; optionally set up VS Code or CLI local review. Check account access, repository installation, plan limits, and a synthetic review. Keep any remaining interactive sign-in in the shared owner list. |
+| CodeRabbit | CLI 0.8.0 authenticated; doctor passed 9/9; PR review path active | Prefer GitHub app review for durable findings and keep any remaining interactive sign-in in the shared owner list. |
 | Configuration | Prototype `.env.example` exists | Extend with local/production mode, DB, storage, auth, connector IDs, per-task models, provider enable flags, job/budget limits, retention. Validate missing/invalid settings with actionable diagnostics; no secrets in defaults. |
 | Data separation | Existing ignore rules cover common output folders | Add explicit private-data/evaluation/screenshot locations, secret scanning, synthetic fixture provenance, and safe logging. `.gitignore` alone is not a confidentiality check. Keep containers/DB dumps and infra state out of commits. |
 | Agent instructions | Historical status conflicts with actual code | Reconcile AGENTS, README, GitHub instructions, and old roadmap pointers. Preserve American English, source immutability, config-driven behavior, mock mode, and mandatory checks. |

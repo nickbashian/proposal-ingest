@@ -51,7 +51,11 @@ ALLOWED_BINARY_FIXTURE_DIGESTS = {
 
 SECRET_PATTERNS = {
     "AWS access key": re.compile(r"\b(?:AKIA|ASIA)[0-9A-Z]{16}\b"),
-    "GitHub token": re.compile(r"\b(?:gh[pousr]_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{40,})\b"),
+    "GitHub token": re.compile(
+        r"\b(?:gh[pousr]_[A-Za-z0-9]{30,}|"
+        r"ghs_[A-Za-z0-9]+_[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+|"
+        r"github_pat_[A-Za-z0-9_]{40,})\b"
+    ),
     "Slack token": re.compile(r"\bxox[baprs]-[A-Za-z0-9-]{20,}\b"),
     "private key": re.compile(r"-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----"),
 }
@@ -185,6 +189,8 @@ def _with_line_offset(findings: Iterable[Finding], offset: int) -> list[Finding]
 def _scan_large_file(path: Path) -> list[Finding]:
     """Scan oversized UTF-8 text incrementally and fail closed on binary data."""
 
+    if path.suffix.casefold() == ".py":
+        return [Finding(path, 0, "unallowlisted oversized Python file")]
     findings: list[Finding] = []
     try:
         with path.open("r", encoding="utf-8") as handle:
