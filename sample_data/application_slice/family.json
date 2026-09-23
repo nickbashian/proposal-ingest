@@ -1,0 +1,37 @@
+{
+  "revision": "mvp02-fixture-v1",
+  "proposal": "SYNTH-ENERGY-2025",
+  "family": "concept-to-phase-one",
+  "items": [
+    {
+      "key": "measured-cycle-result",
+      "title": "Synthetic cycling report",
+      "display_path": "Synthetic Energy/Reports/Cycling Results.txt",
+      "text": "The fictional pouch cell retained 92% of its initial capacity after 500 cycles at 25 °C under a 1C charge and 1C discharge protocol.",
+      "locator": {"section": "Results", "paragraph": 2},
+      "support_kind": "factual",
+      "initial_disposition": "awaiting_decision",
+      "reason": "A person must approve this measured-result passage for reuse."
+    },
+    {
+      "key": "excluded-commercial-note",
+      "title": "Synthetic commercial note",
+      "display_path": "Synthetic Energy/Administration/Commercial Note.txt",
+      "text": "EXCLUDED-FIXTURE-PASSAGE: internal pricing leverage and negotiating posture.",
+      "locator": {"section": "Commercial", "paragraph": 1},
+      "support_kind": "factual",
+      "initial_disposition": "excluded",
+      "reason": "Administrative commercial strategy is deliberately excluded from publication."
+    },
+    {
+      "key": "voice-aspiration",
+      "title": "Synthetic vision note",
+      "display_path": "Synthetic Energy/Writing/Vision Note.txt",
+      "text": "We envision a confident future in which resilient domestic battery manufacturing accelerates clean-energy deployment.",
+      "locator": {"section": "Vision", "paragraph": 1},
+      "support_kind": "voice",
+      "initial_disposition": "included",
+      "reason": "Approved for writing voice only; it cannot support factual claims."
+    }
+  ]
+}

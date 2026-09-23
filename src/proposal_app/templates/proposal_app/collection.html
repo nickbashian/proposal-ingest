@@ -1,0 +1,26 @@
+{% extends "proposal_app/base.html" %}{% block content %}
+<h1>{{ collection.name }}</h1>
+<p><span class="label">{{ retrieval_label }}</span> <span class="label">{{ drafting_label }}</span></p>
+<section class="card">
+  <h2>1. Import the synthetic family</h2>
+  <p>The durable worker loads the repository-owned fixture through the same job and outbox path used by provider adapters.</p>
+  <form method="post">{% csrf_token %}<input type="hidden" name="action" value="import-fixture"><button>Import synthetic family</button></form>
+</section>
+<section>
+  <h2>2. Review every item disposition</h2>
+  <table><thead><tr><th>Item</th><th>Proposal family</th><th>Passage role</th><th>Disposition</th><th>Reason / decision</th></tr></thead><tbody>
+  {% for row in rows %}<tr><td>{{ row.source.display_path }}</td><td>{{ row.family.proposal.identifier }} / {{ row.family.key }}</td><td>{% for unit in row.units %}{{ unit.support_kind }}{% if not forloop.last %}, {% endif %}{% endfor %}</td><td><strong>{{ row.disposition }}</strong></td><td>{{ row.disposition_reason }}{% if row.reviewable %}<form method="post">{% csrf_token %}<input type="hidden" name="action" value="review"><input type="hidden" name="decision_id" value="{{ row.decision.id }}"><input type="hidden" name="revision" value="{{ row.decision.revision }}"><button name="treatment" value="include">Include factual passage</button> <button name="treatment" value="exclude">Exclude passage</button></form>{% endif %}</td></tr>
+  {% empty %}<tr><td colspan="5">No items imported yet.</td></tr>{% endfor %}
+  </tbody></table>
+  <p class="warning">Voice-only passages may guide phrasing, but local factual retrieval and evidence pinning exclude them.</p>
+</section>
+<section>
+  <h2>3. Publish reviewed passages</h2>
+  {% for proposal in proposals %}<form method="post">{% csrf_token %}<input type="hidden" name="action" value="publish"><input type="hidden" name="proposal_id" value="{{ proposal.id }}"><button>Publish eligible passages for {{ proposal.identifier }}</button></form>{% empty %}<p>Import the fixture before publishing.</p>{% endfor %}
+</section>
+<section>
+  <h2>4. Search evidence and write</h2>
+  <form method="post">{% csrf_token %}<input type="hidden" name="action" value="new-draft"><label>Workspace title <input name="title" value="Synthetic evidence draft" maxlength="200"></label> <button>Create writing workspace</button></form>
+  {% for draft in drafts %}<p><a href="/writing/{{ draft.id }}/">{{ draft.title }}</a> · revision {{ draft.revision }}</p>{% endfor %}
+</section>
+{% endblock %}

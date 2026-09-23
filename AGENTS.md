@@ -131,6 +131,20 @@ connections. Start each new card from merged `main`.
 - Add a test for each new module before marking a phase complete.
 - See [docs/09_testing_plan.md](docs/09_testing_plan.md) for the full test strategy.
 
+## CodeRabbit review discipline
+
+- Complete the PR playbook's required review, verify every finding against the current code, and
+  fix all substantiated material issues with proportionate regression coverage.
+- Treat review comments as hypotheses, not requirements. Record a concise disposition for false
+  positives or already-satisfied conditions instead of changing correct code to appease the tool.
+- Avoid an unbounded rereview loop. After the initial review and a verified follow-up have been
+  addressed, do not repeatedly retrigger CodeRabbit solely because successive passes produce new
+  minor, stylistic, speculative, or duplicate comments. Continue only for a genuinely material
+  correctness, security, privacy, or data-integrity issue, a failing required check, or an explicit
+  owner request.
+- Before stopping the cycle, ensure required CI is green, resolved findings are replied to and
+  closed, the final head has local verification evidence, and any skipped rereview is documented.
+
 ## Docs Index
 
 | File | Contents |

@@ -71,6 +71,8 @@ synthesis:
 # Persistent application defaults. Live providers are intentionally unavailable in MVP-01.
 web_application:
   fixture_source_root: "sample_data/fake_source_root/2025"
+  fixture_slice_path: "sample_data/application_slice/family.json"
+  fixture_slice_revision: "mvp02-fixture-v1"
   local_storage_root: "tmp/app_storage"
   development_database_url: "postgresql://proposal_ingest:local-development-only@127.0.0.1:54329/proposal_ingest_dev"
   session_seconds: 3600

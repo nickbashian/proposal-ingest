@@ -160,11 +160,14 @@ make browser-smoke  # local page only; no network
 
 Disposable database commands are `make db-up`, `make db-smoke`, `make db-down`, and the explicit
 destructive development-only cleanup `make db-reset`. PostgreSQL is required for application tests.
-Run `make app-migrate`, `make fixture-job`, and `make app-run` to start the persistent application;
+Run `make app-migrate`, `make fixture-slice`, and `make app-run` to start the local product slice;
 run `make worker` in another terminal. Enable local sign-in explicitly in the process environment.
-See the [application operator guide](docs/mvp/implementation/MVP-01-OPERATIONS.md) for login,
-worker restart demo, production configuration, and backup/restore instructions. Application settings
-use process environment; the historical CLI's `.env` loading remains separate.
+See the [MVP-02 operator guide](docs/mvp/implementation/MVP-02-OPERATIONS.md) for the complete
+collection → review → publication → evidence → writing demo, and the
+[MVP-01 operator guide](docs/mvp/implementation/MVP-01-OPERATIONS.md) for worker recovery,
+production configuration, and backup/restore. Application settings use process environment; the
+historical CLI's `.env` loading remains separate. `make fixture-job` remains available for the
+smaller MVP-01 durable-job demonstration.
 
 VS Code workspace settings recommend the Code Spell Checker extension and keep spelling
 diagnostics at hint level so domain terms do not turn into noisy errors.
@@ -329,8 +332,9 @@ processed_output/
 ## Implementation status
 
 The active product roadmap is [MVP-00 through MVP-10](docs/mvp/README.md). MVP-00 provides the
-reproducible development baseline in this repository. MVP-01 and later application work must follow
-the acceptance boundaries in `docs/mvp/PR_PLAYBOOK.md`.
+reproducible development baseline, MVP-01 provides the durable authenticated application and worker,
+and MVP-02 provides the complete synthetic local product slice. Later work must follow the
+acceptance boundaries in `docs/mvp/PR_PLAYBOOK.md`.
 
 The reusable CLI prototype predates that roadmap. Its historical phases 1–12 and 14–16 are
 implemented; its 2024 Phase 13 pilot remains a separate, incomplete historical effort and is not a

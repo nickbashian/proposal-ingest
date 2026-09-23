@@ -13,6 +13,7 @@ from django.contrib.auth import get_user_model
 from django.db import connection
 from playwright.sync_api import sync_playwright
 
+from scripts import dev
 from proposal_app import models as m, services
 
 
@@ -97,11 +98,8 @@ def test_browser_authenticated_fixture_workflow(fixture_owner, live_server, monk
     monkeypatch.setattr(settings, "LOCAL_AUTH", True)
     cache = os.environ.get("PLAYWRIGHT_BROWSERS_PATH")
     if not cache:
-        from pathlib import Path
-
-        monkeypatch.setenv(
-            "PLAYWRIGHT_BROWSERS_PATH", str(Path.home() / ".codex/proposal-ingest/playwright")
-        )
+        monkeypatch.setenv("PLAYWRIGHT_BROWSERS_PATH", "")
+        dev._configure_browser_cache()
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch()
         try:

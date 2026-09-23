@@ -1,5 +1,5 @@
 {% extends "proposal_app/base.html" %}{% block content %}
 <h1>Collections and jobs</h1><p>Persistent processing status and recorded usage.</p>
-{% for collection in collections %}<section><h2>{{ collection.name }}</h2><form method="post" action="/collections/{{ collection.id }}/">{% csrf_token %}<button>Create synthetic fixture job</button></form></section>{% empty %}<p>No collections have been assigned to your account.</p>{% endfor %}
+{% for collection in collections %}<section><h2><a href="/collections/{{ collection.id }}/">{{ collection.name }}</a></h2><p><a href="/collections/{{ collection.id }}/">Open review and writing workflow</a></p><form method="post" action="/collections/{{ collection.id }}/">{% csrf_token %}<button>Create synthetic fixture job</button></form></section>{% empty %}<p>No collections have been assigned to your account.</p>{% endfor %}
 <h2>Recent jobs</h2><table><thead><tr><th>Job</th><th>Status</th><th>Attempts</th></tr></thead><tbody>{% for job in jobs %}<tr><td><a href="/jobs/{{ job.id }}/">{{ job.key }}</a></td><td>{{ job.state }}</td><td>{{ job.attempts }}</td></tr>{% empty %}<tr><td colspan="3">No jobs yet.</td></tr>{% endfor %}</tbody></table>
 {% endblock %}
