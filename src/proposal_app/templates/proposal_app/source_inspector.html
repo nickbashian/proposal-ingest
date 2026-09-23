@@ -1,0 +1,26 @@
+{% extends "proposal_app/base.html" %}{% block content %}
+<h1>Extraction inspector</h1>
+<p><a href="{% url 'collection' version.source.collection_id %}">Back to collection</a></p>
+<p><strong>Captured source:</strong> {{ version.observed_path|default:version.source.display_path }}</p>
+{% if not version.observed_path %}<p class="warning">Path at capture was not retained for this older source version; the current path is shown.</p>{% endif %}
+<p><a href="{% url 'source-original' version.id %}">Download exact captured source version</a></p>
+<dl><dt>Source version</dt><dd>{{ version.id }}</dd><dt>Captured at</dt><dd>{{ version.observed_at }}</dd><dt>Snapshot SHA-256</dt><dd>{{ version.blob.sha256 }}</dd></dl>
+<form method="post">{% csrf_token %}<input type="hidden" name="action" value="extract"><button>Extract or reuse cached result</button> <button name="force" value="true">Re-extract as a new version</button></form>
+{% if runs %}<p>Extraction history: {% for run in runs %}<a href="?run={{ run.id }}">#{{ run.number }} {{ run.state }}</a>{% if not forloop.last %} · {% endif %}{% endfor %}</p>{% endif %}
+{% if selected %}
+<section class="card"><h2>Run #{{ selected.number }}: {{ selected.state }}</h2>
+<dl><dt>Parser</dt><dd>{{ selected.parser }}</dd><dt>Extractor revision</dt><dd>{{ selected.extractor_revision }}</dd><dt>Fingerprint</dt><dd>{{ selected.fingerprint }}</dd><dt>Current successful version</dt><dd>{{ selected.active }}</dd><dt>Reason</dt><dd>{{ selected.reason|default:"None" }}</dd><dt>Recovery</dt><dd>{{ selected.recovery_action|default:"None" }}</dd><dt>Warnings</dt><dd>{{ selected.warnings|join:", "|default:"None" }}</dd></dl></section>
+{% if selected.state == "scanned" %}<form method="post">{% csrf_token %}<input type="hidden" name="action" value="request-visual"><input type="hidden" name="kind" value="ocr"><input type="hidden" name="run_id" value="{{ selected.id }}"><label>Page for selective OCR / manual source inspection <input name="page" type="number" min="1" required></label><button>Request page inspection</button></form>{% endif %}
+<h2>Original extracted units</h2>
+<p>Text is shown as emitted by the parser. Warnings mark uncertain layout or formula values. No interpretation below is an original source fact.</p>
+<table><thead><tr><th>Locator and role</th><th>Original text</th><th>Context and uncertainty</th></tr></thead><tbody>
+{% for row in rows %}<tr><td><a href="{% url 'unit-inspector' row.unit.id %}">{{ row.locator_label }}</a><br>{{ row.unit.kind }}<br>{{ row.unit.id }}</td><td><pre>{{ row.unit.text }}</pre></td><td><strong>Before:</strong> {{ row.before|truncatechars:220 }}<br><strong>After:</strong> {{ row.after|truncatechars:220 }}<br><strong>Recorded context:</strong> {{ row.unit.context }}<br><strong>Warnings:</strong> {{ row.unit.warnings|join:", "|default:"None" }}</td></tr>
+{% empty %}<tr><td colspan="3">No readable text units in this run.</td></tr>{% endfor %}
+</tbody></table>
+<h2>Preserved figures</h2>
+{% for figure in figures %}<section class="card"><h3>{{ figure.key }}</h3><p>Locator: {{ figure.locator }}</p><img src="{% url 'figure-image' figure.id %}" alt="Preserved source figure {{ figure.key }}" style="max-width:480px;max-height:360px"><p>Original asset SHA-256: {{ figure.blob.sha256 }}</p><p>{{ figure.caption }}</p><form method="post">{% csrf_token %}<input type="hidden" name="action" value="request-visual"><input type="hidden" name="kind" value="figure"><input type="hidden" name="run_id" value="{{ selected.id }}"><input type="hidden" name="figure_id" value="{{ figure.id }}"><button>Request selective figure interpretation</button></form></section>
+{% empty %}<p>No extractable figure assets were found.</p>{% endfor %}
+<h2>Selective inspection tasks</h2>
+{% for task in tasks %}<section class="card"><h3>{{ task.kind }} · {{ task.state }}</h3><p>Locator: {{ task.locator }} · Adapter: {{ task.adapter_revision }}</p>{% if task.state == "requested" and task.kind == "ocr" and ocr_available %}<form method="post">{% csrf_token %}<input type="hidden" name="action" value="run-ocr"><input type="hidden" name="task_id" value="{{ task.id }}"><button>Run bounded local OCR on this page</button></form>{% endif %}{% if task.state == "requested" or task.state == "needs_source_check" %}<form method="post">{% csrf_token %}<input type="hidden" name="action" value="complete-visual"><input type="hidden" name="task_id" value="{{ task.id }}"><label>Derived interpretation or transcription <textarea name="interpretation" required>{{ task.interpretation }}</textarea></label><label>Source check and uncertainty <textarea name="source_check" required></textarea></label><button>Save source-checked interpretation</button></form>{% else %}<p><strong>Derived content, source checked by reviewer:</strong> {{ task.interpretation }}</p><p><strong>Source check:</strong> {{ task.source_check }}</p>{% endif %}</section>{% empty %}<p>No visual tasks requested.</p>{% endfor %}
+{% else %}<p>No extraction attempted for this source version.</p>{% endif %}
+{% endblock %}
