@@ -85,6 +85,10 @@ A deep local review of that follow-up returned one non-actionable finding claimi
 could succeed before delivery. The current worker calls `deliver_fixture_import` before creating
 the result or setting `succeeded`, and the fixture acceptance helper verifies all three source rows
 exist after `work_once`; no code change was appropriate for that already-satisfied condition.
+The final hosted comment correctly identified shared disposition text on otherwise family-bound
+rows; commit `10ba867` moved the displayed state and rationale to each family's event and passed
+the full gate. The owner then explicitly ended the diminishing-returns rereview loop, so no further
+CodeRabbit run was requested after that verified correction; its thread was replied to and closed.
 
 Owner input is limited to brief interaction feedback on collection → review → evidence → writing.
 No credentials or connection action is needed. Nicholas merges manually after reviewing the demo;
