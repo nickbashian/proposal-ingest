@@ -29,10 +29,10 @@ or external connection occurs.
 | 02-C | passed | A fresh Python process reads the committed decision/draft/packet; edit and regeneration create immutable revisions 1–3 and preserve the user sentence. The citation page shows the exact passage, source-version ID, and `section Results, paragraph 2`. |
 | 02-D | passed | Pages label local deterministic retrieval/drafting; anonymous collection/writing access is denied, another collection member receives not found for the owner's workspace, and repeat import/publication reuses the same job/generation without duplicate sources. |
 
-Focused verification passed with **82 tests** across `test_application.py`,
+Focused verification passed with **83 tests** across `test_application.py`,
 `test_application_process.py`, and `test_mvp02.py`, covering the complete existing application
 regression set plus the new service, fresh-process, management-command, authorization, and browser
-paths. The CI-equivalent `scripts/dev.py check` passed **424 tests** plus Black, Ruff, codespell,
+paths. The CI-equivalent `scripts/dev.py check` passed **425 tests** plus Black, Ruff, codespell,
 mypy, secret/private-artifact scanning, configuration validation, Django checks, migration drift,
 and Chromium smoke. Literal `make check` was unavailable after the documented Windows PATH refresh,
 so the repository-documented equivalent was used. A full-page synthetic browser screenshot was
@@ -75,6 +75,14 @@ downloaded citation URLs absolute, centralizes browser-cache setup, preserves ma
 text during regeneration, and fails unexpected fixture-delivery exceptions closed without storing
 raw error details. Focused regression coverage exercises each correction; final hosted rereview
 status is recorded on PR #16.
+
+A later incremental CodeRabbit pass identified two additional contract edges. Fixture provenance
+now requires the exact JSON boolean `true`, and collection review rows are explicitly built per
+source/family membership so a multi-family source cannot submit a different family's decision.
+A deep local review of that follow-up returned one non-actionable finding claiming fixture jobs
+could succeed before delivery. The current worker calls `deliver_fixture_import` before creating
+the result or setting `succeeded`, and the fixture acceptance helper verifies all three source rows
+exist after `work_once`; no code change was appropriate for that already-satisfied condition.
 
 Owner input is limited to brief interaction feedback on collection → review → evidence → writing.
 No credentials or connection action is needed. Nicholas merges manually after reviewing the demo;

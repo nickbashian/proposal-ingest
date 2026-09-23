@@ -236,6 +236,58 @@ def test_delivery_rechecks_local_mode_and_malformed_items(slice_owner, settings)
     malformed.refresh_from_db()
     assert malformed.state == "failed" and malformed.stop_reason == "delivery_invalid"
 
+    wrong_flag = services.create_job(
+        user,
+        collection.id,
+        "wrong-flag",
+        kind="fixture-slice",
+        payload={"fixture_revision": settings.APP["fixture_slice_revision"]},
+    )
+    wrong_flag_result = FixtureSliceAdapter().execute(
+        wrong_flag.payload, idempotency_key=str(wrong_flag.id)
+    )
+    wrong_flag_result.value["synthetic"] = "true"
+    m.Job.objects.filter(pk=wrong_flag.id).update(
+        state="delivering", result=wrong_flag_result.value
+    )
+    m.Outbox.objects.create(job=wrong_flag)
+    assert jobs.deliver(wrong_flag.id)
+    wrong_flag.refresh_from_db()
+    assert wrong_flag.state == "failed" and wrong_flag.stop_reason == "delivery_invalid"
+    assert not m.SourceItem.objects.exists()
+
+
+def test_collection_review_rows_are_bound_to_proposal_family(slice_owner):
+    user, collection = slice_owner
+    import_slice(user, collection)
+    original = m.Decision.objects.get(revision=0, kind="inclusion")
+    source = m.SourceVersion.objects.get(pk=original.scope.removeprefix("version:")).source
+    second_proposal = m.Proposal.objects.create(
+        collection=collection, identifier="synthetic-second-proposal"
+    )
+    second_family = m.VersionFamily.objects.create(
+        proposal=second_proposal, key="synthetic-second-family"
+    )
+    m.ProposalMembership.objects.create(source=source, family=second_family)
+    second = m.Decision.objects.create(
+        family=second_family,
+        scope=original.scope,
+        field="publication",
+        kind="inclusion",
+    )
+
+    client = Client()
+    client.force_login(user)
+    response = client.get(f"/collections/{collection.id}/")
+    assert response.status_code == 200
+    source_rows = [row for row in response.context["rows"] if row["source"] == source]
+    assert {row["family"].id for row in source_rows} == {
+        original.family_id,
+        second_family.id,
+    }
+    assert {row["decision"].id for row in source_rows} == {original.id, second.id}
+    assert b"synthetic-second-proposal / synthetic-second-family" in response.content
+
 
 def test_human_decision_correction_immediately_removes_stale_retrieval(slice_owner):
     user, collection = slice_owner

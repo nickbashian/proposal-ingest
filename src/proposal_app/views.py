@@ -59,44 +59,57 @@ def collection(request, collection_id):
             return conflict(exc)
     sources = list(
         m.SourceItem.objects.filter(collection_id=collection_id)
-        .prefetch_related("sourceversion_set__extractedunit_set")
+        .prefetch_related(
+            "sourceversion_set__extractedunit_set",
+            "proposalmembership_set__family__proposal",
+        )
         .order_by("display_path")
     )
     rows = []
     for source in sources:
-        version_scopes = [f"version:{version.id}" for version in source.sourceversion_set.all()]
-        decision = (
-            m.Decision.objects.filter(
-                scope__in=version_scopes, field="publication", kind="inclusion"
+        versions = list(source.sourceversion_set.all())
+        version_scopes = [f"version:{version.id}" for version in versions]
+        units = [unit for version in versions for unit in version.extractedunit_set.all()]
+        memberships = sorted(
+            source.proposalmembership_set.all(),
+            key=lambda membership: (
+                membership.family.proposal.identifier,
+                membership.family.key,
+            ),
+        )
+        for membership in memberships:
+            family = membership.family
+            decision = (
+                m.Decision.objects.filter(
+                    family=family,
+                    scope__in=version_scopes,
+                    field="publication",
+                    kind="inclusion",
+                )
+                .order_by("-created_at")
+                .first()
             )
-            .order_by("-created_at")
-            .first()
-        )
-        latest_event = (
-            m.DecisionEvent.objects.filter(decision=decision).order_by("-revision").first()
-            if decision
-            else None
-        )
-        units = [
-            unit
-            for version in source.sourceversion_set.all()
-            for unit in version.extractedunit_set.all()
-        ]
-        rows.append(
-            {
-                "source": source,
-                "decision": decision,
-                "units": units,
-                "reviewable": bool(
-                    decision
-                    and (
-                        decision.revision == 0
-                        or not latest_event
-                        or not latest_event.value.get("fixture_default")
-                    )
-                ),
-            }
-        )
+            latest_event = (
+                m.DecisionEvent.objects.filter(decision=decision).order_by("-revision").first()
+                if decision
+                else None
+            )
+            rows.append(
+                {
+                    "source": source,
+                    "family": family,
+                    "decision": decision,
+                    "units": units,
+                    "reviewable": bool(
+                        decision
+                        and (
+                            decision.revision == 0
+                            or not latest_event
+                            or not latest_event.value.get("fixture_default")
+                        )
+                    ),
+                }
+            )
     proposals = m.Proposal.objects.filter(collection_id=collection_id).order_by("identifier")
     drafts = m.DraftSession.objects.filter(
         collection_id=collection_id, owner=request.user, deleted_at__isnull=True

@@ -40,7 +40,7 @@ def _validate_fixture(result: dict) -> None:
     if result.get("revision") != settings.APP["fixture_slice_revision"]:
         raise ValueError("Fixture revision does not match application configuration")
     items = result.get("items")
-    if not result.get("synthetic") or not isinstance(items, list) or not items:
+    if result.get("synthetic") is not True or not isinstance(items, list) or not items:
         raise ValueError("Fixture result is incomplete")
     for item in items:
         if (
