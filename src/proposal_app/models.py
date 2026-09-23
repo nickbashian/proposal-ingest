@@ -109,6 +109,81 @@ class ProposalMembership(Record):
         ]
 
 
+class SourceScope(Record):
+    """One configured proposal/year subtree, never a tenant-wide crawl."""
+
+    collection = models.ForeignKey(Collection, on_delete=models.PROTECT)
+    connector = models.CharField(max_length=80)
+    tenant = models.CharField(max_length=200)
+    site = models.CharField(max_length=200)
+    drive = models.CharField(max_length=200)
+    root_item = models.CharField(max_length=500)
+    proposal = models.ForeignKey(Proposal, on_delete=models.PROTECT)
+    year = models.PositiveSmallIntegerField()
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=[
+                    "collection",
+                    "connector",
+                    "tenant",
+                    "site",
+                    "drive",
+                    "root_item",
+                    "proposal",
+                ],
+                name="source_scope_identity",
+            )
+        ]
+
+
+class SourceSyncRun(Record):
+    scope = models.ForeignKey(SourceScope, on_delete=models.PROTECT)
+    state = models.CharField(max_length=30, default="running")
+    cursor = models.TextField(blank=True)
+    completed_at = models.DateTimeField(null=True)
+    error_code = models.CharField(max_length=100, blank=True)
+    counts = models.JSONField(default=dict)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["scope"], condition=Q(state="running"), name="one_running_source_sync"
+            )
+        ]
+
+
+class SourcePresence(Record):
+    scope = models.ForeignKey(SourceScope, on_delete=models.PROTECT)
+    source = models.ForeignKey(SourceItem, on_delete=models.PROTECT)
+    last_seen_run = models.ForeignKey(SourceSyncRun, on_delete=models.PROTECT)
+    observed_at = models.DateTimeField(default=timezone.now)
+    display_path = models.TextField()
+    retired_at = models.DateTimeField(null=True)
+    disposition = models.CharField(max_length=40)
+    reason = models.CharField(max_length=200, blank=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=["scope", "source"], name="scope_source_presence")
+        ]
+
+
+class SourceCaptureIssue(Record):
+    run = models.ForeignKey(SourceSyncRun, on_delete=models.PROTECT)
+    source_item = models.CharField(max_length=500)
+    code = models.CharField(max_length=100)
+    observed_at = models.DateTimeField(default=timezone.now)
+
+
+class SourcePathEvent(Record):
+    run = models.ForeignKey(SourceSyncRun, on_delete=models.PROTECT)
+    source = models.ForeignKey(SourceItem, on_delete=models.PROTECT)
+    scope = models.ForeignKey(SourceScope, on_delete=models.PROTECT)
+    display_path = models.TextField()
+
+
 class ExtractedUnit(Record):
     version = models.ForeignKey(SourceVersion, on_delete=models.PROTECT)
     extractor_revision = models.CharField(max_length=100)
