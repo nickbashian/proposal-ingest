@@ -118,6 +118,7 @@ class GraphSourceAdapter:
         self.session = session or requests.Session()
         self.timeout_seconds = timeout_seconds
         self.max_download_bytes = max_download_bytes
+        self._ancestor_cache: dict[str, GraphItem] = {}
 
     @classmethod
     def from_environment(
@@ -236,6 +237,8 @@ class GraphSourceAdapter:
         """Return one scoped delta page; only a final deltaLink completes a crawl."""
         if root_item_id != self.root_item_id:
             raise ValueError("Graph root is outside the configured source scope")
+        # A page shares ancestors; the next page starts with fresh live names.
+        self._ancestor_cache.clear()
         endpoint = self._delta_url()
         if cursor is not None:
             try:
@@ -274,6 +277,11 @@ class GraphSourceAdapter:
             raise ProviderFailure("graph_invalid_response")
         return item
 
+    def _cached_ancestor(self, item_id: str) -> GraphItem:
+        if item_id not in self._ancestor_cache:
+            self._ancestor_cache[item_id] = self.get_item(item_id)
+        return self._ancestor_cache[item_id]
+
     def resolve_scoped_item(self, item: GraphItem, *, year: int) -> GraphItem:
         """Build a path from IDs; delta responses do not carry parent paths."""
         if item.deleted:
@@ -286,11 +294,11 @@ class GraphSourceAdapter:
                 raise ProviderFailure("graph_unresolved_parent")
             names.append(current.name)
             visited.add(current.parent_id)
-            current = self.get_item(current.parent_id)
+            current = self._cached_ancestor(current.parent_id)
             if current.deleted:
                 raise ProviderFailure("graph_unresolved_parent")
         if current.item_id == item.item_id:
-            current = self.get_item(self.root_item_id)
+            current = self._cached_ancestor(self.root_item_id)
         root_parts = current.path.replace("\\", "/").rstrip("/").split("/")
         if len(root_parts) < 2 or root_parts[-2] != str(year):
             raise ProviderFailure("scope_mismatch")

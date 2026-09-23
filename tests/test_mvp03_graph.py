@@ -120,18 +120,31 @@ def test_delta_without_parent_paths_resolves_ancestors_before_classification():
     hidden["parentReference"] = {"id": "root1"}
     root = item("root1", name="Proposal", folder=True)
     root["parentReference"] = {"id": "year", "path": "/drives/d1/root:/2025"}
-    source, _ = adapter(
+    sibling = item("i2", name="another.pdf")
+    sibling["parentReference"] = {"id": "hidden"}
+    source, session = adapter(
         [
-            Response(payload={"value": [child], "@odata.deltaLink": endpoint}),
+            Response(payload={"value": [child, sibling], "@odata.deltaLink": endpoint}),
             Response(payload=hidden),
+            Response(payload=root),
+            Response(payload={"value": [child], "@odata.deltaLink": endpoint}),
+            Response(payload={**hidden, "name": "public"}),
             Response(payload=root),
         ]
     )
-    observed = source.delta_page("root1").items[0]
+    page = source.delta_page("root1")
+    observed = page.items[0]
     assert observed.path == "secret.pdf"
     resolved = source.resolve_scoped_item(observed, year=2025)
     assert resolved.path == "2025/Proposal/.private/secret.pdf"
     assert disposition(resolved)[0] == "administrative_exclusion"
+    assert source.resolve_scoped_item(page.items[1], year=2025).path.endswith(
+        "/.private/another.pdf"
+    )
+    assert len(session.calls) == 3
+    later = source.delta_page("root1").items[0]
+    assert source.resolve_scoped_item(later, year=2025).path == "2025/Proposal/public/secret.pdf"
+    assert len(session.calls) == 6
 
 
 def test_unresolved_graph_parent_fails_closed():
