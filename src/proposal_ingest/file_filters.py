@@ -30,9 +30,10 @@ class FileClassification:
     review_question: str | None = None
 
 
-def is_hidden_or_system(path: Path) -> bool:
+def is_hidden_or_system(path: Path, *, source_root: Path | None = None) -> bool:
     """Return True when a file should be skipped as hidden or system-managed."""
-    if any(part.startswith(".") for part in path.parts if part not in {".", ".."}):
+    relative = path.relative_to(source_root) if source_root is not None else path
+    if any(part.startswith(".") for part in relative.parts if part not in {".", ".."}):
         return True
 
     try:

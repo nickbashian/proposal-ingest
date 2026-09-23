@@ -314,7 +314,7 @@ def _scan_branch(*, source_root: Path, year_dir: Path, branch_dir: Path) -> list
     for file_path in sorted(branch_dir.rglob("*"), key=lambda path: path.as_posix().lower()):
         if not file_path.is_file():
             continue
-        if is_hidden_or_system(file_path):
+        if is_hidden_or_system(file_path, source_root=source_root):
             continue
         if is_temp_office_file(file_path):
             continue
