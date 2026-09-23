@@ -85,3 +85,4 @@ web_application:
   monthly_limit_usd: "50"
   job_limit_usd: "5"
   fixture_reservation_usd: "0.01"
+  max_snapshot_bytes: 52428800

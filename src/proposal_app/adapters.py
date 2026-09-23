@@ -111,10 +111,11 @@ def normalize_error(payload: dict, status: int) -> ProviderFailure:
 
 LIVE_REQUIREMENTS = {
     "sharepoint": (
+        "ENTRA_TENANT_ID",
         "SHAREPOINT_SITE_ID",
         "SHAREPOINT_DRIVE_ID",
-        "ENTRA_CLIENT_ID",
-        "ENTRA_CLIENT_SECRET",
+        "SHAREPOINT_CLIENT_ID",
+        "SHAREPOINT_CLIENT_SECRET",
     ),
     "bedrock": ("AWS_REGION", "BEDROCK_CLASSIFICATION_MODEL_ID"),
     "s3": ("AWS_REGION", "PROPOSAL_S3_BUCKET"),
@@ -126,12 +127,16 @@ LIVE_REQUIREMENTS = {
 def capability(name: str, configuration: dict) -> dict:
     missing = [key for key in LIVE_REQUIREMENTS.get(name, ()) if not configuration.get(key)]
     return {
-        "enabled": name == "fixture",
+        "enabled": name == "fixture" or (name == "sharepoint" and not missing),
         "missing": missing,
         "reason": (
             "local"
             if name == "fixture"
-            else "missing_settings" if missing else "adapter_not_implemented"
+            else (
+                "missing_settings"
+                if missing
+                else "scoped_read_only" if name == "sharepoint" else "adapter_not_implemented"
+            )
         ),
     }
 
