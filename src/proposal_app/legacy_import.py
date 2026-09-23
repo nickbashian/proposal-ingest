@@ -167,6 +167,8 @@ def _metadata_report(rows, mapping):
     accepted, quarantined, accepted_keys, seen = 0, {}, set(), set()
     for position, raw in enumerate(rows, 1):
         old_id = raw.get("document_id") if isinstance(raw, dict) else None
+        if not isinstance(old_id, str):
+            old_id = None
         key = old_id or f"row:{position}"
         if old_id and old_id in seen:
             if old_id in accepted_keys:

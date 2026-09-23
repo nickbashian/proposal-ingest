@@ -52,7 +52,10 @@ class Command(BaseCommand):
         else:
             root_item = options["root"]
             try:
-                adapter = GraphSourceAdapter.from_environment(root_item_id=root_item)
+                adapter = GraphSourceAdapter.from_environment(
+                    root_item_id=root_item,
+                    max_download_bytes=settings.APP["max_snapshot_bytes"],
+                )
                 root_item_metadata = adapter.get_item(root_item)
             except (ValueError, ProviderFailure):
                 raise CommandError("SharePoint scope or read access is unavailable") from None

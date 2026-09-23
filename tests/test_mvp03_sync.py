@@ -7,7 +7,7 @@ from django.core.management import CommandError, call_command
 
 from proposal_app import models as m
 from proposal_app.adapters import ProviderFailure
-from proposal_app.source_sync import LocalSourceAdapter, sync_scope, work_fingerprint
+from proposal_app.source_sync import LocalPage, LocalSourceAdapter, sync_scope, work_fingerprint
 from proposal_app.storage import LocalObjectStorage
 
 pytestmark = pytest.mark.django_db
@@ -123,6 +123,30 @@ def test_local_same_size_and_mtime_changed_bytes_are_not_reused(tmp_path, settin
     assert m.SourceVersion.objects.count() == 2
 
 
+def test_local_download_checks_opened_file_identity(tmp_path, monkeypatch):
+    root = tmp_path / "source"
+    root.mkdir()
+    original = root / "result.pdf"
+    original.write_bytes(b"first")
+    replacement = root / "replacement.pdf"
+    replacement.write_bytes(b"other")
+    adapter = LocalSourceAdapter(root)
+    observed = next(
+        item for item in adapter.delta_page(str(root.resolve())).items if item.name == "result.pdf"
+    )
+    real_open = os.open
+
+    def swap_before_open(path, flags):
+        original.unlink()
+        replacement.rename(original)
+        monkeypatch.setattr("proposal_app.source_sync.os.open", real_open)
+        return real_open(path, flags)
+
+    monkeypatch.setattr("proposal_app.source_sync.os.open", swap_before_open)
+    with pytest.raises(ProviderFailure, match="inconsistent_snapshot"):
+        adapter.download_verified(observed)
+
+
 def test_hidden_ancestor_is_admin_exclusion_without_snapshot(tmp_path, settings):
     settings.LOCAL_STORAGE_ROOT = tmp_path / "objects"
     root, scope = make_scope(tmp_path)
@@ -177,6 +201,23 @@ def test_expired_checkpoint_restarts_without_false_retirement(tmp_path, settings
     assert m.SourceSyncRun.objects.filter(
         scope=scope, state="incomplete", error_code="checkpoint_expired"
     ).exists()
+    assert not m.SourcePresence.objects.filter(scope=scope, retired_at__isnull=False).exists()
+
+
+def test_repeated_checkpoint_expiry_stops_after_bounded_restarts(tmp_path, settings):
+    settings.LOCAL_STORAGE_ROOT = tmp_path / "objects"
+    _, scope = make_scope(tmp_path)
+
+    class Expiring:
+        def delta_page(self, root_item_id, cursor=None):
+            if cursor:
+                raise ProviderFailure("checkpoint_expired")
+            return LocalPage((), "next", False)
+
+    run = sync_scope(scope, Expiring())
+    assert run.state == "incomplete"
+    assert run.error_code == "checkpoint_expired"
+    assert m.SourceSyncRun.objects.filter(scope=scope).count() == 3
     assert not m.SourcePresence.objects.filter(scope=scope, retired_at__isnull=False).exists()
 
 

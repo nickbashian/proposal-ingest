@@ -6,6 +6,7 @@ import os
 import stat
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from django.conf import settings
 from django.core.exceptions import PermissionDenied
@@ -126,12 +127,17 @@ class LocalSourceAdapter:
             raise ProviderFailure("source_unavailable", retryable=True)
         for _ in range(2):
             try:
-                before = path.stat()
-                if f"{before.st_dev}:{before.st_ino}" != item.item_id:
-                    raise ProviderFailure("inconsistent_snapshot", retryable=True)
-                with path.open("rb") as stream:
+                flags = os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NOFOLLOW", 0)
+                descriptor = os.open(path, flags)
+                with os.fdopen(descriptor, "rb") as stream:
+                    before = os.fstat(stream.fileno())
+                    if (
+                        not stat.S_ISREG(before.st_mode)
+                        or f"{before.st_dev}:{before.st_ino}" != item.item_id
+                    ):
+                        raise ProviderFailure("inconsistent_snapshot", retryable=True)
                     content = stream.read((item.size or 0) + 1)
-                after = path.stat()
+                    after = os.fstat(stream.fileno())
             except OSError as exc:
                 raise ProviderFailure("source_unavailable", retryable=True) from exc
             if (
@@ -185,7 +191,7 @@ def work_fingerprint(stage: str, *, source_digest: str, revisions: dict[str, str
     return hashlib.sha256(json.dumps(payload, separators=(",", ":")).encode()).hexdigest()
 
 
-def _record_item(run, item, content):
+def _record_item(run, item, snapshot):
     scope = run.scope
     display_path = (
         f"{scope.year}/{Path(scope.root_item).name}/{item.path}"
@@ -229,17 +235,13 @@ def _record_item(run, item, content):
     m.SourcePathEvent.objects.create(run=run, source=source, scope=scope, display_path=display_path)
     family, _ = m.VersionFamily.objects.get_or_create(proposal=scope.proposal, key="source")
     m.ProposalMembership.objects.get_or_create(source=source, family=family)
-    if content is None:
+    if snapshot is None:
         return presence, False
-    digest = hashlib.sha256(content).hexdigest()
-    storage = LocalObjectStorage(
-        settings.LOCAL_STORAGE_ROOT, require_durable=settings.MODE == "production"
-    )
-    key = storage.put_immutable(digest, content)
+    digest, size, key = snapshot
     blob, _ = m.ContentBlob.objects.get_or_create(
-        sha256=digest, defaults={"size": len(content), "storage_key": key}
+        sha256=digest, defaults={"size": size, "storage_key": key}
     )
-    if blob.size != len(content):
+    if blob.size != size:
         raise ValueError("Content hash size collision")
     if not blob.storage_key:
         blob.storage_key = key
@@ -322,11 +324,16 @@ def sync_scope(scope: m.SourceScope, adapter, *, max_snapshot_bytes: int | None 
                     scope=scope,
                     counts={"seen": 0, "snapshots": 0, "reused": 0, "issues": 0, "retired": 0},
                 )
+        restarts = 0
+        storage = LocalObjectStorage(
+            settings.LOCAL_STORAGE_ROOT, require_durable=settings.MODE == "production"
+        )
         while True:
             try:
                 page = adapter.delta_page(scope.root_item, run.cursor or None)
             except ProviderFailure as exc:
-                if exc.code == "checkpoint_expired" and run.cursor:
+                if exc.code == "checkpoint_expired" and run.cursor and restarts < 2:
+                    restarts += 1
                     with transaction.atomic():
                         run.state = "incomplete"
                         run.error_code = "checkpoint_expired"
@@ -342,17 +349,28 @@ def sync_scope(scope: m.SourceScope, adapter, *, max_snapshot_bytes: int | None 
                             },
                         )
                     continue
+                if exc.code == "checkpoint_expired":
+                    run.state = "incomplete"
+                    run.error_code = exc.code
+                    run.save(update_fields=["state", "error_code"])
+                    return run
                 run.error_code = exc.code
                 run.save(update_fields=["error_code"])
                 return run
             if not page.complete and not page.next_cursor:
                 raise ValueError("Incomplete page needs a cursor")
             issues = []
-            prepared = []
+            prepared: list[tuple[Any, tuple[str, int, str] | None, bool]] = []
             for item in page.items:
                 if item.deleted:
                     # A full enumeration reconciles deleted items at completion.
                     continue
+                if scope.connector == "sharepoint":
+                    try:
+                        item = adapter.resolve_scoped_item(item, year=scope.year)
+                    except ProviderFailure as exc:
+                        issues.append((item, exc.code))
+                        continue
                 state, _ = disposition(item)
                 if (
                     item.is_folder
@@ -369,17 +387,21 @@ def sync_scope(scope: m.SourceScope, adapter, *, max_snapshot_bytes: int | None 
                     prepared.append((item, None, True))
                     continue
                 try:
-                    prepared.append((item, adapter.download_verified(item), False))
+                    content = adapter.download_verified(item)
+                    digest = hashlib.sha256(content).hexdigest()
+                    key = storage.put_immutable(digest, content)
+                    prepared.append((item, (digest, len(content), key), False))
+                    del content
                 except ProviderFailure as exc:
                     issues.append((item, exc.code))
                     prepared.append((item, None, False))
             with transaction.atomic():
-                for item, content, reused in prepared:
-                    _, created_version = _record_item(run, item, content)
+                for item, snapshot, reused in prepared:
+                    _, created_version = _record_item(run, item, snapshot)
                     run.counts["seen"] += 1
                     run.counts["snapshots"] += int(created_version)
                     run.counts["reused"] += int(
-                        reused or (content is not None and not created_version)
+                        reused or (snapshot is not None and not created_version)
                     )
                 for item, code in issues:
                     m.SourceCaptureIssue.objects.create(

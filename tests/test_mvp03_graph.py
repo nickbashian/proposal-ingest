@@ -5,6 +5,7 @@ import pytest
 
 from proposal_app.adapters import ProviderFailure
 from proposal_app.graph_source import ClientCredentialsTokenProvider, GraphSourceAdapter
+from proposal_app.source_sync import disposition
 
 
 class Response:
@@ -99,6 +100,50 @@ def test_delta_function_style_cursor_stays_scoped():
     assert session.calls[0][1] == cursor
 
 
+def test_encoded_drive_and_qualified_function_cursors_are_accepted():
+    endpoint = "https://graph.microsoft.com/v1.0/drives/b%21drive/items/root1/delta"
+    source, session = adapter([Response(payload={"value": [], "@odata.deltaLink": endpoint})])
+    source.drive_id = "b!drive"
+    cursor = (
+        "https://graph.microsoft.com/v1.0/drives/b!drive/items/root1/"
+        "microsoft.graph.delta(token=opaque)"
+    )
+    assert source.delta_page("root1", cursor).complete
+    assert session.calls[0][1] == cursor
+
+
+def test_delta_without_parent_paths_resolves_ancestors_before_classification():
+    endpoint = "https://graph.microsoft.com/v1.0/drives/d1/items/root1/delta"
+    child = item(name="secret.pdf")
+    child["parentReference"] = {"id": "hidden"}
+    hidden = item("hidden", name=".private", folder=True)
+    hidden["parentReference"] = {"id": "root1"}
+    root = item("root1", name="Proposal", folder=True)
+    root["parentReference"] = {"id": "year", "path": "/drives/d1/root:/2025"}
+    source, _ = adapter(
+        [
+            Response(payload={"value": [child], "@odata.deltaLink": endpoint}),
+            Response(payload=hidden),
+            Response(payload=root),
+        ]
+    )
+    observed = source.delta_page("root1").items[0]
+    assert observed.path == "secret.pdf"
+    resolved = source.resolve_scoped_item(observed, year=2025)
+    assert resolved.path == "2025/Proposal/.private/secret.pdf"
+    assert disposition(resolved)[0] == "administrative_exclusion"
+
+
+def test_unresolved_graph_parent_fails_closed():
+    child = item()
+    child["parentReference"] = {"id": "other"}
+    other = item("other", folder=True)
+    other["parentReference"] = {"id": "other"}
+    source, _ = adapter([Response(payload=other)])
+    with pytest.raises(ProviderFailure, match="graph_unresolved_parent"):
+        source.resolve_scoped_item(source._parse_item(child), year=2025)
+
+
 def test_malformed_item_fields_fail_without_a_partial_page():
     endpoint = "https://graph.microsoft.com/v1.0/drives/d1/items/root1/delta"
     malformed = item()
@@ -152,7 +197,7 @@ def test_download_stream_stops_at_size_limit_without_materializing_body():
 )
 def test_rejects_out_of_scope_checkpoint_before_request(cursor):
     source, session = adapter([])
-    with pytest.raises(ValueError, match="cursor"):
+    with pytest.raises(ProviderFailure, match="graph_invalid_response"):
         source.delta_page("root1", cursor)
     assert not session.calls
 
@@ -251,3 +296,18 @@ def test_environment_requires_separate_background_connector_identity(monkeypatch
     monkeypatch.delenv("SHAREPOINT_CLIENT_SECRET", raising=False)
     with pytest.raises(ValueError, match="credentials are incomplete"):
         GraphSourceAdapter.from_environment(root_item_id="root")
+
+
+def test_environment_passes_configured_download_limit(monkeypatch):
+    for key, value in {
+        "ENTRA_TENANT_ID": "tenant",
+        "SHAREPOINT_SITE_ID": "site",
+        "SHAREPOINT_DRIVE_ID": "drive",
+        "SHAREPOINT_CLIENT_ID": "client",
+        "SHAREPOINT_CLIENT_SECRET": "secret",
+    }.items():
+        monkeypatch.setenv(key, value)
+    source = GraphSourceAdapter.from_environment(
+        root_item_id="root", max_download_bytes=80 * 1024 * 1024
+    )
+    assert source.max_download_bytes == 80 * 1024 * 1024

@@ -4,7 +4,7 @@ import json
 
 from django.contrib.auth import get_user_model
 from django.core.management.base import BaseCommand, CommandError
-from django.core.exceptions import PermissionDenied
+from django.core.exceptions import PermissionDenied, ValidationError
 
 from proposal_app import legacy_import, models as m
 
@@ -39,6 +39,7 @@ class Command(BaseCommand):
             OSError,
             UnicodeError,
             ValueError,
+            ValidationError,
             PermissionDenied,
             m.Collection.DoesNotExist,
             get_user_model().DoesNotExist,

@@ -7,13 +7,15 @@ import json
 
 import pytest
 from django.contrib.auth import get_user_model
-from django.core.management import call_command
+from django.core.management import CommandError, call_command
 
 from proposal_app import legacy_import, models as m, services
 from proposal_app.storage import LocalObjectStorage
 from proposal_app.source_sync import LocalSourceAdapter, sync_scope
 from proposal_ingest.question_loop import REVIEW_COLUMNS
 from proposal_ingest.scanner import INVENTORY_COLUMNS, scan_source_root
+from proposal_ingest.mock_bedrock import analyze_document_mock
+from proposal_ingest.schemas import InventoryRecord
 
 pytestmark = pytest.mark.django_db
 
@@ -241,6 +243,50 @@ def test_invalid_metadata_and_unverified_answer_quarantined(owner, tmp_path):
     assert report["quarantine"]["answers"]["q1"] == "answer_evidence_unverified"
 
 
+def test_valid_metadata_and_answer_are_accepted_as_lineage(owner, tmp_path):
+    user, collection = owner
+    _capture(user, collection, "A.txt", b"one", "a")
+    record = _inventory("A.txt", b"one")
+    inventory = tmp_path / "file_inventory.jsonl"
+    inventory.write_text(json.dumps(record) + "\n", encoding="utf-8")
+    metadata = tmp_path / "all_document_metadata.jsonl"
+    model = analyze_document_mock(InventoryRecord.model_validate(record), "legacy-test")
+    metadata.write_text(model.model_dump_json() + "\n", encoding="utf-8")
+    answers = tmp_path / "questions_to_answer.csv"
+    answer = {key: "" for key in REVIEW_COLUMNS}
+    answer.update(
+        question_id="q1",
+        document_id="doc_old",
+        proposal_id="legacy-proposal",
+        source_path=record["source_path"],
+        scope="document",
+        field="agency",
+        user_answer="DOE",
+        evidence_summary="Administrative cover sheet",
+    )
+    answers.write_bytes(_csv_bytes(REVIEW_COLUMNS, [answer]))
+    report, _ = legacy_import.prepare_legacy_import(
+        user, collection.id, inventory=inventory, metadata=metadata, answers=answers
+    )
+    assert report["metadata"]["accepted"] == 1
+    assert report["answers"]["accepted"] == 1
+    assert not report["quarantine"]["metadata"]
+    assert not report["quarantine"]["answers"]
+
+
+def test_metadata_unhashable_document_id_is_quarantined(owner, tmp_path):
+    user, collection = owner
+    _capture(user, collection, "A.txt", b"one", "a")
+    inventory = tmp_path / "file_inventory.jsonl"
+    inventory.write_text(json.dumps(_inventory("A.txt", b"one")) + "\n", encoding="utf-8")
+    metadata = tmp_path / "all_document_metadata.jsonl"
+    metadata.write_text(json.dumps({"document_id": ["x"]}) + "\n", encoding="utf-8")
+    report, _ = legacy_import.prepare_legacy_import(
+        user, collection.id, inventory=inventory, metadata=metadata
+    )
+    assert report["quarantine"]["metadata"]["row:1"] == "invalid_metadata_schema"
+
+
 def test_old_version_answer_requires_new_review(owner, tmp_path):
     user, collection = owner
     first = _capture(user, collection, "A.txt", b"old", "a")
@@ -300,6 +346,19 @@ def test_management_command_dry_run_is_nonmutating(owner, tmp_path, settings):
     assert json.loads(output.getvalue())["inventory"] == {"accepted": 1, "quarantined": 0}
     assert not m.LegacyImport.objects.exists()
     assert set(settings.LOCAL_STORAGE_ROOT.iterdir()) == original_objects
+
+
+def test_management_command_rejects_malformed_collection_uuid(owner, tmp_path):
+    user, _ = owner
+    inventory = tmp_path / "file_inventory.jsonl"
+    inventory.write_text("", encoding="utf-8")
+    with pytest.raises(CommandError):
+        call_command(
+            "import_legacy",
+            collection="not-a-uuid",
+            user=user.username,
+            inventory=str(inventory),
+        )
 
 
 def test_truncated_answer_row_is_quarantined_in_dry_run(owner, tmp_path):

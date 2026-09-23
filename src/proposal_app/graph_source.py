@@ -6,11 +6,11 @@ one delta page at a time and never interprets a failed page as a deletion.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import os
 import time
 from typing import Callable
-from urllib.parse import quote, urlsplit
+from urllib.parse import quote, unquote, urlsplit
 
 import requests
 
@@ -125,6 +125,7 @@ class GraphSourceAdapter:
         *,
         root_item_id: str,
         session: requests.Session | None = None,
+        max_download_bytes: int = 64 * 1024 * 1024,
     ) -> GraphSourceAdapter:
         """Read the runtime-only app identity and configured source scope."""
         tenant = os.environ.get("ENTRA_TENANT_ID", "")
@@ -140,6 +141,7 @@ class GraphSourceAdapter:
             root_item_id=root_item_id,
             token_provider=provider,
             session=session,
+            max_download_bytes=max_download_bytes,
         )
 
     def _item_url(self, item_id: str) -> str:
@@ -151,12 +153,20 @@ class GraphSourceAdapter:
     @staticmethod
     def _validate_cursor(cursor: str, endpoint: str) -> None:
         parsed, allowed = urlsplit(cursor), urlsplit(endpoint)
+        path, allowed_path = unquote(parsed.path), unquote(allowed.path)
+        base = allowed_path.removesuffix("/delta")
         if (
             parsed.scheme != "https"
-            or parsed.netloc != allowed.netloc
+            or parsed.netloc.lower() != allowed.netloc.lower()
             or not (
-                parsed.path == allowed.path
-                or (parsed.path.startswith(allowed.path + "(") and parsed.path.endswith(")"))
+                path == allowed_path
+                or (
+                    path.endswith(")")
+                    and (
+                        path.startswith(allowed_path + "(")
+                        or path.startswith(base + "/microsoft.graph.delta(")
+                    )
+                )
             )
             or parsed.username is not None
             or parsed.password is not None
@@ -228,7 +238,10 @@ class GraphSourceAdapter:
             raise ValueError("Graph root is outside the configured source scope")
         endpoint = self._delta_url()
         if cursor is not None:
-            self._validate_cursor(cursor, endpoint)
+            try:
+                self._validate_cursor(cursor, endpoint)
+            except ValueError:
+                raise ProviderFailure("graph_invalid_response") from None
         response = self._graph_get(cursor or endpoint)
         try:
             payload = response.json()
@@ -243,7 +256,10 @@ class GraphSourceAdapter:
         selected = next_cursor or delta_cursor
         if not isinstance(selected, str):
             raise ProviderFailure("graph_invalid_response")
-        self._validate_cursor(selected, endpoint)
+        try:
+            self._validate_cursor(selected, endpoint)
+        except ValueError:
+            raise ProviderFailure("graph_invalid_response") from None
         items = tuple(self._parse_item(item) for item in payload["value"])
         return GraphPage(items, next_cursor, bool(delta_cursor), delta_cursor)
 
@@ -257,6 +273,28 @@ class GraphSourceAdapter:
         if item.item_id != item_id:
             raise ProviderFailure("graph_invalid_response")
         return item
+
+    def resolve_scoped_item(self, item: GraphItem, *, year: int) -> GraphItem:
+        """Build a path from IDs; delta responses do not carry parent paths."""
+        if item.deleted:
+            return item
+        names = []
+        visited = {item.item_id}
+        current = item
+        while current.item_id != self.root_item_id:
+            if not current.name or not current.parent_id or current.parent_id in visited:
+                raise ProviderFailure("graph_unresolved_parent")
+            names.append(current.name)
+            visited.add(current.parent_id)
+            current = self.get_item(current.parent_id)
+            if current.deleted:
+                raise ProviderFailure("graph_unresolved_parent")
+        if current.item_id == item.item_id:
+            current = self.get_item(self.root_item_id)
+        root_parts = current.path.replace("\\", "/").rstrip("/").split("/")
+        if len(root_parts) < 2 or root_parts[-2] != str(year):
+            raise ProviderFailure("scope_mismatch")
+        return replace(item, path="/".join((str(year), current.name, *reversed(names))))
 
     def download_verified(self, observed: GraphItem) -> bytes:
         """Download exact observed bytes or fail for a changed source version."""
