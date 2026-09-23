@@ -293,6 +293,10 @@ def sync_scope(scope: m.SourceScope, adapter, *, max_snapshot_bytes: int | None 
     """Resume an interrupted full crawl and retire only after a complete clean pass."""
     if scope.proposal.collection_id != scope.collection_id:
         raise ValueError("Scope proposal belongs to another collection")
+    if scope.connector == "local" and settings.LOCAL_STORAGE_ROOT.resolve().is_relative_to(
+        Path(scope.root_item).resolve()
+    ):
+        raise ValueError("Snapshot output must be outside the read-only source root")
     if max_snapshot_bytes is None:
         max_snapshot_bytes = settings.APP["max_snapshot_bytes"]
     _scope_lock(scope.id)

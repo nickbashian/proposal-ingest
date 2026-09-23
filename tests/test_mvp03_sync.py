@@ -206,3 +206,12 @@ def test_local_sync_command_enforces_2025_folder_membership(tmp_path, settings):
     )
     assert m.SourceSyncRun.objects.get().state == "completed"
     assert m.SourcePresence.objects.get().display_path == "2025/Proposal A/history-2026.pdf"
+
+
+def test_source_root_cannot_contain_snapshot_output(tmp_path, settings):
+    root, scope = make_scope(tmp_path)
+    settings.LOCAL_STORAGE_ROOT = root / "snapshots"
+    (root / "file.pdf").write_bytes(b"synthetic")
+    with pytest.raises(ValueError, match="outside the read-only source root"):
+        sync_scope(scope, LocalSourceAdapter(root))
+    assert not settings.LOCAL_STORAGE_ROOT.exists()
