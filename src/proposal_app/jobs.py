@@ -184,10 +184,12 @@ def deliver(job_id):
 
         try:
             summary = deliver_fixture_import(job)
-        except (PermissionDenied, ValueError) as exc:
+        except Exception as exc:  # noqa: BLE001 - delivery must fail closed
             job.state = "failed"
             job.stop_reason = (
-                "delivery_denied" if isinstance(exc, PermissionDenied) else "delivery_invalid"
+                "delivery_denied"
+                if isinstance(exc, PermissionDenied)
+                else "delivery_invalid" if isinstance(exc, ValueError) else "delivery_error"
             )
             job.result = {}
             job.save(update_fields=["state", "stop_reason", "result"])

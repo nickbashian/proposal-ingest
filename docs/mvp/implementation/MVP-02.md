@@ -29,10 +29,10 @@ or external connection occurs.
 | 02-C | passed | A fresh Python process reads the committed decision/draft/packet; edit and regeneration create immutable revisions 1–3 and preserve the user sentence. The citation page shows the exact passage, source-version ID, and `section Results, paragraph 2`. |
 | 02-D | passed | Pages label local deterministic retrieval/drafting; anonymous collection/writing access is denied, another collection member receives not found for the owner's workspace, and repeat import/publication reuses the same job/generation without duplicate sources. |
 
-Focused verification passed with **80 tests** across `test_application.py`,
+Focused verification passed with **82 tests** across `test_application.py`,
 `test_application_process.py`, and `test_mvp02.py`, covering the complete existing application
 regression set plus the new service, fresh-process, management-command, authorization, and browser
-paths. The CI-equivalent `scripts/dev.py check` passed **422 tests** plus Black, Ruff, codespell,
+paths. The CI-equivalent `scripts/dev.py check` passed **424 tests** plus Black, Ruff, codespell,
 mypy, secret/private-artifact scanning, configuration validation, Django checks, migration drift,
 and Chromium smoke. Literal `make check` was unavailable after the documented Windows PATH refresh,
 so the repository-documented equivalent was used. A full-page synthetic browser screenshot was
@@ -68,6 +68,13 @@ commit enforces local-only fixture behavior at adapter selection, execution, and
 fails malformed delivery containers closed; binds each inclusion event and publication to one
 reviewed source version; and rejects attempts to recast voice-policy content as factual. Focused
 tests cover all five dispositions. Final hosted rereview status is recorded on PR #16.
+
+CodeRabbit's hosted review added five substantiated findings. The follow-up serializes inclusion
+corrections with publication on the proposal row, removes internal evidence markers and makes
+downloaded citation URLs absolute, centralizes browser-cache setup, preserves malformed marker
+text during regeneration, and fails unexpected fixture-delivery exceptions closed without storing
+raw error details. Focused regression coverage exercises each correction; final hosted rereview
+status is recorded on PR #16.
 
 Owner input is limited to brief interaction feedback on collection → review → evidence → writing.
 No credentials or connection action is needed. Nicholas merges manually after reviewing the demo;

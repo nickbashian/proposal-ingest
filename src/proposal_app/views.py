@@ -153,7 +153,10 @@ def writing(request, object_id):
                 )
             elif action == "export":
                 _, text, extension = workflow.export(
-                    request.user, session.id, request.POST.get("format", "markdown")
+                    request.user,
+                    session.id,
+                    request.POST.get("format", "markdown"),
+                    request.build_absolute_uri("/"),
                 )
                 content_type = (
                     "text/markdown; charset=utf-8"

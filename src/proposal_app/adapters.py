@@ -244,11 +244,12 @@ class DeterministicDraftingAdapter:
             raise ProviderFailure("evidence_policy_block")
         base_text = packet.get("base_text", "").strip()
         prior_evidence = packet.get("prior_evidence", [])
-        if self.evidence_start in base_text and self.evidence_end in base_text:
+        if self.evidence_start in base_text:
             before, remainder = base_text.split(self.evidence_start, 1)
-            _, after = remainder.split(self.evidence_end, 1)
-            base_text = (before + after).strip()
-        else:
+            if self.evidence_end in remainder:
+                _, after = remainder.split(self.evidence_end, 1)
+                base_text = (before + after).strip()
+        elif self.evidence_end not in base_text:
             removed_prior_citation = False
             for item in prior_evidence:
                 citation = self._citation(item)

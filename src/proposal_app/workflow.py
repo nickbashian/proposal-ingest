@@ -3,6 +3,7 @@
 import hashlib
 import re
 from pathlib import Path
+from urllib.parse import urljoin
 
 from django.conf import settings
 from django.db import transaction
@@ -159,6 +160,7 @@ def answer_inclusion(user, decision_id, expected_revision: int, treatment: str):
     if decision is None:
         raise Http404
     services.authorize(user, decision.family.proposal.collection_id)
+    m.Proposal.objects.select_for_update().get(pk=decision.family.proposal_id)
     prefix = "version:"
     if not decision.scope.startswith(prefix):
         raise ValueError("Decision scope is not supported")
@@ -456,7 +458,7 @@ def edit(user, session_id, expected_revision: int, text: str) -> m.DraftRevision
 
 
 @transaction.atomic
-def export(user, session_id, export_format: str) -> tuple[m.DraftExport, str, str]:
+def export(user, session_id, export_format: str, base_url: str) -> tuple[m.DraftExport, str, str]:
     if export_format not in {"markdown", "text"}:
         raise ValueError("Export format must be markdown or text")
     session = services.owned(user, m.DraftSession, session_id)
@@ -467,6 +469,19 @@ def export(user, session_id, export_format: str) -> tuple[m.DraftExport, str, st
     if revision is None:
         raise ValueError("Generate a draft before exporting")
     text = revision.text
+    for marker in (
+        DeterministicDraftingAdapter.evidence_start,
+        DeterministicDraftingAdapter.evidence_end,
+    ):
+        text = text.replace(marker + "\n", "").replace(marker, "")
+
+    def absolute_artifact_link(match: re.Match) -> str:
+        label, destination = match.groups()
+        if destination.startswith("/artifacts/"):
+            destination = urljoin(base_url, destination)
+        return f"[{label}]({destination})"
+
+    text = re.sub(r"\[([^]]+)]\(([^)]+)\)", absolute_artifact_link, text)
     if export_format == "text":
         text = re.sub(r"\[([^]]+)]\(([^)]+)\)", r"\1: \2", text)
     exported = m.DraftExport.objects.create(revision=revision, text=text)

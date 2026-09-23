@@ -13,10 +13,17 @@ from django.core.management import call_command
 from django.db import connection
 from django.http import Http404
 from django.test import Client
+from django.test.utils import CaptureQueriesContext
 from playwright.sync_api import sync_playwright
 
+from scripts import dev
 from proposal_app import jobs, models as m, services, workflow
-from proposal_app.adapters import FixtureSliceAdapter, ProviderFailure, adapter_for
+from proposal_app.adapters import (
+    DeterministicDraftingAdapter,
+    FixtureSliceAdapter,
+    ProviderFailure,
+    adapter_for,
+)
 from proposal_app.storage import LocalObjectStorage
 
 pytestmark = pytest.mark.django_db
@@ -163,11 +170,14 @@ def test_complete_local_services_exclusion_revisions_and_idempotency(slice_owner
     assert m.DraftRevision.objects.get(pk=edited.id).text == edited_text
     assert m.DraftRevision.objects.filter(session=session).count() == 3
 
-    _, markdown, markdown_extension = workflow.export(user, session.id, "markdown")
-    _, plain, plain_extension = workflow.export(user, session.id, "text")
+    export_base_url = "https://app.example.test/"
+    _, markdown, markdown_extension = workflow.export(user, session.id, "markdown", export_base_url)
+    _, plain, plain_extension = workflow.export(user, session.id, "text", export_base_url)
     assert markdown_extension == "md" and plain_extension == "txt"
-    assert "](/artifacts/" in markdown
-    assert "Source:" in plain and ": /artifacts/" in plain
+    assert "](https://app.example.test/artifacts/" in markdown
+    assert "Source:" in plain and ": https://app.example.test/artifacts/" in plain
+    assert "<!-- proposal-evidence:" not in markdown
+    assert "<!-- proposal-evidence:" not in plain
 
     client = Client()
     client.force_login(user)
@@ -285,7 +295,12 @@ def test_decision_is_bound_to_one_reviewed_version(slice_owner):
         locator={"section": "Later", "paragraph": 1},
         text="LATER-BEFORE-REVIEW must not be approved.",
     )
-    event = workflow.answer_inclusion(user, decision.id, 0, "include")
+    with CaptureQueriesContext(connection) as queries:
+        event = workflow.answer_inclusion(user, decision.id, 0, "include")
+    assert any(
+        "FOR UPDATE" in query["sql"] and '"proposal_app_proposal"' in query["sql"]
+        for query in queries
+    )
     assert event.value["source_version_id"] == str(reviewed_version.id)
     assert set(event.evidence) == set(
         str(unit_id)
@@ -345,6 +360,27 @@ def test_voice_policy_decision_cannot_be_recast_as_factual(slice_owner):
         workflow.answer_inclusion(user, pending_voice.id, 0, "include")
 
 
+def test_regeneration_preserves_malformed_evidence_markers():
+    adapter = DeterministicDraftingAdapter()
+    evidence = {
+        "title": "Synthetic source",
+        "text": "Measured factual result.",
+        "locator_label": "section Results, paragraph 1",
+        "source_url": "/artifacts/synthetic/",
+        "support_kind": "factual",
+    }
+    malformed = (
+        f"{adapter.evidence_end}\nKeep this text.\n{adapter.evidence_start}\n"
+        + adapter._citation(evidence)
+    )
+    result = adapter.draft(
+        {"base_text": malformed, "prior_evidence": [evidence], "evidence": [evidence]},
+        "Regenerate safely.",
+        idempotency_key="malformed-markers",
+    )
+    assert malformed in result.value["text"]
+
+
 def test_invalid_fixture_delivery_fails_once_without_raw_error(slice_owner):
     user, collection = slice_owner
     job = workflow.enqueue_fixture_import(user, collection.id)
@@ -354,6 +390,25 @@ def test_invalid_fixture_delivery_fails_once_without_raw_error(slice_owner):
     job.refresh_from_db()
     assert job.state == "failed"
     assert job.stop_reason == "delivery_invalid"
+    assert job.result == {}
+    assert m.Outbox.objects.get(job=job).delivered_at is not None
+    assert not m.JobResult.objects.filter(job=job).exists()
+
+
+def test_unexpected_fixture_delivery_error_fails_once(slice_owner, monkeypatch):
+    user, collection = slice_owner
+    job = workflow.enqueue_fixture_import(user, collection.id)
+    m.Job.objects.filter(pk=job.id).update(state="delivering", result={"synthetic": True})
+    m.Outbox.objects.create(job=job)
+
+    def fail_delivery(_job):
+        raise OSError("synthetic storage failure")
+
+    monkeypatch.setattr(workflow, "deliver_fixture_import", fail_delivery)
+    assert jobs.deliver(job.id)
+    job.refresh_from_db()
+    assert job.state == "failed"
+    assert job.stop_reason == "delivery_error"
     assert job.result == {}
     assert m.Outbox.objects.get(job=job).delivered_at is not None
     assert not m.JobResult.objects.filter(job=job).exists()
@@ -430,9 +485,8 @@ def test_browser_complete_local_product_slice(slice_owner, settings, live_server
     monkeypatch.setattr(settings, "LOCAL_AUTH", True)
     cache = os.environ.get("PLAYWRIGHT_BROWSERS_PATH")
     if not cache:
-        monkeypatch.setenv(
-            "PLAYWRIGHT_BROWSERS_PATH", str(Path.home() / ".codex/proposal-ingest/playwright")
-        )
+        monkeypatch.setenv("PLAYWRIGHT_BROWSERS_PATH", "")
+        dev._configure_browser_cache()
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch()
         try:
@@ -482,12 +536,16 @@ def test_browser_complete_local_product_slice(slice_owner, settings, live_server
                 page.get_by_role("button", name="Export Markdown with source links").click()
             download = download_info.value
             assert download.suggested_filename == "draft.md"
-            assert "](/artifacts/" in Path(download.path()).read_text(encoding="utf-8")
+            markdown_export = Path(download.path()).read_text(encoding="utf-8")
+            assert f"]({live_server.url}/artifacts/" in markdown_export
+            assert "<!-- proposal-evidence:" not in markdown_export
             with page.expect_download() as text_download_info:
                 page.get_by_role("button", name="Export text with source links").click()
             text_download = text_download_info.value
             assert text_download.suggested_filename == "draft.txt"
-            assert ": /artifacts/" in Path(text_download.path()).read_text(encoding="utf-8")
+            plain_export = Path(text_download.path()).read_text(encoding="utf-8")
+            assert f": {live_server.url}/artifacts/" in plain_export
+            assert "<!-- proposal-evidence:" not in plain_export
 
             citation = context.new_page()
             citation.goto(live_server.url + artifact_url)
