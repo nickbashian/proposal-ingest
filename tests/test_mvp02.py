@@ -275,6 +275,14 @@ def test_collection_review_rows_are_bound_to_proposal_family(slice_owner):
         field="publication",
         kind="inclusion",
     )
+    services.append_decision(
+        user,
+        second.id,
+        0,
+        value={"treatment": "exclude", "support_kind": "factual"},
+        rationale="Excluded only from the second family.",
+        evidence=[],
+    )
 
     client = Client()
     client.force_login(user)
@@ -286,7 +294,16 @@ def test_collection_review_rows_are_bound_to_proposal_family(slice_owner):
         second_family.id,
     }
     assert {row["decision"].id for row in source_rows} == {original.id, second.id}
+    rows_by_family = {row["family"].id: row for row in source_rows}
+    assert rows_by_family[original.family_id]["disposition"] == "awaiting_decision"
+    assert rows_by_family[original.family_id]["disposition_reason"] == ""
+    assert rows_by_family[second_family.id]["disposition"] == "excluded"
+    assert (
+        rows_by_family[second_family.id]["disposition_reason"]
+        == "Excluded only from the second family."
+    )
     assert b"synthetic-second-proposal / synthetic-second-family" in response.content
+    assert b"Excluded only from the second family." in response.content
 
 
 def test_human_decision_correction_immediately_removes_stale_retrieval(slice_owner):

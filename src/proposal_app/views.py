@@ -94,11 +94,21 @@ def collection(request, collection_id):
                 if decision
                 else None
             )
+            display_disposition = "awaiting_decision"
+            display_reason = ""
+            if latest_event:
+                display_disposition = {
+                    "include": "included",
+                    "exclude": "excluded",
+                }.get(latest_event.value.get("treatment"), "awaiting_decision")
+                display_reason = latest_event.rationale
             rows.append(
                 {
                     "source": source,
                     "family": family,
                     "decision": decision,
+                    "disposition": display_disposition,
+                    "disposition_reason": display_reason,
                     "units": units,
                     "reviewable": bool(
                         decision

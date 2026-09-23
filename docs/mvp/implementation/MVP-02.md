@@ -79,6 +79,8 @@ status is recorded on PR #16.
 A later incremental CodeRabbit pass identified two additional contract edges. Fixture provenance
 now requires the exact JSON boolean `true`, and collection review rows are explicitly built per
 source/family membership so a multi-family source cannot submit a different family's decision.
+Each row also derives its displayed disposition and reason from that family's latest decision
+event, preventing another family's review state from leaking into the row.
 A deep local review of that follow-up returned one non-actionable finding claiming fixture jobs
 could succeed before delivery. The current worker calls `deliver_fixture_import` before creating
 the result or setting `succeeded`, and the fixture acceptance helper verifies all three source rows
