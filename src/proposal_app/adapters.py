@@ -167,6 +167,8 @@ class FixtureSliceAdapter:
     def execute(self, payload: dict, *, idempotency_key: str) -> CallResult:
         from django.conf import settings
 
+        if settings.MODE != "local":
+            raise ProviderFailure("adapter_disabled")
         path = Path(__file__).resolve().parents[2] / settings.APP["fixture_slice_path"]
         try:
             fixture = json.loads(path.read_text(encoding="utf-8"))
@@ -278,5 +280,9 @@ def adapter_for(kind: str):
     if kind == "fixture":
         return FixtureAdapter()
     if kind == "fixture-slice":
+        from django.conf import settings
+
+        if settings.MODE != "local":
+            raise ProviderFailure("adapter_disabled")
         return FixtureSliceAdapter()
     raise ProviderFailure("adapter_disabled")

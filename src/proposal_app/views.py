@@ -64,7 +64,14 @@ def collection(request, collection_id):
     )
     rows = []
     for source in sources:
-        decision = m.Decision.objects.filter(scope=f"source:{source.id}").first()
+        version_scopes = [f"version:{version.id}" for version in source.sourceversion_set.all()]
+        decision = (
+            m.Decision.objects.filter(
+                scope__in=version_scopes, field="publication", kind="inclusion"
+            )
+            .order_by("-created_at")
+            .first()
+        )
         latest_event = (
             m.DecisionEvent.objects.filter(decision=decision).order_by("-revision").first()
             if decision

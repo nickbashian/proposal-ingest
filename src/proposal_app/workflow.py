@@ -38,11 +38,13 @@ def _validate_fixture(result: dict) -> None:
         raise ValueError("Fixture result is incomplete")
     if result.get("revision") != settings.APP["fixture_slice_revision"]:
         raise ValueError("Fixture revision does not match application configuration")
-    if not result.get("synthetic") or not result.get("items"):
+    items = result.get("items")
+    if not result.get("synthetic") or not isinstance(items, list) or not items:
         raise ValueError("Fixture result is incomplete")
-    for item in result["items"]:
+    for item in items:
         if (
-            item.get("initial_disposition") not in {"awaiting_decision", "included", "excluded"}
+            not isinstance(item, dict)
+            or item.get("initial_disposition") not in {"awaiting_decision", "included", "excluded"}
             or item.get("support_kind") not in {"factual", "voice"}
             or not isinstance(item.get("locator"), dict)
             or not all(
@@ -59,6 +61,8 @@ def deliver_fixture_import(job: m.Job) -> dict:
 
     if job.kind != FIXTURE_JOB_KIND:
         raise ValueError("Job is not a fixture-slice import")
+    if settings.MODE != "local":
+        raise ValueError("Synthetic fixture delivery is local only")
     services.authorize(job.creator, job.collection_id)
     result = job.result
     _validate_fixture(result)
@@ -109,7 +113,7 @@ def deliver_fixture_import(job: m.Job) -> dict:
             raise ValueError("Fixture unit identity cannot be rewritten")
         decision, _ = m.Decision.objects.get_or_create(
             family=family,
-            scope=f"source:{source.id}",
+            scope=f"version:{version.id}",
             field="publication",
             kind="inclusion",
         )
@@ -155,25 +159,39 @@ def answer_inclusion(user, decision_id, expected_revision: int, treatment: str):
     if decision is None:
         raise Http404
     services.authorize(user, decision.family.proposal.collection_id)
-    prefix = "source:"
+    prefix = "version:"
     if not decision.scope.startswith(prefix):
         raise ValueError("Decision scope is not supported")
-    source = m.SourceItem.objects.filter(pk=decision.scope.removeprefix(prefix)).first()
-    if (
-        source is None
-        or not m.ProposalMembership.objects.filter(source=source, family=decision.family).exists()
-    ):
-        raise ValueError("Decision source no longer matches its family")
-    units = list(
-        m.ExtractedUnit.objects.filter(version__source=source).values_list("id", flat=True)
+    version = (
+        m.SourceVersion.objects.select_related("source")
+        .filter(pk=decision.scope.removeprefix(prefix))
+        .first()
     )
+    if (
+        version is None
+        or not m.ProposalMembership.objects.filter(
+            source=version.source, family=decision.family
+        ).exists()
+    ):
+        raise ValueError("Decision version no longer matches its family")
+    previous = m.DecisionEvent.objects.filter(decision=decision).order_by("-revision").first()
+    if previous and previous.value.get("fixture_default"):
+        raise ValueError("Fixture policy decisions are not editable")
+    reviewed_units = list(m.ExtractedUnit.objects.filter(version=version).order_by("key"))
+    if not reviewed_units or any(unit.support_kind != "factual" for unit in reviewed_units):
+        raise ValueError("This review action requires factual passages from one source version")
+    source = version.source
     event = services.append_decision(
         user,
         decision.id,
         expected_revision,
-        value={"treatment": treatment, "support_kind": "factual"},
+        value={
+            "treatment": treatment,
+            "support_kind": "factual",
+            "source_version_id": str(version.id),
+        },
         rationale="Explicit MVP-02 inclusion review",
-        evidence=[str(unit_id) for unit_id in units],
+        evidence=[str(unit.id) for unit in reviewed_units],
     )
     m.PublicationArtifact.objects.filter(
         generation__proposal=decision.family.proposal,
@@ -215,18 +233,35 @@ def publish(user, proposal_id) -> m.PublicationGeneration:
     specifications = []
     for source in sources.filter(disposition="included").order_by("id"):
         family = m.VersionFamily.objects.get(proposal=proposal, proposalmembership__source=source)
-        decision = m.Decision.objects.get(
-            family=family,
-            scope=f"source:{source.id}",
-            field="publication",
-            kind="inclusion",
+        version_scopes = [
+            f"version:{version_id}"
+            for version_id in m.SourceVersion.objects.filter(source=source).values_list(
+                "id", flat=True
+            )
+        ]
+        event = (
+            m.DecisionEvent.objects.filter(
+                decision__family=family,
+                decision__scope__in=version_scopes,
+                decision__field="publication",
+                decision__kind="inclusion",
+            )
+            .select_related("decision")
+            .order_by("-created_at")
+            .first()
         )
-        event = m.DecisionEvent.objects.filter(decision=decision).order_by("-revision").first()
         if event is None or event.value.get("treatment") != "include":
             raise ValueError("Included source lacks a current inclusion event")
+        if not event.decision.scope.startswith("version:"):
+            raise ValueError("Inclusion event is not bound to a source version")
+        approved_version_id = event.value.get(
+            "source_version_id", event.decision.scope.removeprefix("version:")
+        )
         approved_unit_ids = [str(unit_id) for unit_id in event.evidence]
         units = m.ExtractedUnit.objects.filter(
-            version__source=source, id__in=approved_unit_ids
+            version_id=approved_version_id,
+            version__source=source,
+            id__in=approved_unit_ids,
         ).order_by("key")
         if not units.exists():
             raise ValueError("Inclusion event covers no extracted passage")

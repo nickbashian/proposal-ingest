@@ -16,7 +16,7 @@ from django.test import Client
 from playwright.sync_api import sync_playwright
 
 from proposal_app import jobs, models as m, services, workflow
-from proposal_app.adapters import FixtureSliceAdapter
+from proposal_app.adapters import FixtureSliceAdapter, ProviderFailure, adapter_for
 from proposal_app.storage import LocalObjectStorage
 
 pytestmark = pytest.mark.django_db
@@ -189,7 +189,42 @@ def test_fixture_slice_is_disabled_outside_local_mode(slice_owner, settings):
     settings.MODE = "production"
     with pytest.raises(ValueError, match="local only"):
         workflow.enqueue_fixture_import(user, collection.id)
+    with pytest.raises(ProviderFailure, match="adapter_disabled"):
+        adapter_for("fixture-slice")
+    with pytest.raises(ProviderFailure, match="adapter_disabled"):
+        FixtureSliceAdapter().execute(
+            {"fixture_revision": settings.APP["fixture_slice_revision"]},
+            idempotency_key="production-disabled",
+        )
     assert not m.Job.objects.exists()
+
+
+def test_delivery_rechecks_local_mode_and_malformed_items(slice_owner, settings):
+    user, collection = slice_owner
+    valid_job = workflow.enqueue_fixture_import(user, collection.id)
+    result = FixtureSliceAdapter().execute(valid_job.payload, idempotency_key=str(valid_job.id))
+    m.Job.objects.filter(pk=valid_job.id).update(state="delivering", result=result.value)
+    m.Outbox.objects.create(job=valid_job)
+    settings.MODE = "production"
+    assert jobs.deliver(valid_job.id)
+    valid_job.refresh_from_db()
+    assert valid_job.state == "failed" and valid_job.stop_reason == "delivery_invalid"
+    assert not m.SourceItem.objects.exists()
+
+    settings.MODE = "local"
+    malformed = services.create_job(user, collection.id, "malformed-fixture", kind="fixture-slice")
+    bad_result = {
+        "revision": settings.APP["fixture_slice_revision"],
+        "proposal": "synthetic",
+        "family": "synthetic",
+        "synthetic": True,
+        "items": ["not-an-item"],
+    }
+    m.Job.objects.filter(pk=malformed.id).update(state="delivering", result=bad_result)
+    m.Outbox.objects.create(job=malformed)
+    assert jobs.deliver(malformed.id)
+    malformed.refresh_from_db()
+    assert malformed.state == "failed" and malformed.stop_reason == "delivery_invalid"
 
 
 def test_human_decision_correction_immediately_removes_stale_retrieval(slice_owner):
@@ -218,6 +253,96 @@ def test_human_decision_correction_immediately_removes_stale_retrieval(slice_own
     replacement = workflow.publish(user, decision.family.proposal_id)
     assert replacement.id != generation.id and replacement.revision == 2
     assert workflow.search(user, collection.id, "capacity 500 cycles")
+
+
+def test_decision_is_bound_to_one_reviewed_version(slice_owner):
+    user, collection = slice_owner
+    import_slice(user, collection)
+    decision = m.Decision.objects.get(revision=0)
+    reviewed_version = m.SourceVersion.objects.get(pk=decision.scope.removeprefix("version:"))
+    source = reviewed_version.source
+    later = services.observe_source(
+        user,
+        collection.id,
+        identity={
+            "connector": source.connector,
+            "tenant": source.tenant,
+            "site": source.site,
+            "drive": source.drive,
+            "item": source.item,
+        },
+        path=source.display_path,
+        observation_key="arrived-before-review",
+        content=b"Later unreviewed bytes",
+        proposal=decision.family.proposal.identifier,
+        family=decision.family.key,
+        upstream_version="arrived-before-review",
+    )
+    m.ExtractedUnit.objects.create(
+        version=later,
+        extractor_revision="synthetic-structured-v1",
+        key="later-before-review",
+        locator={"section": "Later", "paragraph": 1},
+        text="LATER-BEFORE-REVIEW must not be approved.",
+    )
+    event = workflow.answer_inclusion(user, decision.id, 0, "include")
+    assert event.value["source_version_id"] == str(reviewed_version.id)
+    assert set(event.evidence) == set(
+        str(unit_id)
+        for unit_id in m.ExtractedUnit.objects.filter(version=reviewed_version).values_list(
+            "id", flat=True
+        )
+    )
+    generation = workflow.publish(user, decision.family.proposal_id)
+    published = "\n".join(
+        artifact.unit.text
+        for artifact in m.PublicationArtifact.objects.filter(generation=generation).select_related(
+            "unit"
+        )
+    )
+    assert "LATER-BEFORE-REVIEW" not in published
+
+
+def test_voice_policy_decision_cannot_be_recast_as_factual(slice_owner):
+    user, collection = slice_owner
+    import_slice(user, collection)
+    voice_event = m.DecisionEvent.objects.get(value__support_kind="voice")
+    with pytest.raises(ValueError, match="not editable"):
+        workflow.answer_inclusion(user, voice_event.decision_id, 1, "include")
+
+    family = voice_event.decision.family
+    voice_version = services.observe_source(
+        user,
+        collection.id,
+        identity={
+            "connector": "local-fixture",
+            "tenant": f"collection-{collection.id}",
+            "site": "typed-review",
+            "drive": "typed-review",
+            "item": "unresolved-voice",
+        },
+        path="Synthetic/Voice.txt",
+        observation_key="voice-review-v1",
+        content=b"Synthetic voice-only passage",
+        proposal=family.proposal.identifier,
+        family=family.key,
+    )
+    m.ExtractedUnit.objects.create(
+        version=voice_version,
+        extractor_revision="synthetic-structured-v1",
+        key="voice-only",
+        locator={"section": "Voice", "paragraph": 1},
+        text="An aspirational statement without factual support.",
+        support_kind="voice",
+    )
+    pending_voice = m.Decision.objects.create(
+        family=family,
+        scope=f"version:{voice_version.id}",
+        field="publication",
+        kind="inclusion",
+    )
+    with pytest.raises(ValueError, match="requires factual passages"):
+        workflow.answer_inclusion(user, pending_voice.id, 0, "include")
 
 
 def test_invalid_fixture_delivery_fails_once_without_raw_error(slice_owner):
