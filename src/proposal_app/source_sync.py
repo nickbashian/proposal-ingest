@@ -2,6 +2,8 @@
 
 import hashlib
 import json
+import os
+import stat
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -47,10 +49,19 @@ class LocalSourceAdapter:
 
     def _inventory(self):
         rows = []
-        for path in self.root.rglob("*"):
-            relative = path.relative_to(self.root).as_posix()
-            info = path.lstat()
-            rows.append((relative, path, info))
+        pending = [self.root]
+        while pending:
+            directory = pending.pop()
+            # pathlib.rglob may omit unreadable subtrees; every directory error
+            # must abort reconciliation so absence cannot imply deletion.
+            with os.scandir(directory) as entries:
+                for entry in entries:
+                    path = Path(entry.path)
+                    relative = path.relative_to(self.root).as_posix()
+                    info = path.lstat()
+                    rows.append((relative, path, info))
+                    if stat.S_ISDIR(info.st_mode):
+                        pending.append(path)
         rows.sort(key=lambda row: row[0])
         fingerprint = hashlib.sha256()
         for relative, _, info in rows:
@@ -137,15 +148,15 @@ class LocalSourceAdapter:
 def disposition(item):
     """Every observed item gets an explicit capture or processing state."""
     name = item.name.casefold()
-    if item.is_folder:
-        return "container", "folder"
+    components = item.path.replace("\\", "/").casefold().split("/")
     if (
         getattr(item, "is_link", False)
-        or name.startswith(".")
-        or name.startswith("~$")
+        or any(component.startswith((".", "~$")) for component in components if component)
         or name in {"thumbs.db", "desktop.ini"}
     ):
         return "administrative_exclusion", "hidden_or_temporary"
+    if item.is_folder:
+        return "container", "folder"
     extension = Path(name).suffix
     if extension in {".zip", ".7z", ".rar"}:
         return "awaiting_conversion", "archive"
@@ -194,8 +205,8 @@ def _record_item(run, item, content):
         defaults={
             "collection": scope.collection,
             "display_path": display_path,
-            "disposition": state,
-            "disposition_reason": reason,
+            "disposition": "awaiting_decision",
+            "disposition_reason": "source_captured_pending_review",
         },
     )
     if source.collection_id != scope.collection_id:
@@ -247,7 +258,9 @@ def _record_item(run, item, content):
 
 
 def _reusable_version(scope, item):
-    if not item.upstream_version or item.size is None:
+    # A local mtime/size pair can be preserved while bytes change. Only the
+    # provider's version contract may skip a content read.
+    if scope.connector == "local" or not item.upstream_version or item.size is None:
         return False
     source = m.SourceItem.objects.filter(
         connector=scope.connector,
@@ -362,10 +375,12 @@ def sync_scope(scope: m.SourceScope, adapter, *, max_snapshot_bytes: int | None 
                     prepared.append((item, None, False))
             with transaction.atomic():
                 for item, content, reused in prepared:
-                    _record_item(run, item, content)
+                    _, created_version = _record_item(run, item, content)
                     run.counts["seen"] += 1
-                    run.counts["snapshots"] += int(content is not None)
-                    run.counts["reused"] += int(reused)
+                    run.counts["snapshots"] += int(created_version)
+                    run.counts["reused"] += int(
+                        reused or (content is not None and not created_version)
+                    )
                 for item, code in issues:
                     m.SourceCaptureIssue.objects.create(
                         run=run, source_item=item.item_id, code=code

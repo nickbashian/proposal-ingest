@@ -66,12 +66,17 @@ def _rows(export):
 def _identity_map(collection, records):
     """Return uniquely evidenced mappings and stable quarantine codes."""
     paths = {}
+    scoped_paths = {}
     for source in m.SourceItem.objects.filter(collection=collection).iterator():
         paths[source.id] = {_path(source.display_path)}
-    for source_id, display_path in m.SourcePathEvent.objects.filter(
-        scope__collection=collection
-    ).values_list("source_id", "display_path"):
-        paths.setdefault(source_id, set()).add(_path(display_path))
+    for event in m.SourcePathEvent.objects.filter(scope__collection=collection).select_related(
+        "scope"
+    ):
+        normalized = _path(event.display_path)
+        paths.setdefault(event.source_id, set()).add(normalized)
+        scoped_paths.setdefault(event.source_id, set()).add(
+            (normalized, str(event.scope.year), event.scope.proposal_id)
+        )
     versions = list(
         m.SourceVersion.objects.filter(source__collection=collection)
         .select_related("source", "blob")
@@ -111,6 +116,10 @@ def _identity_map(collection, records):
         if not relative.startswith("2025/") or not _path(record.source_path).endswith(relative):
             rejected[old_id] = "inconsistent_inventory_path"
             continue
+        parts = relative.split("/")
+        if len(parts) < 3 or parts[1] != _path(record.proposal_branch):
+            rejected[old_id] = "inconsistent_inventory_scope"
+            continue
         matches = {}
         for version in by_digest.get(record.sha256, []):
             source_paths = paths[version.source_id]
@@ -120,11 +129,18 @@ def _identity_map(collection, records):
             ):
                 continue
             memberships = version.source.proposalmembership_set.all()
-            if not any(
+            legacy_membership = any(
                 member.family.proposal.identifier == record.proposal_id
                 or member.family.key.casefold() == record.proposal_branch.casefold()
                 for member in memberships
-            ):
+            )
+            captured_scope = any(
+                path.endswith(relative)
+                and year == record.year_folder
+                and any(member.family.proposal_id == proposal_id for member in memberships)
+                for path, year, proposal_id in scoped_paths.get(version.source_id, set())
+            )
+            if not (legacy_membership or captured_scope):
                 continue
             previous = matches.get(version.source_id)
             if previous is None or (version.observed_at, str(version.id)) > (
@@ -186,7 +202,26 @@ def _metadata_report(rows, mapping):
 def _answer_report(rows, mapping):
     accepted, quarantined, accepted_keys, seen = 0, {}, set(), set()
     for position, row in enumerate(rows, 1):
-        key = row.get("question_id") or f"row:{position}"
+        key = (
+            row.get("question_id")
+            if isinstance(row, dict) and isinstance(row.get("question_id"), str)
+            else None
+        ) or f"row:{position}"
+        required = (
+            "question_id",
+            "document_id",
+            "proposal_id",
+            "source_path",
+            "field",
+            "user_answer",
+        )
+        if (
+            not isinstance(row, dict)
+            or None in row
+            or any(not isinstance(row.get(field), str) for field in required)
+        ):
+            quarantined[key] = "invalid_answer_row"
+            continue
         if not row.get("user_answer", "").strip():
             continue
         if key in seen:
@@ -212,7 +247,9 @@ def _answer_report(rows, mapping):
             quarantined[key] = "answer_source_changed"
         elif not mapping[old_id]["current"]:
             quarantined[key] = "stale_source_version"
-        elif not row.get("evidence_summary", "").strip():
+        elif (
+            not isinstance(row.get("evidence_summary"), str) or not row["evidence_summary"].strip()
+        ):
             quarantined[key] = "answer_evidence_unverified"
         else:
             # Still staged as historical evidence; no DecisionEvent is created.

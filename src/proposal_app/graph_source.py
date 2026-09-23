@@ -164,7 +164,7 @@ class GraphSourceAdapter:
         ):
             raise ValueError("Graph cursor leaves the configured endpoint")
 
-    def _graph_get(self, url: str):
+    def _graph_get(self, url: str, *, stream: bool = False):
         token = self.token_provider()
         if not token:
             raise ProviderFailure("missing_graph_token")
@@ -175,6 +175,7 @@ class GraphSourceAdapter:
                 headers={"Authorization": f"Bearer {token}"},
                 timeout=self.timeout_seconds,
                 allow_redirects=False,
+                stream=stream,
             )
         except requests.RequestException as exc:
             raise ProviderFailure("graph_network", retryable=True, unknown=True) from exc
@@ -280,9 +281,10 @@ class GraphSourceAdapter:
             or before.deleted
         ):
             raise ProviderFailure("inconsistent_snapshot", retryable=True)
-        response = self._graph_get(self._item_url(observed.item_id) + "/content")
+        response = self._graph_get(self._item_url(observed.item_id) + "/content", stream=True)
         if response.status_code == 302:
             location = response.headers.get("Location", "")
+            response.close()
             parsed = urlsplit(location)
             if (
                 parsed.scheme != "https"
@@ -295,18 +297,34 @@ class GraphSourceAdapter:
             try:
                 # The redirect is preauthenticated. Never forward the Graph bearer token.
                 response = self.session.request(
-                    "GET", location, headers={}, timeout=self.timeout_seconds, allow_redirects=False
+                    "GET",
+                    location,
+                    headers={},
+                    timeout=self.timeout_seconds,
+                    allow_redirects=False,
+                    stream=True,
                 )
             except requests.RequestException:
                 # A preauthenticated URL can contain a bearer-like query token.
                 raise ProviderFailure("graph_network", retryable=True, unknown=True) from None
         if response.status_code != 200:
+            response.close()
             raise ProviderFailure(
                 "graph_download_failed", retryable=response.status_code in {429, 500, 502, 503, 504}
             )
-        content = response.content
-        if len(content) > self.max_download_bytes:
-            raise ProviderFailure("graph_download_too_large")
+        chunks = []
+        size = 0
+        try:
+            for chunk in response.iter_content(chunk_size=64 * 1024):
+                size += len(chunk)
+                if size > self.max_download_bytes:
+                    raise ProviderFailure("graph_download_too_large")
+                chunks.append(chunk)
+        except requests.RequestException:
+            raise ProviderFailure("graph_network", retryable=True, unknown=True) from None
+        finally:
+            response.close()
+        content = b"".join(chunks)
         after = self.get_item(observed.item_id)
         if (
             after.upstream_version != observed.upstream_version

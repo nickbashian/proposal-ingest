@@ -13,7 +13,7 @@ from proposal_app import legacy_import, models as m, services
 from proposal_app.storage import LocalObjectStorage
 from proposal_app.source_sync import LocalSourceAdapter, sync_scope
 from proposal_ingest.question_loop import REVIEW_COLUMNS
-from proposal_ingest.scanner import INVENTORY_COLUMNS
+from proposal_ingest.scanner import INVENTORY_COLUMNS, scan_source_root
 
 pytestmark = pytest.mark.django_db
 
@@ -101,11 +101,12 @@ def test_dry_run_maps_location_and_bytes_without_writing(owner, tmp_path):
 
 def test_import_maps_actual_scoped_sync_and_retained_move_history(owner, tmp_path):
     user, collection = owner
-    root = tmp_path / "Proposal A"
-    root.mkdir()
+    source_root = tmp_path / "source"
+    root = source_root / "2025" / "Proposal A"
+    root.mkdir(parents=True)
     path = root / "A.txt"
     path.write_bytes(b"synthetic lineage")
-    proposal = m.Proposal.objects.create(collection=collection, identifier="legacy-proposal")
+    proposal = m.Proposal.objects.create(collection=collection, identifier="Proposal A")
     scope = m.SourceScope.objects.create(
         collection=collection,
         connector="local",
@@ -118,8 +119,12 @@ def test_import_maps_actual_scoped_sync_and_retained_move_history(owner, tmp_pat
     )
     assert sync_scope(scope, LocalSourceAdapter(root)).state == "completed"
     inventory = tmp_path / "file_inventory.jsonl"
+    scanner_record = scan_source_root(
+        source_root, tmp_path / "scanner-output", dry_run=True
+    ).inventory_records[0]
     inventory.write_text(
-        json.dumps(_inventory("A.txt", b"synthetic lineage")) + "\n", encoding="utf-8"
+        json.dumps(scanner_record.model_dump(mode="json")) + "\n",
+        encoding="utf-8",
     )
     report, _ = legacy_import.prepare_legacy_import(user, collection.id, inventory=inventory)
     assert report["inventory"]["accepted"] == 1
@@ -295,3 +300,19 @@ def test_management_command_dry_run_is_nonmutating(owner, tmp_path, settings):
     assert json.loads(output.getvalue())["inventory"] == {"accepted": 1, "quarantined": 0}
     assert not m.LegacyImport.objects.exists()
     assert set(settings.LOCAL_STORAGE_ROOT.iterdir()) == original_objects
+
+
+def test_truncated_answer_row_is_quarantined_in_dry_run(owner, tmp_path):
+    user, collection = owner
+    _capture(user, collection, "A.txt", b"one", "a")
+    inventory = tmp_path / "file_inventory.jsonl"
+    inventory.write_text(json.dumps(_inventory("A.txt", b"one")) + "\n", encoding="utf-8")
+    answers = tmp_path / "questions_to_answer.csv"
+    answers.write_text(
+        ",".join(REVIEW_COLUMNS) + "\n" + "q-truncated,legacy-proposal\n",
+        encoding="utf-8",
+    )
+    report, _ = legacy_import.prepare_legacy_import(
+        user, collection.id, inventory=inventory, answers=answers
+    )
+    assert report["quarantine"]["answers"]["q-truncated"] == "invalid_answer_row"

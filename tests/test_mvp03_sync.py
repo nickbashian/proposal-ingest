@@ -1,6 +1,7 @@
 """MVP-03 local capture, reconciliation, and selective work contracts."""
 
 import hashlib
+import os
 import pytest
 from django.core.management import CommandError, call_command
 
@@ -49,6 +50,7 @@ def test_local_dispositions_capture_and_reuse(tmp_path, settings):
         "awaiting_extraction",
     }
     assert m.SourceVersion.objects.count() == 4
+    assert not m.SourceItem.objects.exclude(disposition="awaiting_decision").exists()
     second = sync_scope(scope, LocalSourceAdapter(root, page_size=2))
     assert second.counts["reused"] == 4
     assert m.SourceVersion.objects.count() == 4
@@ -105,6 +107,61 @@ def test_changed_bytes_create_version_and_removal_requires_complete_crawl(tmp_pa
     recovered = sync_scope(scope, LocalSourceAdapter(root))
     assert recovered.state == "completed"
     assert m.SourcePresence.objects.get(scope=scope).retired_at is not None
+
+
+def test_local_same_size_and_mtime_changed_bytes_are_not_reused(tmp_path, settings):
+    settings.LOCAL_STORAGE_ROOT = tmp_path / "objects"
+    root, scope = make_scope(tmp_path)
+    path = root / "result.pdf"
+    path.write_bytes(b"first")
+    first_stat = path.stat()
+    sync_scope(scope, LocalSourceAdapter(root))
+    path.write_bytes(b"other")
+    os.utime(path, ns=(first_stat.st_atime_ns, first_stat.st_mtime_ns))
+    run = sync_scope(scope, LocalSourceAdapter(root))
+    assert run.counts["snapshots"] == 1
+    assert m.SourceVersion.objects.count() == 2
+
+
+def test_hidden_ancestor_is_admin_exclusion_without_snapshot(tmp_path, settings):
+    settings.LOCAL_STORAGE_ROOT = tmp_path / "objects"
+    root, scope = make_scope(tmp_path)
+    hidden = root / ".private"
+    hidden.mkdir()
+    (hidden / "secret.pdf").write_bytes(b"synthetic admin material")
+    run = sync_scope(scope, LocalSourceAdapter(root))
+    assert run.state == "completed"
+    assert run.counts["seen"] == 2
+    assert not m.SourceVersion.objects.exists()
+    assert set(m.SourcePresence.objects.values_list("disposition", flat=True)) == {
+        "administrative_exclusion"
+    }
+
+
+def test_unreadable_descendant_cannot_retire_missing_file(tmp_path, settings, monkeypatch):
+    settings.LOCAL_STORAGE_ROOT = tmp_path / "objects"
+    root, scope = make_scope(tmp_path)
+    child = root / "child"
+    child.mkdir()
+    path = child / "keep.pdf"
+    path.write_bytes(b"keep")
+    assert sync_scope(scope, LocalSourceAdapter(root)).state == "completed"
+    path.unlink()
+    real_scandir = os.scandir
+
+    def fail_child(directory):
+        if directory == child:
+            raise PermissionError("synthetic denied")
+        return real_scandir(directory)
+
+    monkeypatch.setattr("proposal_app.source_sync.os.scandir", fail_child)
+    run = sync_scope(scope, LocalSourceAdapter(root))
+    assert run.state == "running"
+    assert run.error_code == "source_unavailable"
+    assert (
+        m.SourcePresence.objects.get(source__display_path="2025/P1/child/keep.pdf").retired_at
+        is None
+    )
 
 
 def test_expired_checkpoint_restarts_without_false_retirement(tmp_path, settings):

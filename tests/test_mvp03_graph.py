@@ -19,6 +19,13 @@ class Response:
             raise ValueError("not JSON")
         return self.payload
 
+    def iter_content(self, chunk_size):
+        for offset in range(0, len(self.content), chunk_size):
+            yield self.content[offset : offset + chunk_size]
+
+    def close(self):
+        pass
+
 
 class Session:
     def __init__(self, responses):
@@ -108,6 +115,29 @@ def test_download_without_upstream_version_cannot_be_verified():
     with pytest.raises(ProviderFailure, match="inconsistent_snapshot"):
         source.download_verified(source._parse_item(raw))
     assert not session.calls
+
+
+def test_download_stream_stops_at_size_limit_without_materializing_body():
+    raw = item(size=4)
+
+    class LargeResponse(Response):
+        def iter_content(self, chunk_size):
+            yield b"abc"
+            yield b"def"
+            raise AssertionError("Stream was read beyond the configured limit")
+
+    source, session = adapter(
+        [
+            Response(payload=raw),
+            Response(status=302, headers={"Location": "https://download.example/file"}),
+            LargeResponse(),
+        ]
+    )
+    source.max_download_bytes = 4
+    with pytest.raises(ProviderFailure, match="graph_download_too_large"):
+        source.download_verified(source._parse_item(raw))
+    assert session.calls[-1][2]["stream"] is True
+    assert session.calls[-1][2]["headers"] == {}
 
 
 @pytest.mark.parametrize(
