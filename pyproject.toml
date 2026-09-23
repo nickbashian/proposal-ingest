@@ -20,7 +20,9 @@ dependencies = [
   "pandas",
   "openpyxl",
   "pypdf",
+  "pymupdf>=1.28,<1.29",
   "python-docx",
+  "python-pptx>=1.0,<1.1",
   "typer",
   "rich",
 ]

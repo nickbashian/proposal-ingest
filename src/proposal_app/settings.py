@@ -11,6 +11,9 @@ from proposal_ingest.config import load_web_application_defaults
 
 ROOT = Path(__file__).resolve().parents[2]
 APP = load_web_application_defaults()
+APP["extraction_ocr_executable"] = (
+    os.environ.get("PROPOSAL_LOCAL_OCR_EXECUTABLE") or APP["extraction_ocr_executable"]
+)
 
 MODE = os.environ.get("PROPOSAL_APP_ENV", "local")
 LOCAL_AUTH = os.environ.get("PROPOSAL_LOCAL_AUTH_ENABLED", "false").lower() == "true"

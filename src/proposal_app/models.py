@@ -74,6 +74,7 @@ class SourceVersion(Record):
     etag = models.CharField(max_length=300, null=True)
     blob = models.ForeignKey(ContentBlob, on_delete=models.PROTECT)
     observed_at = models.DateTimeField(default=timezone.now)
+    observed_path = models.TextField(blank=True)
 
     class Meta:
         constraints = [
@@ -191,11 +192,74 @@ class ExtractedUnit(Record):
     locator = models.JSONField()
     text = models.TextField()
     support_kind = models.CharField(max_length=30, default="factual")
+    extraction_run = models.ForeignKey("ExtractionRun", on_delete=models.PROTECT, null=True)
+    kind = models.CharField(max_length=40, default="paragraph")
+    context = models.JSONField(default=dict)
+    warnings = models.JSONField(default=list)
+    ordinal = models.PositiveIntegerField(default=0)
 
     class Meta:
         constraints = [
             models.UniqueConstraint(
                 fields=["version", "extractor_revision", "key"], name="version_locator"
+            )
+        ]
+
+
+class ExtractionRun(Record):
+    """Immutable attempt and cache identity for one source version."""
+
+    version = models.ForeignKey(SourceVersion, on_delete=models.PROTECT)
+    number = models.PositiveIntegerField()
+    fingerprint = models.CharField(max_length=64)
+    extractor_revision = models.CharField(max_length=100)
+    parser = models.CharField(max_length=100)
+    state = models.CharField(max_length=30)
+    reason = models.CharField(max_length=100, blank=True)
+    recovery_action = models.CharField(max_length=300, blank=True)
+    warnings = models.JSONField(default=list)
+    active = models.BooleanField(default=False)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=["version", "number"], name="extraction_run_number"),
+            models.UniqueConstraint(
+                fields=["version"], condition=Q(active=True), name="one_active_extraction"
+            ),
+        ]
+
+
+class FigureAsset(Record):
+    run = models.ForeignKey(ExtractionRun, on_delete=models.PROTECT)
+    key = models.CharField(max_length=200)
+    locator = models.JSONField()
+    blob = models.ForeignKey(ContentBlob, on_delete=models.PROTECT)
+    mime_type = models.CharField(max_length=50)
+    caption = models.TextField(blank=True)
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=["run", "key"], name="run_figure_key")]
+
+
+class VisualInspection(Record):
+    """A selective manual/OCR interpretation, never an original source fact."""
+
+    run = models.ForeignKey(ExtractionRun, on_delete=models.PROTECT)
+    figure = models.ForeignKey(FigureAsset, on_delete=models.PROTECT, null=True)
+    locator = models.JSONField()
+    kind = models.CharField(max_length=20)
+    state = models.CharField(max_length=30, default="requested")
+    interpretation = models.TextField(blank=True)
+    source_check = models.TextField(blank=True)
+    adapter_revision = models.CharField(max_length=100, default="manual-v1")
+    actor = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["run", "figure", "kind"],
+                condition=Q(figure__isnull=False),
+                name="one_visual_request_per_figure",
             )
         ]
 
