@@ -16,4 +16,8 @@ urlpatterns = [
     path("drafts/<str:kind>/<uuid:object_id>/<str:action>/", views.draft),
     path("writing/<uuid:object_id>/", views.writing, name="writing"),
     path("artifacts/<uuid:object_id>/", views.artifact, name="artifact"),
+    path("sources/<uuid:version_id>/inspect/", views.source_inspector, name="source-inspector"),
+    path("units/<uuid:unit_id>/inspect/", views.unit_inspector, name="unit-inspector"),
+    path("figures/<uuid:figure_id>/image/", views.figure_image, name="figure-image"),
+    path("sources/<uuid:version_id>/original/", views.source_original, name="source-original"),
 ]

@@ -179,7 +179,10 @@ def answer_inclusion(user, decision_id, expected_revision: int, treatment: str):
     previous = m.DecisionEvent.objects.filter(decision=decision).order_by("-revision").first()
     if previous and previous.value.get("fixture_default"):
         raise ValueError("Fixture policy decisions are not editable")
-    reviewed_units = list(m.ExtractedUnit.objects.filter(version=version).order_by("key"))
+    active_run = m.ExtractionRun.objects.filter(version=version, active=True).first()
+    reviewed_units = list(
+        m.ExtractedUnit.objects.filter(version=version, extraction_run=active_run).order_by("key")
+    )
     if not reviewed_units or any(unit.support_kind != "factual" for unit in reviewed_units):
         raise ValueError("This review action requires factual passages from one source version")
     source = version.source
@@ -267,6 +270,11 @@ def publish(user, proposal_id) -> m.PublicationGeneration:
         ).order_by("key")
         if not units.exists():
             raise ValueError("Inclusion event covers no extracted passage")
+        active_run = m.ExtractionRun.objects.filter(
+            version_id=approved_version_id, active=True
+        ).first()
+        if active_run and units.exclude(extraction_run=active_run).exists():
+            raise ValueError("Inclusion event needs review against the active extraction")
         for unit in units:
             specifications.append((unit, event))
     if not specifications:

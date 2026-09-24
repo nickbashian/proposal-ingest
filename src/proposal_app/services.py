@@ -190,7 +190,12 @@ def observe_source(
     version, _ = m.SourceVersion.objects.get_or_create(
         source=source,
         observation_key=observation_key,
-        defaults={"blob": blob, "upstream_version": upstream_version, "etag": etag},
+        defaults={
+            "blob": blob,
+            "upstream_version": upstream_version,
+            "etag": etag,
+            "observed_path": path,
+        },
     )
     if (
         version.blob_id != blob.id

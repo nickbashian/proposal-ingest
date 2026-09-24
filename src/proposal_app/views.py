@@ -1,6 +1,8 @@
 """Small authenticated operator shell backed by the same services as workers."""
 
 import uuid
+import shutil
+import io
 from urllib.parse import urlencode
 
 from django.core.exceptions import ValidationError
@@ -8,7 +10,9 @@ from django.http import Http404, HttpResponse, HttpResponseRedirect, JsonRespons
 from django.shortcuts import render
 from django.views.decorators.http import require_GET, require_http_methods, require_POST
 
-from . import models as m, services, workflow
+from . import extraction_service, models as m, services, workflow
+from .storage import LocalObjectStorage
+from django.conf import settings
 
 
 def conflict(error):
@@ -110,6 +114,7 @@ def collection(request, collection_id):
                     "disposition": display_disposition,
                     "disposition_reason": display_reason,
                     "units": units,
+                    "versions": versions,
                     "reviewable": bool(
                         decision
                         and (
@@ -289,3 +294,165 @@ def artifact(request, object_id):
             "withdrawn": not obj.eligible or obj.generation.state != "active",
         },
     )
+
+
+@require_http_methods(["GET", "POST"])
+def source_inspector(request, version_id):
+    version = m.SourceVersion.objects.select_related("source", "blob").filter(pk=version_id).first()
+    if version is None:
+        raise Http404
+    services.authorize(request.user, version.source.collection_id)
+    if request.method == "POST":
+        action = request.POST.get("action", "")
+        try:
+            if action == "extract":
+                acted_run = extraction_service.extract_version(
+                    request.user, version.id, force=request.POST.get("force") == "true"
+                )
+            elif action == "request-visual":
+                figure_id = request.POST.get("figure_id") or None
+                run_id = request.POST.get("run_id")
+                if figure_id:
+                    figure = m.FigureAsset.objects.filter(
+                        pk=figure_id, run_id=run_id, run__version=version
+                    ).first()
+                    if figure is None:
+                        raise Http404
+                    locator = figure.locator
+                else:
+                    locator = {"page": int(request.POST.get("page", "0"))}
+                task = extraction_service.request_visual(
+                    request.user,
+                    run_id,
+                    kind=request.POST.get("kind", ""),
+                    locator=locator,
+                    figure_id=figure_id,
+                    expected_version_id=version.id,
+                )
+                acted_run = task.run
+            elif action == "complete-visual":
+                task = extraction_service.complete_visual(
+                    request.user,
+                    request.POST.get("task_id"),
+                    text=request.POST.get("interpretation", ""),
+                    source_check=request.POST.get("source_check", ""),
+                    expected_version_id=version.id,
+                )
+                acted_run = task.run
+            elif action == "run-ocr":
+                task = extraction_service.run_selective_ocr(
+                    request.user, request.POST.get("task_id"), expected_version_id=version.id
+                )
+                acted_run = task.run
+            else:
+                raise ValueError("Unknown inspector action")
+        except (ValueError, ValidationError) as exc:
+            return conflict(exc)
+        return HttpResponseRedirect(f"{request.path}?{urlencode({'run': str(acted_run.id)})}")
+    runs = list(m.ExtractionRun.objects.filter(version=version).order_by("-number"))
+    selected = runs[0] if runs else None
+    if request.GET.get("run"):
+        selected = next((run for run in runs if str(run.id) == request.GET["run"]), None)
+        if selected is None:
+            raise Http404
+    units = (
+        list(m.ExtractedUnit.objects.filter(extraction_run=selected).order_by("ordinal", "key"))
+        if selected
+        else []
+    )
+    rows = []
+    for index, unit in enumerate(units):
+        rows.append(
+            {
+                "unit": unit,
+                "locator_label": workflow.locator_label(unit.locator),
+                "before": units[index - 1].text if index else "",
+                "after": units[index + 1].text if index + 1 < len(units) else "",
+            }
+        )
+    figures = m.FigureAsset.objects.filter(run=selected).order_by("key") if selected else []
+    tasks = (
+        m.VisualInspection.objects.filter(run=selected).order_by("created_at") if selected else []
+    )
+    return render(
+        request,
+        "proposal_app/source_inspector.html",
+        {
+            "version": version,
+            "runs": runs,
+            "selected": selected,
+            "rows": rows,
+            "figures": figures,
+            "tasks": tasks,
+            "ocr_available": bool(
+                settings.APP.get("extraction_ocr_executable")
+                and shutil.which(settings.APP["extraction_ocr_executable"])
+            ),
+        },
+    )
+
+
+@require_GET
+def unit_inspector(request, unit_id):
+    unit = (
+        m.ExtractedUnit.objects.select_related("version__source", "extraction_run")
+        .filter(pk=unit_id)
+        .first()
+    )
+    if unit is None:
+        raise Http404
+    services.authorize(request.user, unit.version.source.collection_id)
+    return render(
+        request,
+        "proposal_app/unit_inspector.html",
+        {"unit": unit, "locator_label": workflow.locator_label(unit.locator)},
+    )
+
+
+@require_GET
+def figure_image(request, figure_id):
+    figure = (
+        m.FigureAsset.objects.select_related("run__version__source", "blob")
+        .filter(pk=figure_id)
+        .first()
+    )
+    if figure is None:
+        raise Http404
+    services.authorize(request.user, figure.run.version.source.collection_id)
+    if figure.mime_type not in {"image/png", "image/jpeg", "image/tiff", "image/bmp"}:
+        raise Http404
+    content = LocalObjectStorage(settings.LOCAL_STORAGE_ROOT).get(figure.blob.storage_key)
+    if request.GET.get("preview") == "1" and figure.mime_type in {"image/tiff", "image/bmp"}:
+        from PIL import Image, UnidentifiedImageError
+
+        try:
+            with Image.open(io.BytesIO(content)) as image:
+                if image.width * image.height > settings.APP["extraction_max_render_pixels"]:
+                    raise ValueError("Figure exceeds preview pixel limit")
+                output = io.BytesIO()
+                image.convert("RGB").save(output, format="PNG")
+                content = output.getvalue()
+        except (OSError, UnidentifiedImageError, ValueError, Image.DecompressionBombError):
+            raise Http404 from None
+        mime_type = "image/png"
+    else:
+        mime_type = figure.mime_type
+    response = HttpResponse(content, content_type=mime_type)
+    response["X-Content-Type-Options"] = "nosniff"
+    return response
+
+
+@require_GET
+def source_original(request, version_id):
+    version = m.SourceVersion.objects.select_related("source", "blob").filter(pk=version_id).first()
+    if version is None:
+        raise Http404
+    services.authorize(request.user, version.source.collection_id)
+    content = LocalObjectStorage(settings.LOCAL_STORAGE_ROOT).get(version.blob.storage_key)
+    suffix = extraction_service._snapshot_name(version).rsplit(".", 1)[-1].casefold()
+    if suffix not in {"pdf", "docx", "pptx", "xlsx", "csv", "txt", "md"}:
+        suffix = "bin"
+    response = HttpResponse(content, content_type="application/octet-stream")
+    response["Content-Disposition"] = f'attachment; filename="source-version.{suffix}"'
+    response["X-Content-Type-Options"] = "nosniff"
+    return response

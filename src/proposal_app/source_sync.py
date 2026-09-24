@@ -252,7 +252,12 @@ def _record_item(run, item, snapshot):
     version, created = m.SourceVersion.objects.get_or_create(
         source=source,
         observation_key=observation_key,
-        defaults={"blob": blob, "upstream_version": item.upstream_version, "etag": item.etag},
+        defaults={
+            "blob": blob,
+            "upstream_version": item.upstream_version,
+            "etag": item.etag,
+            "observed_path": display_path,
+        },
     )
     if version.blob_id != blob.id or version.etag != item.etag:
         raise ValueError("Observation identity cannot be rewritten")

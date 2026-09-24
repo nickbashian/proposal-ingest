@@ -86,3 +86,19 @@ web_application:
   job_limit_usd: "5"
   fixture_reservation_usd: "0.01"
   max_snapshot_bytes: 52428800
+  extraction_revision: "structured-v1"
+  extraction_schema_revision: "units-v1"
+  extraction_max_source_bytes: 26214400
+  extraction_max_archive_entries: 1500
+  extraction_max_uncompressed_bytes: 104857600
+  extraction_max_pages: 200
+  extraction_max_units: 10000
+  extraction_max_chars: 1000000
+  extraction_max_spreadsheet_cells: 10000
+  extraction_max_visual_tasks_per_version: 5
+  extraction_max_visual_text_chars: 2000
+  extraction_ocr_executable: null
+  extraction_ocr_timeout_seconds: 20
+  extraction_ocr_dpi: 150
+  extraction_max_render_pixels: 5000000
+  extraction_parser_timeout_seconds: 30

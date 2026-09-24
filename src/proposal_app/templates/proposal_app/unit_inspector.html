@@ -1,0 +1,9 @@
+{% extends "proposal_app/base.html" %}{% block content %}
+<h1>Saved extracted unit</h1>
+<p><a href="{% url 'source-inspector' unit.version_id %}{% if unit.extraction_run_id %}?run={{ unit.extraction_run_id }}{% endif %}">Open extraction run</a></p>
+<p><strong>Captured source:</strong> {{ unit.version.observed_path|default:unit.version.source.display_path }}</p>
+{% if not unit.version.observed_path %}<p class="warning">Path at capture was not retained for this older source version; the current path is shown.</p>{% endif %}
+<p><a href="{% url 'source-original' unit.version_id %}">Download exact captured source version</a></p>
+<dl><dt>Source version</dt><dd>{{ unit.version_id }}</dd><dt>Extraction run</dt><dd>{{ unit.extraction_run_id|default:"Legacy fixture" }}</dd><dt>Extractor revision</dt><dd>{{ unit.extractor_revision }}</dd><dt>Locator</dt><dd>{{ locator_label }}</dd><dt>Kind</dt><dd>{{ unit.kind }}</dd><dt>Context</dt><dd>{{ unit.context }}</dd><dt>Warnings</dt><dd>{{ unit.warnings|join:", "|default:"None" }}</dd></dl>
+<pre>{{ unit.text }}</pre>
+{% endblock %}

@@ -1,7 +1,8 @@
 {% extends "proposal_app/base.html" %}{% block content %}
 <h1>Saved source passage</h1>
 {% if withdrawn %}<p class="warning"><strong>Withdrawn for new use.</strong> This retained passage resolves a historical citation, but it is no longer eligible for retrieval or new drafts.</p>{% endif %}
-<p><strong>{{ artifact.unit.version.source.display_path }}</strong></p>
+<p><strong>{{ artifact.unit.version.observed_path|default:artifact.unit.version.source.display_path }}</strong></p>
+<p><a href="{% url 'unit-inspector' artifact.unit.id %}">Inspect exact extracted unit and parser provenance</a> · <a href="{% url 'source-original' artifact.unit.version_id %}">Download captured source</a></p>
 <p>Locator: <span id="locator">{{ locator_label }}</span></p>
 <pre id="passage">{{ artifact.unit.text }}</pre>
 <dl><dt>Source version</dt><dd>{{ artifact.unit.version_id }}</dd><dt>Publication generation</dt><dd>{{ artifact.generation_id }}</dd><dt>Evidence role</dt><dd>{{ artifact.unit.support_kind }}</dd></dl>
