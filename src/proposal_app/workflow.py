@@ -275,6 +275,21 @@ def publish(user, proposal_id) -> m.PublicationGeneration:
         ).first()
         if active_run and units.exclude(extraction_run=active_run).exists():
             raise ValueError("Inclusion event needs review against the active extraction")
+        has_curation = m.Decision.objects.filter(family=family, kind="curation").exists() or (
+            m.ClassificationFact.objects.filter(
+                family=family, version_id=approved_version_id
+            ).exists()
+        )
+        if has_curation:
+            plan = m.CurationPlan.objects.filter(
+                family=family,
+                version_id=approved_version_id,
+                state="current",
+                extraction_run=active_run,
+            ).first()
+            if plan is None:
+                raise ValueError("Curated plan needs review against the active extraction")
+            units = units.filter(id__in=plan.eligible_units)
         for unit in units:
             specifications.append((unit, event))
     if not specifications:
