@@ -271,7 +271,7 @@ def test_inspector_auth_figures_selective_interpretation_and_failure(owner):
     assert client.get(reverse("source-original", args=[version.id])).status_code == 403
 
 
-def test_figure_only_office_has_no_pdf_ocr_and_tiff_has_preview(owner):
+def test_figure_only_office_has_no_pdf_ocr_and_tiff_has_preview(owner, monkeypatch):
     from docx import Document
     from docx.shared import Inches
     from PIL import Image
@@ -298,6 +298,12 @@ def test_figure_only_office_has_no_pdf_ocr_and_tiff_has_preview(owner):
     assert original.content == picture.getvalue()
     assert preview["Content-Type"] == "image/png"
     assert preview.content.startswith(b"\x89PNG")
+
+    def oversized_image(*args, **kwargs):
+        raise Image.DecompressionBombError()
+
+    monkeypatch.setattr(Image, "open", oversized_image)
+    assert client.get(reverse("figure-image", args=[figure.id]) + "?preview=1").status_code == 404
 
 
 def test_inspector_post_keeps_selected_historical_run(owner):
@@ -472,6 +478,13 @@ def test_cache_fingerprint_ignores_visual_only_settings(owner, settings):
         **settings.APP,
         "extraction_max_units": settings.APP["extraction_max_units"] + 1,
     }
+    assert extraction_service.extraction_fingerprint(version) != baseline
+
+
+def test_parser_package_revision_invalidates_extraction_cache(owner, monkeypatch):
+    version = capture(owner, "library.pdf", pdf_bytes())
+    baseline = extraction_service.extraction_fingerprint(version)
+    monkeypatch.setattr(extraction_service, "parser_library_revision", lambda name: "PyMuPDF:new")
     assert extraction_service.extraction_fingerprint(version) != baseline
 
 

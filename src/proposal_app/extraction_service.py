@@ -19,7 +19,12 @@ from django.http import Http404
 
 from . import models as m, services, source_sync
 from .storage import LocalObjectStorage
-from .structured_extraction import ExtractionResult, ParsedFigure, ParsedUnit
+from .structured_extraction import (
+    ExtractionResult,
+    ParsedFigure,
+    ParsedUnit,
+    parser_library_revision,
+)
 
 PARSER_SETTING_KEYS = (
     "extraction_revision",
@@ -54,6 +59,7 @@ def extraction_fingerprint(version: m.SourceVersion) -> str:
     )
     # Filename extension selects the parser and must participate in reuse decisions.
     revision += ":" + Path(_snapshot_name(version)).suffix.casefold()
+    revision += ":" + parser_library_revision(_snapshot_name(version))
     return source_sync.work_fingerprint(
         "extract",
         source_digest=version.blob.sha256,

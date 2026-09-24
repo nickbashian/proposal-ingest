@@ -48,6 +48,21 @@ class ExtractionLimit(ValueError):
     pass
 
 
+def parser_library_revision(name: str) -> str:
+    """Library build that selects the parser for a captured file name."""
+    suffix = Path(name).suffix.casefold()
+    distributions = {
+        ".pdf": "PyMuPDF",
+        ".docx": "python-docx",
+        ".pptx": "python-pptx",
+        ".xlsx": "openpyxl",
+    }
+    if suffix in distributions:
+        package = distributions[suffix]
+        return f"{package}:{distribution_version(package)}"
+    return "utf8-lines-v1" if suffix in {".txt", ".md", ".csv"} else "unsupported-v1"
+
+
 def _limit(result: ExtractionResult, settings: dict) -> ExtractionResult:
     if (
         len(result.units) > settings["extraction_max_units"]

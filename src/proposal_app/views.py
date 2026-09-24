@@ -432,7 +432,7 @@ def figure_image(request, figure_id):
                 output = io.BytesIO()
                 image.convert("RGB").save(output, format="PNG")
                 content = output.getvalue()
-        except (OSError, UnidentifiedImageError, ValueError):
+        except (OSError, UnidentifiedImageError, ValueError, Image.DecompressionBombError):
             raise Http404 from None
         mime_type = "image/png"
     else:
