@@ -78,6 +78,10 @@ def _scope(family, scope):
     if kind == "entity":
         if len(parts) != 2 or not re.fullmatch(r"[a-z0-9_-]{1,100}", parts[1]):
             raise ValueError("Malformed semantic entity scope")
+        if not m.ClassificationFact.objects.filter(
+            family=family, entity_key=parts[1], unit__isnull=False
+        ).exists():
+            raise ValueError("Semantic entity has no source-backed family fact")
         return kind, None, parts[1]
     if kind == "version":
         if len(parts) != 2:
@@ -407,8 +411,10 @@ def recommend(
     )
     _validate_value_scope(decision, value)
     if created:
+        _invalidate(decision)
         return decision
-    changed = decision.material_fingerprint and decision.material_fingerprint != fingerprint
+    changed = decision.material_fingerprint != fingerprint
+    critical_added = critical and not decision.critical
     prior = current_event(decision)
     if changed and decision.status == "resolved" and prior and prior.value != value:
         decision.status = "conflict"
@@ -428,6 +434,8 @@ def recommend(
     decision.affected_units = affected_units
     decision.critical = decision.critical or critical
     decision.save()
+    if changed or critical_added:
+        _invalidate(decision)
     return decision
 
 
@@ -577,8 +585,10 @@ def automatic_resolution(
         .get(pk=decision_id)
     )
     services.authorize(user, decision.family.proposal.collection_id)
-    if decision.revision != expected_revision or decision.status == "resolved":
+    if decision.revision != expected_revision or decision.status != "unresolved":
         raise ValueError("Decision already changed or resolved")
+    if m.DecisionEvent.objects.filter(decision=decision, actor__isnull=False).exists():
+        raise ValueError("Human-reviewed decisions require human resolution")
     _validate_value(decision.field, value, decision.family)
     _validate_value_scope(decision, value)
     if decision.field in {"voice_approval", "treatment"}:

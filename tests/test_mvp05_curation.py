@@ -14,7 +14,7 @@ from django.core.management import call_command
 from django.test import Client
 from django.urls import reverse
 
-from proposal_app import curation, model_evaluation as evaluation, models as m
+from proposal_app import curation, model_evaluation as evaluation, models as m, workflow
 from scripts import dev
 
 pytestmark = pytest.mark.django_db
@@ -268,6 +268,102 @@ def test_rejection_deferral_revision_conflict_and_material_reopening(corpus):
     assert curation.effective_value(families[0], version, units[0], "treatment")[0] is None
 
 
+def test_new_and_changed_recommendations_invalidate_current_plan(corpus):
+    user, _, families, add = corpus
+    version, units = add(families[0], "new-issue")
+    treatment = issue(user, families[0], version, units[0])
+    curation.review(user, treatment.id, 0, "approve")
+    plan = curation.build_plan(user, families[0].id, version.id)
+    assert plan.state == "current"
+    new_critical = issue(
+        user,
+        families[0],
+        version,
+        units[0],
+        kind="new-critical-check",
+        critical=True,
+    )
+    plan.refresh_from_db()
+    assert plan.state == "invalidated"
+    assert str(units[0].id) in curation.build_plan(user, families[0].id, version.id).pending_units
+    curation.review(user, new_critical.id, 0, "approve")
+    plan = curation.build_plan(user, families[0].id, version.id)
+    curation.recommend(
+        user,
+        families[0].id,
+        treatment.scope,
+        "treatment",
+        "curation",
+        value={"treatment": "excluded"},
+        rationale="Changed source checked disposition",
+        evidence=[str(units[1].id)],
+        affected_units=[str(units[0].id)],
+        critical=True,
+    )
+    plan.refresh_from_db()
+    assert plan.state == "invalidated"
+
+
+def test_automatic_resolution_cannot_clear_human_or_reopened_decisions(corpus):
+    user, _, families, add = corpus
+    version, units = add(families[0], "auto-gate")
+    decision = issue(
+        user,
+        families[0],
+        version,
+        units[0],
+        field="content_use",
+        value={"value": "factual"},
+    )
+    curation.review(user, decision.id, 0, "defer", rationale="Source check needed")
+    with pytest.raises(ValueError, match="changed or resolved"):
+        curation.automatic_resolution(
+            user,
+            decision.id,
+            1,
+            value={"value": "factual"},
+            rationale="Rule guess",
+            evidence=[str(units[0].id)],
+            resolver_revision="rule-v1",
+        )
+    curation.review(user, decision.id, 1, "reject", rationale="Unsupported")
+    with pytest.raises(ValueError, match="Human-reviewed"):
+        curation.automatic_resolution(
+            user,
+            decision.id,
+            2,
+            value={"value": "factual"},
+            rationale="Rule guess",
+            evidence=[str(units[0].id)],
+            resolver_revision="rule-v1",
+        )
+    curation.review(user, decision.id, 2, "edit", value={"value": "factual"}, rationale="Reviewed")
+    curation.recommend(
+        user,
+        families[0].id,
+        decision.scope,
+        "content_use",
+        "curation",
+        value={"value": "administrative"},
+        rationale="Contradictory unit",
+        evidence=[str(units[1].id)],
+        affected_units=[str(units[0].id)],
+        critical=True,
+    )
+    decision.refresh_from_db()
+    assert decision.status == "conflict"
+    with pytest.raises(ValueError, match="changed or resolved"):
+        curation.automatic_resolution(
+            user,
+            decision.id,
+            decision.revision,
+            value={"value": "administrative"},
+            rationale="Rule guess",
+            evidence=[str(units[1].id)],
+            resolver_revision="rule-v1",
+        )
+
+
 def test_equal_rank_human_conflict_becomes_visible_unit_issue(corpus):
     user, _, families, add = corpus
     version, units = add(families[0], "overlap")
@@ -467,6 +563,14 @@ def test_bounded_cross_document_reconciliation_has_semantic_entity_scope(corpus)
     user, _, families, add = corpus
     version_a, units_a = add(families[0], "target")
     version_b, units_b = add(families[0], "measurement")
+    with pytest.raises(ValueError, match="no source-backed family fact"):
+        issue(
+            user,
+            families[0],
+            version_a,
+            units_a[0],
+            scope="entity:made-up",
+        )
     for version, unit, label in [
         (version_a, units_a[0], "target"),
         (version_b, units_b[0], "measurement"),
@@ -490,6 +594,40 @@ def test_bounded_cross_document_reconciliation_has_semantic_entity_scope(corpus)
     assert issues[0].critical and issues[0].status == "unresolved"
     assert curation.reconcile_family(user, families[0].id)[0].id == issues[0].id
     assert not m.Decision.objects.filter(family=families[1]).exists()
+
+
+def test_publication_requires_plan_for_any_scoped_curation_decision(corpus):
+    user, _, families, add = corpus
+    version, units = add(families[0], "publication-gate")
+    source = version.source
+    source.disposition = "included"
+    source.save(update_fields=["disposition"])
+    inclusion = m.Decision.objects.create(
+        family=families[0],
+        scope=f"version:{version.id}",
+        field="publication",
+        kind="inclusion",
+    )
+    m.DecisionEvent.objects.create(
+        decision=inclusion,
+        revision=1,
+        actor=user,
+        action="edit",
+        value={"treatment": "include", "source_version_id": str(version.id)},
+        rationale="Synthetic inclusion",
+        evidence=[str(unit.id) for unit in units],
+        resolver_revision="test-v1",
+    )
+    issue(
+        user,
+        families[0],
+        version,
+        units[0],
+        kind="alternate-critical-kind",
+        critical=True,
+    )
+    with pytest.raises(ValueError, match="Curated plan needs review"):
+        workflow.publish(user, families[0].proposal_id)
 
 
 def test_review_ui_authorizes_and_detects_concurrent_edit(corpus):
@@ -703,10 +841,13 @@ def test_provider_adapters_fail_closed_and_parse_typed_responses(corpus, setting
         )
 
     jev = evaluation.JevChoiceAdapter(transport=transport, estimated_cost_usd="0.002")
+    assert jev.predict(case).error == "terms_not_approved"
+    monkeypatch.setenv("PROPOSAL_JEV_PRIVATE_TRANSFER_APPROVED", "true")
     assert jev.predict(case).label == "target"
     private_case = evaluation.LabeledCase(
         "p", "g", "claim_type", "Private placeholder", "target", "v", "u", "calibration"
     )
+    monkeypatch.delenv("PROPOSAL_JEV_PRIVATE_TRANSFER_APPROVED")
     assert jev.predict(private_case).error == "terms_not_approved"
     missing = evaluation.BedrockChoiceAdapter("economical")
     assert missing.predict(case).error == "unavailable"

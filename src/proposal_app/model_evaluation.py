@@ -195,18 +195,16 @@ class JevChoiceAdapter:
             self.config.get("enabled")
             and self.config.get("model_id")
             and os.environ.get("TYPESAFE_API_KEY")
+            and os.environ.get("PROPOSAL_JEV_PRIVATE_TRANSFER_APPROVED", "false").lower() == "true"
         )
 
     def predict(self, case):
         started = time.monotonic()
         model_id = self.config.get("model_id") or "unconfigured"
+        if os.environ.get("PROPOSAL_JEV_PRIVATE_TRANSFER_APPROVED", "false").lower() != "true":
+            return _prediction(None, None, started, model_id, error="terms_not_approved")
         if not self.available():
             return _prediction(None, None, started, model_id, error="unavailable")
-        if (
-            case.split != "synthetic"
-            and os.environ.get("PROPOSAL_JEV_PRIVATE_TRANSFER_APPROVED", "false").lower() != "true"
-        ):
-            return _prediction(None, None, started, model_id, error="terms_not_approved")
         options = sorted(task_options(case.task))
         request = urllib.request.Request(
             settings.APP["jev_api_url"],

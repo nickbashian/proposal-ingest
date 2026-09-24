@@ -13,6 +13,7 @@ from django.urls import reverse
 
 from . import models as m, services
 from .adapters import DeterministicDraftingAdapter, LocalRetrievalAdapter
+from .curation import DIMENSIONS
 from .storage import LocalObjectStorage
 
 LOCAL_RETRIEVAL_LABEL = "Local deterministic retrieval"
@@ -275,10 +276,12 @@ def publish(user, proposal_id) -> m.PublicationGeneration:
         ).first()
         if active_run and units.exclude(extraction_run=active_run).exists():
             raise ValueError("Inclusion event needs review against the active extraction")
-        has_curation = m.Decision.objects.filter(family=family, kind="curation").exists() or (
-            m.ClassificationFact.objects.filter(
-                family=family, version_id=approved_version_id
+        has_curation = (
+            m.Decision.objects.filter(
+                family=family, field__in=DIMENSIONS | {"voice_approval"}
             ).exists()
+            or m.ClassificationFact.objects.filter(family=family).exists()
+            or m.CurationPlan.objects.filter(family=family, version_id=approved_version_id).exists()
         )
         if has_curation:
             plan = m.CurationPlan.objects.filter(
