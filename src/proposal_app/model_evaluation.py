@@ -304,11 +304,12 @@ def _score(cases, predictions):
             counts["errors"] += 1
         if prediction.label is None or prediction.confidence is None:
             counts["abstained"] += 1
-        if prediction.label == case.expected:
+        actionable_label = prediction.label if prediction.confidence is not None else None
+        if actionable_label == case.expected:
             counts["correct"] += 1
         if case.task == "claim_type":
             counts["claim_type_total"] += 1
-            counts["claim_type_correct"] += int(prediction.label == case.expected)
+            counts["claim_type_correct"] += int(actionable_label == case.expected)
         if case.task == "treatment":
             if prediction.label == "excluded" and case.expected != "excluded":
                 counts["false_exclusions"] += 1
@@ -320,13 +321,14 @@ def _score(cases, predictions):
             or prediction.label is None
             or prediction.confidence is None
             or (case.task == "treatment" and prediction.label == "excluded")
+            or actionable_label != case.expected
         ):
             counts["review_burden"] += 1
-        if prediction.confidence is not None:
+        if prediction.confidence is not None and prediction.label is not None:
             index = min(4, int(prediction.confidence * 5))
             key = f"{index/5:.1f}-{(index+1)/5:.1f}"
             counts["confidence_bins"][key]["count"] += 1
-            counts["confidence_bins"][key]["correct"] += int(prediction.label == case.expected)
+            counts["confidence_bins"][key]["correct"] += int(actionable_label == case.expected)
     counts["cost_usd"] = str(cost)
     return counts
 

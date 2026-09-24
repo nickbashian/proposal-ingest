@@ -610,6 +610,7 @@ def test_comparison_reports_false_exclusion_contamination_abstention_and_split_g
     assert report["baseline"]["metrics"]["false_exclusions"] == 1
     assert report["baseline"]["metrics"]["contamination"] == 1
     assert report["economical"]["metrics"]["abstained"] == 1
+    assert report["economical"]["metrics"]["correct"] == 1
     assert report["jev"]["metrics"]["claim_type_correct"] == 1
     assert m.EvaluationRecord.objects.filter(run_id=report["run_id"]).count() == 3
     mixed = [
