@@ -727,11 +727,34 @@ def build_plan(user, family_id, version_id):
         if event:
             decisions[str(event.decision_id)] = event.revision
         if unit.support_kind == "voice":
-            approval, approval_event = effective_value(family, version, unit, "voice_approval")
+            if treatment == "excluded":
+                excluded.append(str(unit.id))
+                continue
+            if treatment == "metadata_only":
+                metadata_units.append(str(unit.id))
+                continue
+            try:
+                approval, approval_event = effective_value(family, version, unit, "voice_approval")
+            except ValueError as exc:
+                conflict = recommend(
+                    user,
+                    family.id,
+                    f"unit:{unit.id}",
+                    "voice_approval",
+                    "curation",
+                    value={"approved": False},
+                    rationale=str(exc),
+                    evidence=[str(unit.id)],
+                    affected_units=[str(unit.id)],
+                    critical=True,
+                )
+                conflict.status = "conflict"
+                conflict.save(update_fields=["status"])
+                pending.append(str(unit.id))
+                warnings.append(f"Conflicting voice decisions: {unit.id}")
+                continue
             if approval == {"approved": True} and approval_event.actor_id:
                 voice.append(str(unit.id))
-            elif treatment == "excluded":
-                excluded.append(str(unit.id))
             else:
                 pending.append(str(unit.id))
             continue

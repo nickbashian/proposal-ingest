@@ -344,6 +344,18 @@ def test_partial_policy_voice_and_summary_plans_are_machine_enforceable(corpus):
     plan = curation.build_plan(user, families[0].id, version.id)
     assert plan.voice_units == [str(units[1].id)]
     assert plan.eligible_units == [str(units[0].id)]
+    voice_exclusion = issue(
+        user,
+        families[0],
+        version,
+        units[1],
+        scope=f"unit:{units[1].id}",
+        value={"treatment": "excluded"},
+    )
+    curation.review(user, voice_exclusion.id, 0, "approve")
+    plan = curation.build_plan(user, families[0].id, version.id)
+    assert str(units[1].id) in plan.excluded_units
+    assert str(units[1].id) not in plan.voice_units
     curation.record_fact(
         user,
         families[0].id,
