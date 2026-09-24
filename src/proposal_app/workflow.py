@@ -238,7 +238,9 @@ def publish(user, proposal_id) -> m.PublicationGeneration:
         raise ValueError("Answer all inclusion decisions before publication")
     specifications = []
     for source in sources.filter(disposition="included").order_by("id"):
-        family = m.VersionFamily.objects.get(proposal=proposal, proposalmembership__source=source)
+        family = m.VersionFamily.objects.select_for_update().get(
+            proposal=proposal, proposalmembership__source=source
+        )
         version_scopes = [
             f"version:{version_id}"
             for version_id in m.SourceVersion.objects.filter(source=source).values_list(

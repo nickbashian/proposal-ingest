@@ -481,6 +481,42 @@ def test_equal_rank_human_conflict_becomes_visible_unit_issue(corpus):
     assert str(units[0].id) in curation.build_plan(user, families[0].id, version.id).eligible_units
 
 
+def test_three_equal_rank_human_answers_detect_late_conflict(corpus):
+    user, _, families, add = corpus
+    version, units = add(families[0], "three-equal")
+    for entity_key in ("entity-a", "entity-b"):
+        curation.record_fact(
+            user,
+            families[0].id,
+            version.id,
+            "claim_type",
+            "target",
+            unit_id=units[0].id,
+            entity_key=entity_key,
+            rationale="Synthetic entity identity",
+            evidence=[str(units[0].id)],
+            origin="human",
+            resolver_revision="test-v1",
+        )
+    for scope, treatment in [
+        ("entity:entity-a", "full"),
+        ("entity:entity-b", "full"),
+        (f"version:{version.id}", "excluded"),
+    ]:
+        decision = issue(
+            user,
+            families[0],
+            version,
+            units[0],
+            scope=scope,
+            value={"treatment": treatment},
+        )
+        curation.review(user, decision.id, 0, "approve")
+    with pytest.raises(ValueError, match="Conflicting applicable decisions"):
+        curation.effective_value(families[0], version, units[0], "treatment")
+    assert str(units[0].id) in curation.build_plan(user, families[0].id, version.id).pending_units
+
+
 def test_partial_policy_voice_and_summary_plans_are_machine_enforceable(corpus):
     user, _, families, add = corpus
     version, units = add(families[0], "partial", support_kinds=("factual", "voice"))

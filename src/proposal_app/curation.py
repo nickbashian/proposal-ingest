@@ -657,10 +657,8 @@ def effective_value(family, version, unit, field, kind="curation"):
         return None, None
     applicable.sort(key=lambda item: (item[0], item[1]), reverse=True)
     winning = applicable[0]
-    if (
-        len(applicable) > 1
-        and applicable[1][:2] == winning[:2]
-        and (applicable[1][3].value != winning[3].value)
+    if any(
+        peer[:2] == winning[:2] and peer[3].value != winning[3].value for peer in applicable[1:]
     ):
         raise ValueError("Conflicting applicable decisions require review")
     return winning[3].value, winning[3]
