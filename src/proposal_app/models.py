@@ -354,7 +354,12 @@ class CurationPlan(Record):
         constraints = [
             models.UniqueConstraint(
                 fields=["family", "version", "fingerprint"], name="curation_plan_identity"
-            )
+            ),
+            models.UniqueConstraint(
+                fields=["family", "version"],
+                condition=Q(state="current"),
+                name="one_current_curation_plan",
+            ),
         ]
 
 

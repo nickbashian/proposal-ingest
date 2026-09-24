@@ -11,6 +11,7 @@ import uuid
 
 from django.conf import settings
 from django.db import transaction
+from django.db.models import Q
 from django.http import Http404
 
 from . import models as m, services
@@ -114,7 +115,7 @@ def _scope(family, scope):
 def _validate_dimension(dimension, value):
     if dimension not in DIMENSIONS:
         raise ValueError("Unsupported classification dimension")
-    if dimension in ENUMS and value not in ENUMS[dimension]:
+    if dimension in ENUMS and (not isinstance(value, str) or value not in ENUMS[dimension]):
         raise ValueError("Invalid bounded classification value")
     if (
         dimension in {"chemistry", "source_role"}
@@ -145,7 +146,9 @@ def record_fact(
     resolver_revision,
     entity_key="",
 ):
-    family = m.VersionFamily.objects.select_related("proposal").get(pk=family_id)
+    family = (
+        m.VersionFamily.objects.select_for_update().select_related("proposal").get(pk=family_id)
+    )
     services.authorize(user, family.proposal.collection_id)
     version = m.SourceVersion.objects.select_related("source").get(pk=version_id)
     if not _member(family, version):
@@ -386,7 +389,9 @@ def recommend(
     critical=False,
 ):
     """Upsert an uncapped issue; only contradictory material reopens an answer."""
-    family = m.VersionFamily.objects.select_related("proposal").get(pk=family_id)
+    family = (
+        m.VersionFamily.objects.select_for_update().select_related("proposal").get(pk=family_id)
+    )
     services.authorize(user, family.proposal.collection_id)
     _scope(family, scope)
     _validate_value(field, value, family)
@@ -463,8 +468,12 @@ def _append_event(decision, actor, action, value, rationale, evidence, resolver_
 
 def current_event(decision):
     """Replay immutable events, including compensating undo and reopening."""
+    return _active_event(m.DecisionEvent.objects.filter(decision=decision).order_by("revision"))
+
+
+def _active_event(events):
     stack = []
-    for event in m.DecisionEvent.objects.filter(decision=decision).order_by("revision"):
+    for event in events:
         if event.action in RESOLVING_ACTIONS or (event.action == "reject" and event.value):
             stack.append(event)
         elif event.action == "undo" and stack:
@@ -523,6 +532,12 @@ def _invalidate(decision):
 def review(
     user, decision_id, expected_revision, action, *, value=None, rationale="", evidence=None
 ):
+    family_id = (
+        m.Decision.objects.filter(pk=decision_id).values_list("family_id", flat=True).first()
+    )
+    if family_id is None:
+        raise Http404
+    m.VersionFamily.objects.select_for_update().get(pk=family_id)
     decision = (
         m.Decision.objects.select_for_update()
         .select_related("family__proposal")
@@ -579,6 +594,8 @@ def review(
 def automatic_resolution(
     user, decision_id, expected_revision, *, value, rationale, evidence, resolver_revision
 ):
+    family_id = m.Decision.objects.values_list("family_id", flat=True).get(pk=decision_id)
+    m.VersionFamily.objects.select_for_update().get(pk=family_id)
     decision = (
         m.Decision.objects.select_for_update()
         .select_related("family__proposal")
@@ -669,21 +686,11 @@ def review_queue(collection_id, *, limit=None):
     }
 
 
-def _prohibited(family, version, unit):
-    policy = settings.APP["curation_prohibited_sensitivity"]
-    for fact in m.ClassificationFact.objects.filter(
-        family=family, version=version, dimension="sensitivity"
-    ):
-        if fact.value in policy and (fact.unit_id is None or fact.unit_id == unit.id):
-            return True
-    return False
-
-
 def blocking_issues(family, version, unit=None):
     return [
         issue
-        for issue in m.Decision.objects.filter(
-            family=family, critical=True, status__in=UNRESOLVED_STATES
+        for issue in m.Decision.objects.filter(family=family, status__in=UNRESOLVED_STATES).filter(
+            Q(critical=True) | Q(status="conflict")
         )
         if _applies(issue, version, unit)
     ]
@@ -691,7 +698,9 @@ def blocking_issues(family, version, unit=None):
 
 @transaction.atomic
 def build_plan(user, family_id, version_id):
-    family = m.VersionFamily.objects.select_related("proposal").get(pk=family_id)
+    family = (
+        m.VersionFamily.objects.select_for_update().select_related("proposal").get(pk=family_id)
+    )
     services.authorize(user, family.proposal.collection_id)
     version = m.SourceVersion.objects.select_related("source").get(pk=version_id)
     if not _member(family, version):
@@ -702,19 +711,101 @@ def build_plan(user, family_id, version_id):
     units = list(m.ExtractedUnit.objects.filter(extraction_run=run).order_by("ordinal", "key"))
     if not units:
         raise ValueError("No extracted units can be curated")
+    facts = list(
+        m.ClassificationFact.objects.filter(family=family, version=version).values_list(
+            "dimension", "value", "unit_id", "entity_key"
+        )
+    )
+    policy = settings.APP["curation_prohibited_sensitivity"]
+    prohibited_version = any(
+        dimension == "sensitivity" and value in policy and unit_id is None
+        for dimension, value, unit_id, _ in facts
+    )
+    prohibited_units = {
+        unit_id
+        for dimension, value, unit_id, _ in facts
+        if dimension == "sensitivity" and value in policy and unit_id is not None
+    }
+    entities_by_unit = {}
+    for _, _, unit_id, entity_key in facts:
+        if unit_id is not None and entity_key:
+            entities_by_unit.setdefault(unit_id, set()).add(entity_key)
+
+    source_decisions = list(
+        m.Decision.objects.filter(
+            family=family, status__in=UNRESOLVED_STATES | {"resolved"}
+        ).filter(
+            Q(field__in=DIMENSIONS | {"voice_approval"}) | Q(critical=True) | Q(status="conflict")
+        )
+    )
+    events_by_decision = {}
+    for item in m.DecisionEvent.objects.filter(
+        decision_id__in=[decision.id for decision in source_decisions]
+    ).order_by("decision_id", "revision"):
+        events_by_decision.setdefault(item.decision_id, []).append(item)
+    compiled = [
+        (
+            decision,
+            _scope(family, decision.scope),
+            _active_event(events_by_decision.get(decision.id, [])),
+        )
+        for decision in source_decisions
+    ]
+
+    def applies(scope, unit):
+        kind, scoped_version, scoped = scope
+        if kind == "family":
+            return True
+        if kind == "entity":
+            return scoped in entities_by_unit.get(unit.id, set())
+        if scoped_version.id != version.id:
+            return False
+        if kind == "version":
+            return True
+        if kind == "unit":
+            return scoped.id == unit.id
+        return str(unit.locator.get("section", "")) == scoped
+
+    def resolved_value(field, unit):
+        applicable = []
+        for decision, scope, event in compiled:
+            if decision.field != field or decision.status != "resolved" or event is None:
+                continue
+            if applies(scope, unit):
+                rank = SCOPE_RANK[scope[0]]
+                applicable.append((1 if event.actor_id else 0, rank, event))
+        if not applicable:
+            return None, None
+        applicable.sort(key=lambda item: (item[0], item[1]), reverse=True)
+        winner = applicable[0]
+        if any(
+            other[:2] == winner[:2] and other[2].value != winner[2].value
+            for other in applicable[1:]
+        ):
+            raise ValueError("Conflicting applicable decisions require review")
+        return winner[2].value, winner[2]
+
+    def has_blocker(unit):
+        return any(
+            applies(scope, unit)
+            for decision, scope, _ in compiled
+            if decision.status in UNRESOLVED_STATES
+            and (decision.critical or decision.status == "conflict")
+        )
+
     eligible, voice, excluded, pending, metadata_units, summaries = [], [], [], [], [], []
     decisions, warnings = {}, []
     for unit in units:
-        if _prohibited(family, version, unit):
+        if prohibited_version or unit.id in prohibited_units:
             excluded.append(str(unit.id))
             warnings.append(f"Policy prohibition: {unit.id}")
             continue
-        if blocking_issues(family, version, unit):
+        if has_blocker(unit):
             pending.append(str(unit.id))
             warnings.append(f"Critical review pending: {unit.id}")
             continue
         try:
-            value, event = effective_value(family, version, unit, "treatment")
+            value, event = resolved_value("treatment", unit)
         except ValueError as exc:
             conflict = recommend(
                 user,
@@ -744,7 +835,7 @@ def build_plan(user, family_id, version_id):
                 metadata_units.append(str(unit.id))
                 continue
             try:
-                approval, approval_event = effective_value(family, version, unit, "voice_approval")
+                approval, approval_event = resolved_value("voice_approval", unit)
             except ValueError as exc:
                 conflict = recommend(
                     user,

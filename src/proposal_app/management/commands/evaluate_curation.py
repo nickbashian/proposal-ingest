@@ -1,11 +1,12 @@
 """Run a bounded labeled comparison; print only aggregate metrics and run ID."""
 
 import json
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
 from django.conf import settings
 from django.contrib.auth import get_user_model
+from django.core.exceptions import ObjectDoesNotExist
 from django.core.management.base import BaseCommand, CommandError
 
 from proposal_app import model_evaluation as evaluation
@@ -50,6 +51,7 @@ class Command(BaseCommand):
         try:
             document = json.loads(options["cases"].read_text(encoding="utf-8"))
             cases = [evaluation.LabeledCase(**item) for item in document["cases"]]
+            user = get_user_model().objects.get(username=options["user"])
             if options["mock"]:
                 predictions = document["mock_predictions"]
                 adapters = {
@@ -67,7 +69,6 @@ class Command(BaseCommand):
                     ),
                     "jev": evaluation.JevChoiceAdapter(estimated_cost_usd=estimates["jev"] or "0"),
                 }
-            user = get_user_model().objects.get(username=options["user"])
             report = evaluation.compare(
                 user,
                 options["collection"],
@@ -77,7 +78,15 @@ class Command(BaseCommand):
                 allow_live=options["live"],
                 suite_revision=document["suite_revision"],
             )
-        except (KeyError, TypeError, ValueError, OSError) as exc:
+        except (
+            KeyError,
+            TypeError,
+            ValueError,
+            AttributeError,
+            OSError,
+            InvalidOperation,
+            ObjectDoesNotExist,
+        ) as exc:
             raise CommandError(
                 "Invalid evaluation input or unavailable route: " + str(exc)
             ) from exc

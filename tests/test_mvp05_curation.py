@@ -11,7 +11,10 @@ import pytest
 from playwright.sync_api import sync_playwright
 from django.contrib.auth import get_user_model
 from django.core.management import call_command
+from django.core.management.base import CommandError
+from django.db import IntegrityError, connection, transaction
 from django.test import Client
+from django.test.utils import CaptureQueriesContext
 from django.urls import reverse
 
 from proposal_app import curation, model_evaluation as evaluation, models as m, workflow
@@ -302,6 +305,81 @@ def test_new_and_changed_recommendations_invalidate_current_plan(corpus):
     )
     plan.refresh_from_db()
     assert plan.state == "invalidated"
+
+
+def test_noncritical_reopened_conflict_blocks_broader_answer(corpus):
+    user, _, families, add = corpus
+    version, units = add(families[0], "noncritical-conflict")
+    broad = issue(
+        user,
+        families[0],
+        version,
+        units[0],
+        scope=f"family:{families[0].id}",
+        value={"treatment": "full"},
+    )
+    curation.review(user, broad.id, 0, "approve")
+    narrow = issue(
+        user,
+        families[0],
+        version,
+        units[0],
+        scope=f"unit:{units[0].id}",
+        value={"treatment": "full"},
+    )
+    curation.review(user, narrow.id, 0, "approve")
+    curation.recommend(
+        user,
+        families[0].id,
+        narrow.scope,
+        "treatment",
+        "curation",
+        value={"treatment": "excluded"},
+        rationale="New contradictory source check",
+        evidence=[str(units[1].id)],
+        affected_units=[str(units[0].id)],
+        critical=False,
+    )
+    narrow.refresh_from_db()
+    assert narrow.status == "conflict" and not narrow.critical
+    assert str(units[0].id) in curation.build_plan(user, families[0].id, version.id).pending_units
+
+
+def test_current_plan_is_unique_and_build_queries_stay_bounded(corpus):
+    user, _, families, add = corpus
+    version, units = add(families[0], "query-budget")
+    run = units[0].extraction_run
+    for index in range(30):
+        m.ExtractedUnit.objects.create(
+            version=version,
+            extraction_run=run,
+            extractor_revision="test-v1",
+            key=f"extra-{index}",
+            locator={"section": "Approach", "paragraph": index + 2},
+            text=f"Additional synthetic passage {index}",
+            support_kind="factual",
+            ordinal=index + 2,
+        )
+    decision = issue(
+        user,
+        families[0],
+        version,
+        units[0],
+        scope=f"family:{families[0].id}",
+    )
+    curation.review(user, decision.id, 0, "approve")
+    with CaptureQueriesContext(connection) as queries:
+        plan = curation.build_plan(user, families[0].id, version.id)
+    assert len(queries) < 50
+    assert len(plan.eligible_units) == 32
+    with pytest.raises(IntegrityError), transaction.atomic():
+        m.CurationPlan.objects.create(
+            family=families[0],
+            version=version,
+            extraction_run=run,
+            fingerprint="b" * 64,
+            state="current",
+        )
 
 
 def test_automatic_resolution_cannot_clear_human_or_reopened_decisions(corpus):
@@ -653,6 +731,21 @@ def test_review_ui_authorizes_and_detects_concurrent_edit(corpus):
         == 302
     )
     assert client.post(target, {"action": "approve", "revision": 0}).status_code == 409
+    enum_decision = issue(
+        user,
+        families[0],
+        version,
+        units[0],
+        field="claim_type",
+        value={"value": "target"},
+    )
+    assert (
+        client.post(
+            reverse("review-decision", args=[enum_decision.id]),
+            {"action": "edit", "revision": 0, "value": "{}", "rationale": "Invalid enum"},
+        ).status_code
+        == 409
+    )
     anonymous = Client()
     assert anonymous.get(target).status_code in {302, 401, 403}
 
@@ -925,3 +1018,25 @@ def test_synthetic_comparison_command_prints_only_aggregate_metrics(corpus, sett
     assert report["metrics"]["baseline"]["correct"] == 4
     assert report["metrics"]["economical"]["false_exclusions"] == 1
     assert "proposed goal" not in output.getvalue()
+
+
+def test_comparison_command_reports_bad_user_and_budget_as_input_errors(corpus, settings):
+    user, collection, _, _ = corpus
+    cases = settings.ROOT / "sample_data/application_slice/curation_eval.json"
+    with pytest.raises(CommandError, match="Invalid evaluation input"):
+        call_command(
+            "evaluate_curation",
+            collection=str(collection.id),
+            user="missing-user",
+            cases=cases,
+            mock=True,
+        )
+    with pytest.raises(CommandError, match="Invalid evaluation input"):
+        call_command(
+            "evaluate_curation",
+            collection=str(collection.id),
+            user=user.username,
+            cases=cases,
+            mock=True,
+            max_spend_usd="not-a-number",
+        )
