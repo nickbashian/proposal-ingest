@@ -6,16 +6,23 @@ from pathlib import Path
 import os
 import hashlib
 import subprocess
+import io
+import re
+import zipfile
+import json
 
 import pytest
 from django.contrib.auth import get_user_model
 from django.test import Client
 from django.urls import reverse
+from django.core.management import call_command
+from django.db import connection
+from django.test.utils import CaptureQueriesContext
 from playwright.sync_api import sync_playwright
 
 from scripts import dev
 
-from proposal_app import extraction_audit, extraction_service, models as m, services
+from proposal_app import extraction_audit, extraction_service, models as m, services, workflow
 from proposal_app.structured_extraction import extract_snapshot
 from tests.structured_fixtures import docx_bytes, pdf_bytes, pptx_bytes, xlsx_bytes
 
@@ -264,6 +271,56 @@ def test_inspector_auth_figures_selective_interpretation_and_failure(owner):
     assert client.get(reverse("source-original", args=[version.id])).status_code == 403
 
 
+def test_figure_only_office_has_no_pdf_ocr_and_tiff_has_preview(owner):
+    from docx import Document
+    from docx.shared import Inches
+    from PIL import Image
+
+    user, _ = owner
+    picture = io.BytesIO()
+    Image.new("RGB", (20, 10), "white").save(picture, format="TIFF")
+    document = Document()
+    document.add_picture(io.BytesIO(picture.getvalue()), width=Inches(1))
+    saved = io.BytesIO()
+    document.save(saved)
+    version = capture(owner, "picture.docx", saved.getvalue())
+    run = extraction_service.extract_version(user, version.id)
+    assert run.state == "failed" and run.reason == "figure_only_non_pdf"
+    figure = m.FigureAsset.objects.get(run=run)
+    assert figure.mime_type == "image/tiff"
+    with pytest.raises(ValueError, match="PDF"):
+        extraction_service.request_visual(user, run.id, kind="ocr", locator={"page": 1})
+    client = Client()
+    client.force_login(user)
+    original = client.get(reverse("figure-image", args=[figure.id]))
+    preview = client.get(reverse("figure-image", args=[figure.id]) + "?preview=1")
+    assert original["Content-Type"] == "image/tiff"
+    assert original.content == picture.getvalue()
+    assert preview["Content-Type"] == "image/png"
+    assert preview.content.startswith(b"\x89PNG")
+
+
+def test_inspector_post_keeps_selected_historical_run(owner):
+    user, _ = owner
+    version = capture(owner, "history.pdf", pdf_bytes())
+    first = extraction_service.extract_version(user, version.id)
+    extraction_service.extract_version(user, version.id, force=True)
+    figure = m.FigureAsset.objects.get(run=first)
+    client = Client()
+    client.force_login(user)
+    response = client.post(
+        reverse("source-inspector", args=[version.id]) + f"?run={first.id}",
+        {
+            "action": "request-visual",
+            "run_id": str(first.id),
+            "kind": "figure",
+            "figure_id": str(figure.id),
+        },
+    )
+    assert response.status_code == 302
+    assert response["Location"].endswith(f"?run={first.id}")
+
+
 def test_failed_extraction_is_visible_and_not_active(owner):
     user, _ = owner
     version = capture(owner, "malformed.pdf", b"not a PDF")
@@ -277,11 +334,145 @@ def test_failed_extraction_is_visible_and_not_active(owner):
 def test_source_path_at_capture_survives_rename(owner):
     user, _ = owner
     version = capture(owner, "original.pdf", pdf_bytes())
-    version.source.display_path = "2025/Fictional Proposal/renamed.pdf"
+    version.source.display_path = "2025/Fictional Proposal/renamed.docx"
     version.source.save(update_fields=["display_path"])
     assert version.observed_path.endswith("original.pdf")
     run = extraction_service.extract_version(user, version.id)
     assert run.state == "succeeded"
+    assert run.parser.startswith("pymupdf")
+
+
+def test_raw_extracted_units_cannot_enter_factual_review(owner):
+    user, collection = owner
+    version = capture(owner, "review.pdf", pdf_bytes())
+    first = extraction_service.extract_version(user, version.id)
+    assert set(
+        m.ExtractedUnit.objects.filter(extraction_run=first).values_list("support_kind", flat=True)
+    ) == {"unclassified"}
+    family = m.VersionFamily.objects.get(proposal__collection=collection)
+    decision = m.Decision.objects.create(
+        family=family, scope=f"version:{version.id}", field="publication", kind="inclusion"
+    )
+    with pytest.raises(ValueError, match="requires factual"):
+        workflow.answer_inclusion(user, decision.id, 0, "include")
+
+
+def test_active_run_controls_review_and_prior_approval_cannot_republish(owner):
+    user, collection = owner
+    version = capture(owner, "review.txt", b"Fictional evidence")
+    family = m.VersionFamily.objects.get(proposal__collection=collection)
+    decision = m.Decision.objects.create(
+        family=family, scope=f"version:{version.id}", field="publication", kind="inclusion"
+    )
+    first = m.ExtractionRun.objects.create(
+        version=version,
+        number=1,
+        fingerprint="1" * 64,
+        extractor_revision="fictional",
+        parser="fictional",
+        state="succeeded",
+        active=True,
+    )
+    old_unit = m.ExtractedUnit.objects.create(
+        version=version,
+        extraction_run=first,
+        extractor_revision="fictional-1",
+        key="fact",
+        locator={"line": 1},
+        text="Fictional old evidence",
+        support_kind="factual",
+    )
+    old_event = workflow.answer_inclusion(user, decision.id, 0, "include")
+    first.active = False
+    first.save(update_fields=["active"])
+    second = m.ExtractionRun.objects.create(
+        version=version,
+        number=2,
+        fingerprint="2" * 64,
+        extractor_revision="fictional",
+        parser="fictional",
+        state="succeeded",
+        active=True,
+    )
+    new_unit = m.ExtractedUnit.objects.create(
+        version=version,
+        extraction_run=second,
+        extractor_revision="fictional-2",
+        key="fact",
+        locator={"line": 1},
+        text="Fictional updated evidence",
+        support_kind="factual",
+    )
+    with pytest.raises(ValueError, match="active extraction"):
+        workflow.publish(user, family.proposal_id)
+    new_event = workflow.answer_inclusion(user, decision.id, 1, "include")
+    assert new_event.evidence == [str(new_unit.id)]
+    assert old_event.evidence == [str(old_unit.id)]
+
+
+def test_transient_failure_retries_and_cached_success_reactivates(owner, settings, monkeypatch):
+    user, _ = owner
+    version = capture(owner, "retry.pdf", pdf_bytes())
+    original = extraction_service._parse_bounded
+    monkeypatch.setattr(
+        extraction_service,
+        "_parse_bounded",
+        lambda *args: extraction_service.ExtractionResult(
+            "failed", "parser_timeout", "Retry", "worker"
+        ),
+    )
+    failed = extraction_service.extract_version(user, version.id)
+    monkeypatch.setattr(extraction_service, "_parse_bounded", original)
+    first = extraction_service.extract_version(user, version.id)
+    assert first.id != failed.id and first.active
+    settings.APP = {**settings.APP, "extraction_revision": "new-parser-revision"}
+    second = extraction_service.extract_version(user, version.id)
+    assert second.active
+    settings.APP = {**settings.APP, "extraction_revision": "structured-v1"}
+    reused = extraction_service.extract_version(user, version.id)
+    assert reused.id == first.id and reused.active
+    second.refresh_from_db()
+    assert not second.active
+
+
+def test_spreadsheet_blank_first_cell_and_missing_dimension(settings):
+    from openpyxl import Workbook
+
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet["B2"] = "Fictional value"
+    output = io.BytesIO()
+    workbook.save(output)
+    rebuilt = io.BytesIO()
+    with (
+        zipfile.ZipFile(io.BytesIO(output.getvalue())) as original,
+        zipfile.ZipFile(rebuilt, "w") as target,
+    ):
+        for item in original.infolist():
+            data = original.read(item.filename)
+            if item.filename == "xl/worksheets/sheet1.xml":
+                data = re.sub(rb"<dimension[^>]*/>", b"", data)
+            target.writestr(item, data)
+    result = extract_snapshot("blank.xlsx", rebuilt.getvalue(), settings.APP)
+    assert result.state == "succeeded"
+    assert result.units[0].locator["row"] == 2
+    assert result.units[0].locator["cells"] == ["B2"]
+
+
+def test_cache_fingerprint_ignores_visual_only_settings(owner, settings):
+    version = capture(owner, "fingerprint.pdf", pdf_bytes())
+    baseline = extraction_service.extraction_fingerprint(version)
+    settings.APP = {
+        **settings.APP,
+        "extraction_ocr_executable": "fictional-ocr",
+        "extraction_max_visual_tasks_per_version": 7,
+    }
+    assert extraction_service.extraction_fingerprint(version) == baseline
+    settings.APP = {
+        **settings.APP,
+        "extraction_max_units": settings.APP["extraction_max_units"] + 1,
+    }
+    assert extraction_service.extraction_fingerprint(version) != baseline
 
 
 def test_audit_samples_failures_and_figures_without_source_text(owner):
@@ -300,6 +491,51 @@ def test_audit_samples_failures_and_figures_without_source_text(owner):
     assert "Synthetic Battery Results" not in str(report)
 
 
+def test_audit_counts_shared_versions_once_and_hides_extensionless_path(owner):
+    user, collection = owner
+    version = capture(owner, "private-synthetic-marker", b"fictional")
+    extraction_service.extract_version(user, version.id)
+    second = m.Proposal.objects.create(collection=collection, identifier="Second fictional family")
+    family = m.VersionFamily.objects.create(proposal=second, key="source")
+    m.ProposalMembership.objects.create(source=version.source, family=family)
+    report = extraction_audit.audit_collection(collection.id)
+    assert len(report["families"]) == 2
+    assert report["totals"]["failed"] == 1
+    assert all(row["format"] == "none" for item in report["families"] for row in item["sample"])
+    output = io.StringIO()
+    call_command("audit_extraction", collection=str(collection.id), stdout=output)
+    assert "private-synthetic-marker" not in output.getvalue()
+
+
+def test_audit_query_count_is_bounded_across_versions(owner):
+    user, collection = owner
+    for index in range(12):
+        version = capture(owner, f"fictional-{index}.txt", b"Synthetic content")
+        extraction_service.extract_version(user, version.id)
+    with CaptureQueriesContext(connection) as queries:
+        report = extraction_audit.audit_collection(collection.id)
+    assert report["families"][0]["version_count"] == 12
+    assert len(queries) < 12
+
+
+def test_parser_worker_discards_output_and_receives_only_parser_settings(
+    settings, tmp_path, monkeypatch
+):
+    settings.LOCAL_STORAGE_ROOT = tmp_path / "objects"
+
+    def fake_worker(argv, **kwargs):
+        assert kwargs["stdout"] == subprocess.DEVNULL
+        assert kwargs["stderr"] == subprocess.DEVNULL
+        config = json.loads(Path(argv[-1]).read_text(encoding="utf-8"))
+        assert set(config) == set(extraction_service.PARSER_SETTING_KEYS)
+        assert "development_database_url" not in config
+        return subprocess.CompletedProcess(argv, 1)
+
+    monkeypatch.setattr(extraction_service.subprocess, "run", fake_worker)
+    result = extraction_service._parse_bounded("fictional.txt", b"Synthetic")
+    assert result.reason == "parser_worker_error"
+
+
 def test_selective_local_ocr_requires_source_check(owner, settings, monkeypatch):
     user, _ = owner
     version = capture(owner, "scanned-for-ocr.pdf", pdf_bytes(scanned=True))
@@ -310,13 +546,23 @@ def test_selective_local_ocr_requires_source_check(owner, settings, monkeypatch)
     settings.APP = {**settings.APP, "extraction_ocr_executable": "fictional-ocr"}
     monkeypatch.setattr(extraction_service.shutil, "which", lambda name: name)
 
+    class FakeOcr:
+        returncode = 0
+
+        def __init__(self, argv, **kwargs):
+            self.argv = argv
+            kwargs["stdout"].write(b"Possible -3.2 mAh g-1")
+
+        def poll(self):
+            return self.returncode
+
     def fake_ocr(argv, **kwargs):
         assert argv[0] == "fictional-ocr" and argv[2] == "stdout"
         assert Path(argv[1]).is_file()
         assert Path(argv[1]).read_bytes().startswith(b"\x89PNG")
-        return subprocess.CompletedProcess(argv, 0, stdout="Possible -3.2 mAh g-1", stderr="")
+        return FakeOcr(argv, **kwargs)
 
-    monkeypatch.setattr(extraction_service.subprocess, "run", fake_ocr)
+    monkeypatch.setattr(extraction_service.subprocess, "Popen", fake_ocr)
     candidate = extraction_service.run_selective_ocr(user, task.id)
     assert candidate.state == "needs_source_check"
     assert candidate.adapter_revision == "local-ocr-v1"

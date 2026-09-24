@@ -9,6 +9,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 from django.conf import settings
@@ -20,17 +21,32 @@ from . import models as m, services, source_sync
 from .storage import LocalObjectStorage
 from .structured_extraction import ExtractionResult, ParsedFigure, ParsedUnit
 
+PARSER_SETTING_KEYS = (
+    "extraction_revision",
+    "extraction_max_source_bytes",
+    "extraction_max_archive_entries",
+    "extraction_max_uncompressed_bytes",
+    "extraction_max_pages",
+    "extraction_max_units",
+    "extraction_max_chars",
+    "extraction_max_spreadsheet_cells",
+    "extraction_max_render_pixels",
+    "extraction_parser_timeout_seconds",
+)
+TRANSIENT_FAILURES = {
+    "snapshot_unavailable",
+    "parser_timeout",
+    "parser_worker_unavailable",
+    "parser_worker_error",
+}
+
 
 def _snapshot_name(version: m.SourceVersion) -> str:
     return Path(version.observed_path or version.source.display_path).name
 
 
 def extraction_fingerprint(version: m.SourceVersion) -> str:
-    relevant = {
-        key: settings.APP[key]
-        for key in settings.APP
-        if key.startswith("extraction_") and key != "extraction_schema_revision"
-    }
+    relevant = {key: settings.APP[key] for key in PARSER_SETTING_KEYS}
     revision = (
         settings.APP["extraction_revision"]
         + ":"
@@ -68,7 +84,9 @@ def _parse_bounded(name: str, content: bytes) -> ExtractionResult:
         output_path = folder / "result.json"
         config_path = folder / "limits.json"
         source_path.write_bytes(content)
-        config_path.write_text(json.dumps(settings.APP), encoding="utf-8")
+        config_path.write_text(
+            json.dumps({key: settings.APP[key] for key in PARSER_SETTING_KEYS}), encoding="utf-8"
+        )
         try:
             call = subprocess.run(
                 [
@@ -80,7 +98,8 @@ def _parse_bounded(name: str, content: bytes) -> ExtractionResult:
                     name,
                     str(config_path),
                 ],
-                capture_output=True,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
                 timeout=settings.APP["extraction_parser_timeout_seconds"],
                 check=False,
             )
@@ -148,10 +167,15 @@ def extract_version(user, version_id, *, force: bool = False) -> m.ExtractionRun
     if not force:
         cached = (
             m.ExtractionRun.objects.filter(version=version, fingerprint=fingerprint)
+            .exclude(reason__in=TRANSIENT_FAILURES)
             .order_by("-number")
             .first()
         )
         if cached is not None:
+            if cached.state == "succeeded" and not cached.active:
+                m.ExtractionRun.objects.filter(version=version, active=True).update(active=False)
+                cached.active = True
+                cached.save(update_fields=["active"])
             return cached
     number = (
         m.ExtractionRun.objects.filter(version=version).aggregate(Max("number"))["number__max"] or 0
@@ -199,7 +223,7 @@ def extract_version(user, version_id, *, force: bool = False) -> m.ExtractionRun
                     context=unit.context,
                     warnings=unit.warnings,
                     ordinal=ordinal,
-                    support_kind="factual" if result.state == "succeeded" else "unusable",
+                    support_kind="unclassified" if result.state == "succeeded" else "unusable",
                 )
                 for ordinal, unit in enumerate(result.units, 1)
             ]
@@ -250,6 +274,8 @@ def request_visual(
     if kind == "ocr" and (run.state != "scanned" or not locator.get("page")):
         raise ValueError("Select a page from an unreadable PDF")
     if kind == "ocr":
+        if Path(_snapshot_name(run.version)).suffix.casefold() != ".pdf":
+            raise ValueError("Selective OCR supports captured PDFs only")
         import pymupdf
 
         content = LocalObjectStorage(settings.LOCAL_STORAGE_ROOT).get(run.version.blob.storage_key)
@@ -333,6 +359,8 @@ def run_selective_ocr(user, task_id, *, expected_version_id=None):
         raise Http404
     if task.kind != "ocr" or task.state != "requested":
         raise ValueError("OCR task is not awaiting an adapter")
+    if Path(_snapshot_name(task.run.version)).suffix.casefold() != ".pdf":
+        raise ValueError("Selective OCR supports captured PDFs only")
     executable = settings.APP.get("extraction_ocr_executable")
     if not executable or not shutil.which(executable):
         raise ValueError("Local OCR is unavailable; use manual source inspection or defer")
@@ -360,21 +388,37 @@ def run_selective_ocr(user, task_id, *, expected_version_id=None):
     with tempfile.TemporaryDirectory(dir=root) as directory:
         image_path = Path(directory) / "selected-page.png"
         image_path.write_bytes(image)
+        output_path = Path(directory) / "ocr.txt"
+        max_bytes = settings.APP["extraction_max_visual_text_chars"] * 4
         try:
-            call = subprocess.run(
-                [executable, str(image_path), "stdout"],
-                capture_output=True,
-                text=True,
-                timeout=settings.APP["extraction_ocr_timeout_seconds"],
-                check=False,
-            )
-        except (OSError, subprocess.TimeoutExpired):
-            raise ValueError("Local OCR failed or timed out; use manual inspection") from None
-    if call.returncode or not call.stdout.strip():
+            with output_path.open("wb") as output:
+                process = subprocess.Popen(
+                    [executable, str(image_path), "stdout"],
+                    stdout=output,
+                    stderr=subprocess.DEVNULL,
+                )
+                deadline = time.monotonic() + settings.APP["extraction_ocr_timeout_seconds"]
+                try:
+                    while process.poll() is None:
+                        if output_path.stat().st_size > max_bytes:
+                            raise ValueError("OCR text exceeds the selective inspection limit")
+                        if time.monotonic() >= deadline:
+                            raise ValueError("Local OCR timed out; use manual inspection")
+                        time.sleep(0.02)
+                except ValueError:
+                    process.kill()
+                    process.wait()
+                    raise
+            if output_path.stat().st_size > max_bytes:
+                raise ValueError("OCR text exceeds the selective inspection limit")
+            candidate = output_path.read_text(encoding="utf-8")
+        except (OSError, UnicodeError):
+            raise ValueError("Local OCR failed; use manual inspection") from None
+    if process.returncode or not candidate.strip():
         raise ValueError("Local OCR returned no readable text; use manual inspection")
-    if len(call.stdout) > settings.APP["extraction_max_visual_text_chars"]:
+    if len(candidate) > settings.APP["extraction_max_visual_text_chars"]:
         raise ValueError("OCR text exceeds the selective inspection limit")
-    task.interpretation = call.stdout.strip()
+    task.interpretation = candidate.strip()
     task.adapter_revision = "local-ocr-v1"
     task.state = "needs_source_check"
     task.save(update_fields=["interpretation", "adapter_revision", "state"])

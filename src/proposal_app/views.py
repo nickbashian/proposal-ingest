@@ -2,6 +2,7 @@
 
 import uuid
 import shutil
+import io
 from urllib.parse import urlencode
 
 from django.core.exceptions import ValidationError
@@ -305,7 +306,7 @@ def source_inspector(request, version_id):
         action = request.POST.get("action", "")
         try:
             if action == "extract":
-                extraction_service.extract_version(
+                acted_run = extraction_service.extract_version(
                     request.user, version.id, force=request.POST.get("force") == "true"
                 )
             elif action == "request-visual":
@@ -320,7 +321,7 @@ def source_inspector(request, version_id):
                     locator = figure.locator
                 else:
                     locator = {"page": int(request.POST.get("page", "0"))}
-                extraction_service.request_visual(
+                task = extraction_service.request_visual(
                     request.user,
                     run_id,
                     kind=request.POST.get("kind", ""),
@@ -328,23 +329,26 @@ def source_inspector(request, version_id):
                     figure_id=figure_id,
                     expected_version_id=version.id,
                 )
+                acted_run = task.run
             elif action == "complete-visual":
-                extraction_service.complete_visual(
+                task = extraction_service.complete_visual(
                     request.user,
                     request.POST.get("task_id"),
                     text=request.POST.get("interpretation", ""),
                     source_check=request.POST.get("source_check", ""),
                     expected_version_id=version.id,
                 )
+                acted_run = task.run
             elif action == "run-ocr":
-                extraction_service.run_selective_ocr(
+                task = extraction_service.run_selective_ocr(
                     request.user, request.POST.get("task_id"), expected_version_id=version.id
                 )
+                acted_run = task.run
             else:
                 raise ValueError("Unknown inspector action")
         except (ValueError, ValidationError) as exc:
             return conflict(exc)
-        return HttpResponseRedirect(request.path)
+        return HttpResponseRedirect(f"{request.path}?{urlencode({'run': str(acted_run.id)})}")
     runs = list(m.ExtractionRun.objects.filter(version=version).order_by("-number"))
     selected = runs[0] if runs else None
     if request.GET.get("run"):
@@ -418,7 +422,22 @@ def figure_image(request, figure_id):
     if figure.mime_type not in {"image/png", "image/jpeg", "image/tiff", "image/bmp"}:
         raise Http404
     content = LocalObjectStorage(settings.LOCAL_STORAGE_ROOT).get(figure.blob.storage_key)
-    response = HttpResponse(content, content_type=figure.mime_type)
+    if request.GET.get("preview") == "1" and figure.mime_type in {"image/tiff", "image/bmp"}:
+        from PIL import Image, UnidentifiedImageError
+
+        try:
+            with Image.open(io.BytesIO(content)) as image:
+                if image.width * image.height > settings.APP["extraction_max_render_pixels"]:
+                    raise ValueError("Figure exceeds preview pixel limit")
+                output = io.BytesIO()
+                image.convert("RGB").save(output, format="PNG")
+                content = output.getvalue()
+        except (OSError, UnidentifiedImageError, ValueError):
+            raise Http404 from None
+        mime_type = "image/png"
+    else:
+        mime_type = figure.mime_type
+    response = HttpResponse(content, content_type=mime_type)
     response["X-Content-Type-Options"] = "nosniff"
     return response
 

@@ -21,6 +21,7 @@ dependencies = [
   "openpyxl",
   "pypdf",
   "pymupdf>=1.28,<1.29",
+  "Pillow>=12,<13",
   "python-docx",
   "python-pptx>=1.0,<1.1",
   "typer",

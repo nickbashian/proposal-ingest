@@ -10,6 +10,7 @@ import io
 import re
 import zipfile
 from dataclasses import dataclass, field, replace
+from importlib.metadata import version as distribution_version
 from pathlib import Path
 
 
@@ -157,7 +158,7 @@ def extract_snapshot(name: str, content: bytes, settings: dict) -> ExtractionRes
         result.figures = _attach_captions(result.units, result.figures)
         _limit(result, settings)
         if not result.units and result.state == "succeeded":
-            if result.figures:
+            if suffix == ".pdf" and result.figures:
                 result.state = "scanned"
                 result.reason = "no_selectable_text"
                 result.recovery_action = (
@@ -165,8 +166,12 @@ def extract_snapshot(name: str, content: bytes, settings: dict) -> ExtractionRes
                 )
             else:
                 result.state = "failed"
-                result.reason = "empty_extraction"
-                result.recovery_action = "Try an alternate parser or defer this source."
+                result.reason = "figure_only_non_pdf" if result.figures else "empty_extraction"
+                result.recovery_action = (
+                    "Inspect preserved figures manually or defer this source."
+                    if result.figures
+                    else "Try an alternate parser or defer this source."
+                )
         return result
     except ExtractionLimit as exc:
         return _failure(str(exc), "Defer or use an authorized bounded conversion.")
@@ -185,6 +190,7 @@ def _pdf(content: bytes, settings: dict) -> ExtractionResult:
         if document.page_count > settings["extraction_max_pages"]:
             raise ExtractionLimit("page_limit")
         result = ExtractionResult("succeeded", "", "", f"pymupdf-{pymupdf.VersionBind}")
+        image_only_pages = []
         for page_index in range(document.page_count):
             page = document[page_index]
             page_number = page_index + 1
@@ -264,7 +270,10 @@ def _pdf(content: bytes, settings: dict) -> ExtractionResult:
                 )
             )
             seen_images = set()
-            for image_index, image in enumerate(page.get_images(full=True), 1):
+            page_images = page.get_images(full=True)
+            if not page_units and page_images:
+                image_only_pages.append(page_number)
+            for image_index, image in enumerate(page_images, 1):
                 xref = image[0]
                 if xref in seen_images:
                     continue
@@ -291,6 +300,14 @@ def _pdf(content: bytes, settings: dict) -> ExtractionResult:
                             "image/jpeg" if extension in {"jpeg", "jpg"} else f"image/{extension}",
                         )
                     )
+        if image_only_pages:
+            result.warnings.append("image_only_pages:" + ",".join(map(str, image_only_pages)))
+            if not result.units:
+                result.state = "scanned"
+                result.reason = "no_selectable_text"
+                result.recovery_action = (
+                    "Request selective OCR or visual inspection for specific pages."
+                )
         return result
     finally:
         document.close()
@@ -301,7 +318,9 @@ def _docx(content: bytes, settings: dict) -> ExtractionResult:
     from docx.table import Table
 
     document = Document(io.BytesIO(content))
-    result = ExtractionResult("succeeded", "", "", "python-docx-1.2.0")
+    result = ExtractionResult(
+        "succeeded", "", "", f"python-docx-{distribution_version('python-docx')}"
+    )
     section = ""
     paragraph_number = 0
     table_number = 0
@@ -375,7 +394,9 @@ def _pptx(content: bytes, settings: dict) -> ExtractionResult:
     presentation = Presentation(io.BytesIO(content))
     if len(presentation.slides) > settings["extraction_max_pages"]:
         raise ExtractionLimit("slide_limit")
-    result = ExtractionResult("succeeded", "", "", "python-pptx-1.0.2")
+    result = ExtractionResult(
+        "succeeded", "", "", f"python-pptx-{distribution_version('python-pptx')}"
+    )
     for slide_number, slide in enumerate(presentation.slides, 1):
         for shape_number, shape in enumerate(slide.shapes, 1):
             locator = {"slide": slide_number, "shape": shape_number}
@@ -442,19 +463,21 @@ def _xlsx(content: bytes, settings: dict) -> ExtractionResult:
     source = io.BytesIO(content)
     workbook = load_workbook(source, read_only=True, data_only=False)
     values = load_workbook(io.BytesIO(content), read_only=True, data_only=True)
-    result = ExtractionResult("succeeded", "", "", "openpyxl-3.1.5")
+    result = ExtractionResult("succeeded", "", "", f"openpyxl-{distribution_version('openpyxl')}")
     try:
         if len(workbook.worksheets) > settings["extraction_max_pages"]:
             raise ExtractionLimit("sheet_limit")
         cells_seen = 0
         for sheet in workbook.worksheets:
-            if sheet.max_row * sheet.max_column > settings["extraction_max_spreadsheet_cells"]:
+            if (sheet.max_row or 0) * (sheet.max_column or 0) > settings[
+                "extraction_max_spreadsheet_cells"
+            ]:
                 raise ExtractionLimit("spreadsheet_cell_limit")
             value_sheet = values[sheet.title]
-            for row in sheet.iter_rows():
+            for row, value_row in zip(sheet.iter_rows(), value_sheet.iter_rows()):
                 entries = []
                 formula_cells = []
-                for cell in row:
+                for cell, value_cell in zip(row, value_row):
                     cells_seen += 1
                     if cells_seen > settings["extraction_max_spreadsheet_cells"]:
                         raise ExtractionLimit("spreadsheet_cell_limit")
@@ -462,7 +485,7 @@ def _xlsx(content: bytes, settings: dict) -> ExtractionResult:
                         continue
                     value = str(cell.value)
                     if cell.data_type == "f":
-                        cached = value_sheet[cell.coordinate].value
+                        cached = value_cell.value
                         formula_cells.append(
                             {"cell": cell.coordinate, "formula": value, "cached_value": cached}
                         )
@@ -471,13 +494,14 @@ def _xlsx(content: bytes, settings: dict) -> ExtractionResult:
                         )
                     entries.append(f"{cell.coordinate}: {value}")
                 if entries:
+                    row_number = next(cell.row for cell in row if cell.value is not None)
                     result.units.append(
                         ParsedUnit(
-                            f"sheet-{sheet.title}-row-{row[0].row}",
+                            f"sheet-{sheet.title}-row-{row_number}",
                             "spreadsheet_row",
                             {
                                 "sheet": sheet.title,
-                                "row": row[0].row,
+                                "row": row_number,
                                 "cells": [
                                     cell.coordinate for cell in row if cell.value is not None
                                 ],
