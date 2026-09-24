@@ -102,3 +102,35 @@ web_application:
   extraction_ocr_dpi: 150
   extraction_max_render_pixels: 5000000
   extraction_parser_timeout_seconds: 30
+  curation_review_target: 10
+  curation_max_evidence_units: 100
+  curation_max_summary_chars: 4000
+  curation_max_reconcile_versions: 8
+  curation_max_reconcile_facts: 40
+  curation_policy_revision: "curation-v1"
+  curation_prohibited_sensitivity:
+    - financial_sensitive
+    - personal_sensitive
+  classification_routes:
+    baseline:
+      provider: bedrock
+      model_id: "us.anthropic.claude-opus-4-6-v1"
+    economical:
+      provider: bedrock
+      model_id: null
+    jev:
+      provider: jev
+      model_id: "jev-latest"
+      enabled: false
+  classification_task_routes:
+    source_role: baseline
+    content_use: baseline
+    claim_type: baseline
+    treatment: baseline
+  jev_api_url: "https://api.typesafe.ai/v1/systemone"
+  classification_max_excerpt_chars: 4000
+  classification_max_cases_per_run: 100
+  classification_estimate_usd_per_call:
+    baseline: null
+    economical: null
+    jev: null

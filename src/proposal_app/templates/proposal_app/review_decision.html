@@ -1,0 +1,33 @@
+{% extends "proposal_app/base.html" %}{% block content %}
+<h1>{{ decision.field }} review</h1>
+<p><a href="{% url 'review-queue' decision.family.proposal.collection_id %}">Review queue</a> · {{ decision.family.proposal.identifier }} / {{ decision.family.key }}</p>
+<p><strong>{{ decision.status }}</strong>{% if decision.critical %} · Critical publication gate{% endif %} · {{ scope_kind }} scope {{ decision.scope }} · revision {{ decision.revision }}</p>
+<section class="card"><h2>Recommendation and consequence</h2>
+<p>{{ decision.recommendation_rationale }}</p><pre>{{ recommendation_json }}</pre>
+<p>Review affects {{ scope_count }} currently extracted unit(s) in this scope{% if preview_limited %}; the selection table shows the first {{ selectable|length }} units{% endif %}. A changed decision makes dependent plans and active artifacts ineligible until rebuilt; saved historical citations remain.</p>
+</section>
+<section><h2>Source excerpts and conflicting evidence</h2>
+<table><thead><tr><th>Source</th><th>Extracted passage</th></tr></thead><tbody>
+{% for unit in evidence %}<tr><td><a href="{% url 'unit-inspector' unit.id %}">{{ unit.version.source.display_path }}</a><br>{{ unit.locator }}</td><td>{{ unit.text }}</td></tr>
+{% empty %}<tr><td colspan="2">No excerpt attached; inspect the source before approving.</td></tr>{% endfor %}
+</tbody></table>
+{% if decision.status == "conflict" %}<p class="warning">New material conflicts with an earlier answer. The prior answer remains in the audit history, but this scope needs review.</p>{% endif %}
+</section>
+<section><h2>Affected records and partial selection</h2>
+<p>Selection is stored as unit IDs so a partial treatment can be enforced by the publication builder.</p>
+<form method="post">{% csrf_token %}<input type="hidden" name="revision" value="{{ decision.revision }}"><input type="hidden" name="action" value="edit">
+{% if decision.field == "treatment" %}<label>Treatment <select name="treatment"><option value="full">Full</option><option value="partial">Selected units only</option><option value="summary">Derived summary</option><option value="metadata_only">Metadata only</option><option value="excluded">Excluded</option></select></label>
+<table><thead><tr><th>Select</th><th>Unit</th></tr></thead><tbody>{% for unit in selectable %}<tr><td><input type="checkbox" name="selected_units" value="{{ unit.id }}"></td><td><a href="{% url 'unit-inspector' unit.id %}">{{ unit.locator }}</a> · {{ unit.text|truncatechars:300 }}</td></tr>{% endfor %}</tbody></table>
+<label>Source-checked derived summary <textarea name="summary" rows="3"></textarea></label>
+{% elif decision.field == "voice_approval" %}<label>Voice use <select name="approved"><option value="false">Do not approve</option><option value="true">Approve explicitly</option></select></label>
+{% else %}<label>Typed JSON value <input name="value" value="null" size="40"></label>{% endif %}
+<p><label>Reason <textarea name="rationale" required rows="3"></textarea></label></p><button>Save scoped edit</button></form>
+{% if affected %}<p>Affected recommendation records: {% for unit in affected %}<a href="{% url 'unit-inspector' unit.id %}">{{ unit.id }}</a>{% if not forloop.last %}, {% endif %}{% endfor %}</p>{% endif %}
+</section>
+<section><h2>Other review actions</h2>
+<form method="post">{% csrf_token %}<input type="hidden" name="revision" value="{{ decision.revision }}"><button name="action" value="approve">Approve recommendation</button></form>
+<form method="post">{% csrf_token %}<input type="hidden" name="revision" value="{{ decision.revision }}"><label>Reason <input name="rationale" required></label> <button name="action" value="defer">Defer</button> <button name="action" value="reject">Reject recommendation</button></form>
+<form method="post">{% csrf_token %}<input type="hidden" name="revision" value="{{ decision.revision }}"><button name="action" value="undo">Undo last answer</button></form>
+</section>
+<section><h2>Audit history</h2><ol>{% for event in prior %}<li>Revision {{ event.revision }} · {{ event.action }} · {{ event.rationale }}</li>{% empty %}<li>No answer yet.</li>{% endfor %}</ol></section>
+{% endblock %}

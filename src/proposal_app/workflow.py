@@ -13,6 +13,7 @@ from django.urls import reverse
 
 from . import models as m, services
 from .adapters import DeterministicDraftingAdapter, LocalRetrievalAdapter
+from .curation import DIMENSIONS
 from .storage import LocalObjectStorage
 
 LOCAL_RETRIEVAL_LABEL = "Local deterministic retrieval"
@@ -237,7 +238,9 @@ def publish(user, proposal_id) -> m.PublicationGeneration:
         raise ValueError("Answer all inclusion decisions before publication")
     specifications = []
     for source in sources.filter(disposition="included").order_by("id"):
-        family = m.VersionFamily.objects.get(proposal=proposal, proposalmembership__source=source)
+        family = m.VersionFamily.objects.select_for_update().get(
+            proposal=proposal, proposalmembership__source=source
+        )
         version_scopes = [
             f"version:{version_id}"
             for version_id in m.SourceVersion.objects.filter(source=source).values_list(
@@ -275,6 +278,23 @@ def publish(user, proposal_id) -> m.PublicationGeneration:
         ).first()
         if active_run and units.exclude(extraction_run=active_run).exists():
             raise ValueError("Inclusion event needs review against the active extraction")
+        has_curation = (
+            m.Decision.objects.filter(
+                family=family, field__in=DIMENSIONS | {"voice_approval"}
+            ).exists()
+            or m.ClassificationFact.objects.filter(family=family).exists()
+            or m.CurationPlan.objects.filter(family=family, version_id=approved_version_id).exists()
+        )
+        if has_curation:
+            plan = m.CurationPlan.objects.filter(
+                family=family,
+                version_id=approved_version_id,
+                state="current",
+                extraction_run=active_run,
+            ).first()
+            if plan is None:
+                raise ValueError("Curated plan needs review against the active extraction")
+            units = units.filter(id__in=plan.eligible_units)
         for unit in units:
             specifications.append((unit, event))
     if not specifications:

@@ -1,0 +1,10 @@
+{% extends "proposal_app/base.html" %}{% block content %}
+<h1>Scoped curation review · {{ collection.name }}</h1>
+<p><a href="{% url 'collection' collection.id %}">Collection</a> · {{ critical_count }} critical unresolved across this collection</p>
+<p>Recommendations do not clear publication gates. Deferred and rejected questions remain unresolved until an explicit answer is recorded.</p>
+<table><thead><tr><th>Question</th><th>Scope</th><th>Recommendation</th><th>State</th></tr></thead><tbody>
+{% for issue in issues %}<tr><td><a href="{% url 'review-decision' issue.id %}">{{ issue.field }} / {{ issue.kind }}</a>{% if issue.critical %} <strong>Critical</strong>{% endif %}</td><td>{{ issue.family.proposal.identifier }} / {{ issue.family.key }}<br>{{ issue.scope }}</td><td>{{ issue.recommendation }}</td><td>{{ issue.status }}</td></tr>
+{% empty %}<tr><td colspan="4">No unresolved decisions.</td></tr>{% endfor %}
+</tbody></table>
+{% if hidden_count %}<p class="warning">{{ hidden_count }} more unresolved decisions remain. <a href="?all=1">Show the complete set, including every critical item</a>.</p>{% endif %}
+{% endblock %}

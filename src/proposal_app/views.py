@@ -3,6 +3,7 @@
 import uuid
 import shutil
 import io
+import json
 from urllib.parse import urlencode
 
 from django.core.exceptions import ValidationError
@@ -10,7 +11,7 @@ from django.http import Http404, HttpResponse, HttpResponseRedirect, JsonRespons
 from django.shortcuts import render
 from django.views.decorators.http import require_GET, require_http_methods, require_POST
 
-from . import extraction_service, models as m, services, workflow
+from . import curation, extraction_service, models as m, services, workflow
 from .storage import LocalObjectStorage
 from django.conf import settings
 
@@ -139,6 +140,118 @@ def collection(request, collection_id):
             "drafts": drafts,
             "retrieval_label": workflow.LOCAL_RETRIEVAL_LABEL,
             "drafting_label": workflow.LOCAL_DRAFTING_LABEL,
+            "review_queue": curation.review_queue(collection_id),
+        },
+    )
+
+
+@require_GET
+def review_queue(request, collection_id):
+    services.authorize(request.user, collection_id)
+    queue = curation.review_queue(collection_id)
+    return render(
+        request,
+        "proposal_app/review_queue.html",
+        {
+            "collection": m.Collection.objects.get(pk=collection_id),
+            "issues": queue["all"] if request.GET.get("all") == "1" else queue["visible"],
+            "hidden_count": 0 if request.GET.get("all") == "1" else queue["hidden_count"],
+            "critical_count": queue["critical_count"],
+        },
+    )
+
+
+@require_http_methods(["GET", "POST"])
+def review_decision(request, decision_id):
+    decision = m.Decision.objects.select_related("family__proposal").filter(pk=decision_id).first()
+    if decision is None:
+        raise Http404
+    services.authorize(request.user, decision.family.proposal.collection_id)
+    if decision.field not in curation.DIMENSIONS | {"voice_approval"}:
+        raise Http404
+    if request.method == "POST":
+        action = request.POST.get("action", "")
+        try:
+            expected = int(request.POST.get("revision", "-1"))
+            value = None
+            if action == "edit":
+                if decision.field == "treatment":
+                    treatment = request.POST.get("treatment", "")
+                    value = {"treatment": treatment}
+                    if treatment == "partial":
+                        value["selected_units"] = request.POST.getlist("selected_units")
+                    elif treatment == "summary":
+                        value.update(
+                            summary=request.POST.get("summary", ""),
+                            source_units=request.POST.getlist("selected_units"),
+                            voice_eligible=False,
+                        )
+                elif decision.field == "voice_approval":
+                    value = {"approved": request.POST.get("approved") == "true"}
+                else:
+                    value = {"value": json.loads(request.POST.get("value", "null"))}
+            elif action == "reject" and request.POST.get("alternative"):
+                value = json.loads(request.POST["alternative"])
+            curation.review(
+                request.user,
+                decision.id,
+                expected,
+                action,
+                value=value,
+                rationale=request.POST.get("rationale", ""),
+            )
+        except (ValueError, json.JSONDecodeError) as exc:
+            return conflict(exc)
+        return HttpResponseRedirect(request.path)
+    curation._scope(decision.family, decision.scope)
+    evidence = list(
+        m.ExtractedUnit.objects.filter(id__in=decision.recommendation_evidence).select_related(
+            "version__source"
+        )
+    )
+    affected = list(
+        m.ExtractedUnit.objects.filter(id__in=decision.affected_units).select_related(
+            "version__source"
+        )
+    )
+    scope_kind, scope_version, _ = curation._scope(decision.family, decision.scope)
+    if scope_kind == "family":
+        selectable = m.ExtractedUnit.objects.filter(
+            version__source__proposalmembership__family=decision.family,
+            extraction_run__active=True,
+        ).distinct()
+    elif scope_kind == "entity":
+        selectable = m.ExtractedUnit.objects.filter(
+            classificationfact__family=decision.family,
+            classificationfact__entity_key=decision.scope.removeprefix("entity:"),
+            extraction_run__active=True,
+        ).distinct()
+    elif scope_kind == "unit":
+        selectable = m.ExtractedUnit.objects.filter(pk=decision.scope.removeprefix("unit:"))
+    else:
+        selectable = m.ExtractedUnit.objects.filter(
+            version=scope_version, extraction_run__active=True
+        )
+        if scope_kind == "section":
+            selectable = selectable.filter(locator__section=decision.scope.split(":", 2)[2])
+    scope_count = selectable.count()
+    selectable = list(
+        selectable.order_by("ordinal", "key")[: settings.APP["curation_max_evidence_units"]]
+    )
+    prior = list(m.DecisionEvent.objects.filter(decision=decision).order_by("-revision")[:10])
+    return render(
+        request,
+        "proposal_app/review_decision.html",
+        {
+            "decision": decision,
+            "evidence": evidence,
+            "affected": affected,
+            "selectable": selectable,
+            "prior": prior,
+            "scope_kind": scope_kind,
+            "scope_count": scope_count,
+            "preview_limited": scope_count > len(selectable),
+            "recommendation_json": json.dumps(decision.recommendation),
         },
     )
 

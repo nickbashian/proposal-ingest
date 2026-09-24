@@ -1,6 +1,7 @@
 {% extends "proposal_app/base.html" %}{% block content %}
 <h1>{{ collection.name }}</h1>
 <p><span class="label">{{ retrieval_label }}</span> <span class="label">{{ drafting_label }}</span></p>
+<p><a href="{% url 'review-queue' collection.id %}">Scoped curation review</a> · {{ review_queue.all|length }} unresolved{% if review_queue.critical_count %} · {{ review_queue.critical_count }} critical{% endif %}</p>
 <section class="card">
   <h2>1. Import the synthetic family</h2>
   <p>The durable worker loads the repository-owned fixture through the same job and outbox path used by provider adapters.</p>
