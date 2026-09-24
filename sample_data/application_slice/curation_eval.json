@@ -1,0 +1,15 @@
+{
+  "suite_revision": "mvp05-fictional-comparison-v1",
+  "cases": [
+    {"key":"target","group":"fictional-family-a","task":"claim_type","excerpt":"The proposed goal is 900 mAh per gram; it has not been measured.","expected":"target","source_version_id":"synthetic-a","unit_id":"synthetic-target"},
+    {"key":"measurement","group":"fictional-family-a","task":"claim_type","excerpt":"The fictional cell measured 300 mAh per gram at 0.1 C.","expected":"measurement","source_version_id":"synthetic-a","unit_id":"synthetic-measurement"},
+    {"key":"exclude","group":"fictional-family-b","task":"treatment","excerpt":"This synthetic administrative cost table is not approved for reuse.","expected":"excluded","source_version_id":"synthetic-b","unit_id":"synthetic-exclude"},
+    {"key":"retain","group":"fictional-family-c","task":"treatment","excerpt":"Fictional source-checked approach description.","expected":"full","source_version_id":"synthetic-c","unit_id":"synthetic-retain"}
+  ],
+  "mock_predictions": {
+    "target":{"baseline":{"label":"target","confidence":0.8,"latency_ms":8},"economical":{"label":"model","confidence":0.5,"latency_ms":5},"jev":{"label":"target","confidence":0.7,"latency_ms":3}},
+    "measurement":{"baseline":{"label":"measurement","confidence":0.9,"latency_ms":8},"economical":{"label":"measurement","confidence":null,"latency_ms":5},"jev":{"label":"measurement","confidence":0.8,"latency_ms":3}},
+    "exclude":{"baseline":{"label":"excluded","confidence":0.8,"latency_ms":8},"economical":{"label":"full","confidence":0.6,"latency_ms":5},"jev":{"label":"excluded","confidence":0.7,"latency_ms":3}},
+    "retain":{"baseline":{"label":"full","confidence":0.9,"latency_ms":8},"economical":{"label":"excluded","confidence":0.7,"latency_ms":5},"jev":{"label":"full","confidence":0.8,"latency_ms":3}}
+  }
+}
