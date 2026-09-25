@@ -267,6 +267,39 @@ def test_failure_retry_partial_index_and_replacement_keep_old_generation(corpus,
     assert fake.calls == 3
 
 
+def test_uncertain_ingestion_start_reuses_remote_job(corpus, settings):
+    user, _, _ = corpus
+    _, _, family, _ = _plan(corpus)
+    settings.APP["publication_backend"] = "managed_kb"
+    generation = publication.stage(user, family.proposal_id)
+    artifact = m.PublicationArtifact.objects.get(generation=generation)
+
+    class UncertainStart(FakeKB):
+        def __init__(self):
+            super().__init__()
+            self.accepted = {}
+            self.lost_response = False
+
+        def start(self, generation, *, operation="publish"):
+            token_identity = (generation.id, operation, generation.ingestion_job_id)
+            job_id = self.accepted.setdefault(token_identity, "accepted-once")
+            if not self.lost_response:
+                self.lost_response = True
+                raise TimeoutError("Response lost after remote acceptance")
+            return job_id
+
+    fake = UncertainStart()
+    assert publication.process(generation.id, fake).failure == "ingestion_start_failed"
+    assert len(fake.accepted) == 1
+    assert publication.process(generation.id, fake).state == "indexing"
+    generation.refresh_from_db()
+    assert generation.ingestion_job_id == "accepted-once"
+    assert len(fake.accepted) == 1
+    fake.job_state = "COMPLETE"
+    fake.index[fake.uri(artifact)] = "INDEXED"
+    assert publication.process(generation.id, fake).state == "active"
+
+
 def test_source_exclusion_during_draft_and_deletion_lag(corpus, settings, monkeypatch):
     user, collection, _ = corpus
     version, _, family, _ = _plan(corpus)
