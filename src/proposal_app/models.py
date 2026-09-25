@@ -388,6 +388,14 @@ class PublicationGeneration(Record):
     proposal = models.ForeignKey(Proposal, on_delete=models.PROTECT)
     revision = models.PositiveIntegerField()
     state = models.CharField(max_length=20, default="staged")
+    fingerprint = models.CharField(max_length=64, blank=True)
+    backend = models.CharField(max_length=20, default="local")
+    expected_count = models.PositiveIntegerField(default=0)
+    ingestion_job_id = models.CharField(max_length=100, blank=True)
+    deletion_job_id = models.CharField(max_length=100, blank=True)
+    deletion_state = models.CharField(max_length=20, blank=True)
+    failure = models.CharField(max_length=100, blank=True)
+    verified_at = models.DateTimeField(null=True)
 
     class Meta:
         constraints = [
@@ -406,6 +414,12 @@ class PublicationArtifact(Record):
     decision_event = models.ForeignKey(DecisionEvent, on_delete=models.PROTECT)
     blob = models.ForeignKey(ContentBlob, on_delete=models.PROTECT)
     eligible = models.BooleanField(default=False)
+    kind = models.CharField(max_length=20, default="excerpt")
+    source_unit_ids = models.JSONField(default=list)
+    locator = models.JSONField(default=dict)
+    object_key = models.CharField(max_length=500, blank=True)
+    metadata = models.JSONField(default=dict)
+    index_state = models.CharField(max_length=40, default="pending")
 
     class Meta:
         constraints = [

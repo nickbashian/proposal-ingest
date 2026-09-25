@@ -142,6 +142,18 @@ def collection(request, collection_id):
             "retrieval_label": workflow.LOCAL_RETRIEVAL_LABEL,
             "drafting_label": workflow.LOCAL_DRAFTING_LABEL,
             "review_queue": curation.review_queue(collection_id),
+            "publication_status": [
+                {
+                    "proposal": proposal,
+                    "latest": m.PublicationGeneration.objects.filter(proposal=proposal)
+                    .order_by("-revision")
+                    .first(),
+                    "active": m.PublicationGeneration.objects.filter(
+                        proposal=proposal, state="active"
+                    ).first(),
+                }
+                for proposal in proposals
+            ],
         },
     )
 
@@ -417,6 +429,7 @@ def artifact(request, object_id):
         {
             "artifact": obj,
             "locator_label": workflow.locator_label(obj.unit.locator),
+            "curated_text": workflow.artifact_text(obj),
             "withdrawn": not obj.eligible or obj.generation.state != "active",
         },
     )

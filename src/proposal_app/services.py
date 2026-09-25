@@ -242,6 +242,8 @@ def import_legacy(user, collection_id, path: Path):
 
 def eligible_artifacts(user, collection_id, ids):
     authorize(user, collection_id)
+    if settings.APP["publication_hold"]:
+        return m.PublicationArtifact.objects.none()
     candidates = m.PublicationArtifact.objects.filter(
         id__in=ids,
         eligible=True,
@@ -253,21 +255,38 @@ def eligible_artifacts(user, collection_id, ids):
 
     valid = []
     for artifact in candidates.select_related(
-        "unit__version__source", "decision_event__decision__family"
+        "unit__version__source", "decision_event__decision__family", "generation"
     ):
         family = artifact.decision_event.decision.family
         version = artifact.unit.version
         plans = m.CurationPlan.objects.filter(family=family, version=version)
-        if not _latest(version):
+        if (
+            not _latest(version)
+            or version.source.disposition == "excluded"
+            or artifact.decision_event.decision.revision != artifact.decision_event.revision
+            or (artifact.generation.fingerprint and artifact.index_state != "indexed")
+        ):
             continue
         if plans.exists():
             plan = plans.filter(
                 state="current", extraction_run=artifact.unit.extraction_run
             ).first()
-            if (
-                plan is None
-                or str(artifact.unit_id) not in plan.eligible_units
-                or plan.config_fingerprint != config_fingerprint()
+            if plan is None or plan.config_fingerprint != config_fingerprint():
+                continue
+            if artifact.kind == "summary":
+                if not any(
+                    summary.get("decision_event_id") == str(artifact.decision_event_id)
+                    and summary.get("source_units") == artifact.source_unit_ids
+                    and str(artifact.unit_id) in artifact.source_unit_ids
+                    and hashlib.sha256(summary["text"].encode("utf-8")).hexdigest()
+                    == artifact.blob.sha256
+                    for summary in plan.derived_summaries
+                ):
+                    continue
+            elif str(artifact.unit_id) not in plan.eligible_units or (
+                artifact.generation.fingerprint
+                and hashlib.sha256(artifact.unit.text.encode("utf-8")).hexdigest()
+                != artifact.blob.sha256
             ):
                 continue
         elif m.ClassificationResult.objects.filter(family=family, unit=artifact.unit).exists():
@@ -282,7 +301,8 @@ def factual_artifacts(user, collection_id, ids):
     valid = []
     for artifact in eligible.select_related("unit", "decision_event__decision__family"):
         if (
-            artifact.unit.support_kind == "factual"
+            artifact.kind == "summary"
+            or artifact.unit.support_kind == "factual"
             or m.CurationPlan.objects.filter(
                 family=artifact.decision_event.decision.family,
                 version=artifact.unit.version,

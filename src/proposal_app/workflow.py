@@ -233,6 +233,14 @@ def publish(user, proposal_id) -> m.PublicationGeneration:
     if proposal is None:
         raise Http404
     services.authorize(user, proposal.collection_id)
+    if (
+        m.CurationPlan.objects.filter(family__proposal=proposal).exists()
+        or settings.MODE == "production"
+    ):
+        from . import publication
+
+        generation = publication.stage(user, proposal_id)
+        return publication.process(generation.id) if generation.backend == "local" else generation
     sources = m.SourceItem.objects.filter(proposalmembership__family__proposal=proposal).distinct()
     if sources.filter(disposition="awaiting_decision").exists():
         raise ValueError("Answer all inclusion decisions before publication")
@@ -360,10 +368,25 @@ def locator_label(locator: dict) -> str:
     return ", ".join(f"{key} {locator[key]}" for key in keys)
 
 
+def artifact_text(artifact: m.PublicationArtifact) -> str:
+    """Old local citations may point at a binary source blob, not curated text."""
+    if not artifact.generation.fingerprint:
+        return artifact.unit.text
+    return (
+        LocalObjectStorage(settings.LOCAL_STORAGE_ROOT)
+        .get(artifact.blob.storage_key)
+        .decode("utf-8")
+    )
+
+
 def search(user, collection_id, query: str) -> list[dict]:
     services.authorize(user, collection_id)
     if not query.strip():
         return []
+    if settings.APP["publication_backend"] == "managed_kb":
+        from .publication import retrieve
+
+        return retrieve(user, collection_id, query)
     artifacts = services.factual_artifacts(
         user,
         collection_id,
@@ -372,7 +395,7 @@ def search(user, collection_id, query: str) -> list[dict]:
             generation__state="active",
             eligible=True,
         ).values_list("id", flat=True),
-    ).select_related("generation", "unit__version__source")
+    ).select_related("generation", "unit__version__source", "blob")
     candidates = []
     generations = []
     for artifact in artifacts:
@@ -382,9 +405,9 @@ def search(user, collection_id, query: str) -> list[dict]:
                 "artifact_id": str(artifact.id),
                 "generation_id": str(artifact.generation_id),
                 "title": Path(artifact.unit.version.source.display_path).name,
-                "text": artifact.unit.text,
-                "locator": artifact.unit.locator,
-                "locator_label": locator_label(artifact.unit.locator),
+                "text": artifact_text(artifact),
+                "locator": artifact.locator or artifact.unit.locator,
+                "locator_label": locator_label(artifact.locator or artifact.unit.locator),
                 "source_url": reverse("artifact", args=[artifact.id]),
                 "support_kind": "factual",
             }
@@ -439,12 +462,13 @@ def generate(user, session_id, prompt: str) -> m.DraftRevision:
         evidence.append(
             {
                 "artifact_id": str(artifact.id),
+                "generation_id": str(artifact.generation_id),
                 "source_version_id": str(unit.version_id),
                 "unit_id": str(unit.id),
                 "title": Path(unit.version.source.display_path).name,
-                "text": unit.text,
-                "locator": unit.locator,
-                "locator_label": locator_label(unit.locator),
+                "text": artifact_text(artifact),
+                "locator": artifact.locator or unit.locator,
+                "locator_label": locator_label(artifact.locator or unit.locator),
                 "source_url": reverse("artifact", args=[artifact.id]),
                 "support_kind": "factual",
             }
@@ -464,6 +488,12 @@ def generate(user, session_id, prompt: str) -> m.DraftRevision:
         prompt,
         idempotency_key=f"{session.id}:{session.revision + 1}",
     )
+    if set(
+        services.factual_artifacts(
+            user, session.collection_id, [item["artifact_id"] for item in evidence]
+        ).values_list("id", flat=True)
+    ) != set(eligible):
+        raise ValueError("Evidence changed during drafting; refresh before continuing")
     session.revision += 1
     session.save(update_fields=["revision"])
     revision = m.DraftRevision.objects.create(
