@@ -817,6 +817,8 @@ def test_cleanup_marker_blocks_restore_during_index_deletion_lag(corpus, setting
     generation.save(update_fields=["state"])
     assert publication.cleanup_retired(generation.id, fake).deletion_state == "pending"
     assert fake.uri(artifact) not in fake.objects
+    retried = publication.cleanup_retired(generation.id, fake)
+    assert (retried.deletion_state, retried.deletion_job_id) == ("pending", "job-3")
     with pytest.raises(ValueError, match="cleanup has started"):
         publication.restore_verified(generation.id, fake)
 

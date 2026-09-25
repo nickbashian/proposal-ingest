@@ -649,7 +649,10 @@ def cleanup_retired(generation_id, adapter=None):
         generation = m.PublicationGeneration.objects.select_for_update().get(pk=generation_id)
         if generation.state != "retired":
             raise ValueError("Only retired Managed KB generations may be cleaned up")
-        deleting = not generation.deletion_job_id or generation.deletion_state == "failed"
+        deleting = not generation.deletion_job_id or generation.deletion_state in {
+            "failed",
+            "pending",
+        }
         if deleting:
             # Persist the marker before any external deletion so restore cannot
             # activate stale index entries after S3 bytes are gone.
