@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import os
 import base64
 import json
 import shutil
@@ -48,6 +49,56 @@ TRANSIENT_FAILURES = {
 
 def _snapshot_name(version: m.SourceVersion) -> str:
     return Path(version.observed_path or version.source.display_path).name
+
+
+def _schedule_classification(user, run):
+    if not m.ProposalMembership.objects.filter(source=run.version.source).exists():
+        return
+    from .classification import schedule
+
+    try:
+        if (
+            settings.MODE != "local"
+            and os.environ.get("PROPOSAL_LIVE_CLASSIFICATION_ENABLED") != "true"
+        ):
+            raise ValueError("Live classification is disabled")
+        schedule(
+            user,
+            run.id,
+            mock=settings.MODE == "local",
+            max_spend_usd=(
+                "0"
+                if settings.MODE == "local"
+                else os.environ.get("PROPOSAL_CLASSIFICATION_RUN_CAP_USD", "0")
+            ),
+        )
+    except ValueError as exc:
+        # A quota/configuration problem cannot turn a successful extraction into
+        # an empty success or leave its units silently eligible.
+        from . import curation
+
+        first = m.ExtractedUnit.objects.filter(extraction_run=run).order_by("ordinal").first()
+        if first is None:
+            raise
+        for family in m.VersionFamily.objects.filter(proposalmembership__source=run.version.source):
+            curation.recommend(
+                user,
+                family.id,
+                f"version:{run.version_id}",
+                "treatment",
+                "curation",
+                value={"treatment": "unknown"},
+                rationale=f"Classification dispatch stopped: {exc}",
+                evidence=[str(first.id)],
+                critical=True,
+            )
+            curation.build_plan(user, family.id, run.version_id)
+        m.AuditRecord.objects.create(
+            actor=user,
+            action="classification.dispatch_stopped",
+            object_id=run.id,
+            details={"reason": str(exc)[:100]},
+        )
 
 
 def extraction_fingerprint(version: m.SourceVersion) -> str:
@@ -182,6 +233,8 @@ def extract_version(user, version_id, *, force: bool = False) -> m.ExtractionRun
                 m.ExtractionRun.objects.filter(version=version, active=True).update(active=False)
                 cached.active = True
                 cached.save(update_fields=["active"])
+            if cached.state == "succeeded":
+                _schedule_classification(user, cached)
             return cached
     number = (
         m.ExtractionRun.objects.filter(version=version).aggregate(Max("number"))["number__max"] or 0
@@ -247,6 +300,7 @@ def extract_version(user, version_id, *, force: bool = False) -> m.ExtractionRun
         m.ExtractionRun.objects.filter(version=version, active=True).update(active=False)
         run.active = True
         run.save(update_fields=["active"])
+        _schedule_classification(user, run)
     m.AuditRecord.objects.create(
         actor=user,
         action="extraction.completed",

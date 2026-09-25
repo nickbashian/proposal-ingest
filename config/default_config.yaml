@@ -73,6 +73,7 @@ web_application:
   fixture_source_root: "sample_data/fake_source_root/2025"
   fixture_slice_path: "sample_data/application_slice/family.json"
   fixture_slice_revision: "mvp02-fixture-v1"
+  classification_demo_source_root: "sample_data/application_slice/2025/Fictional 05b"
   local_storage_root: "tmp/app_storage"
   development_database_url: "postgresql://proposal_ingest:local-development-only@127.0.0.1:54329/proposal_ingest_dev"
   session_seconds: 3600
@@ -103,11 +104,23 @@ web_application:
   extraction_max_render_pixels: 5000000
   extraction_parser_timeout_seconds: 30
   curation_review_target: 10
+  curation_minutes_per_exception: 3
   curation_max_evidence_units: 100
   curation_max_summary_chars: 4000
   curation_max_reconcile_versions: 8
   curation_max_reconcile_facts: 40
   curation_policy_revision: "curation-v1"
+  classification_auto_policy_revision: "mock-only-05b-v1"
+  classification_model_revision: "baseline-opus-4.6-v1"
+  classification_prompt_revision: "ingest-source-v1"
+  classification_schema_revision: "ingest-suggestions-v1"
+  classification_max_jobs_per_run: 2000
+  classification_max_output_tokens: 1200
+  classification_numeric_entity_terms:
+    - capacity
+    - voltage
+    - conductivity
+    - energy density
   curation_prohibited_sensitivity:
     - financial_sensitive
     - personal_sensitive

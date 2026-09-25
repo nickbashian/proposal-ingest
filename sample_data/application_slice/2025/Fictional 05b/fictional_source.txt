@@ -1,0 +1,11 @@
+Final technical discussion of a fictional binder stability experiment.
+
+Technical capacity was measured at 90 mAh in a fictional cell.
+
+Technical capacity was measured at 110 mAh in a fictional cell.
+
+[sensitive] Personal information about a fictional participant is present here.
+
+[voice] A fictional stylistic example intended for human voice review.
+
+[ambiguous-status] Technical draft or final status is unclear in this fictional passage.

@@ -283,6 +283,10 @@ class DeterministicDraftingAdapter:
 
 
 def adapter_for(kind: str):
+    if kind == "classify-unit":
+        from .classification import OperationalAdapter
+
+        return OperationalAdapter()
     if kind == "fixture":
         return FixtureAdapter()
     if kind == "fixture-slice":

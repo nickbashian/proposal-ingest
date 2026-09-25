@@ -261,6 +261,13 @@ def _record_item(run, item, snapshot):
     )
     if version.blob_id != blob.id or version.etag != item.etag:
         raise ValueError("Observation identity cannot be rewritten")
+    if created:
+        m.CurationPlan.objects.filter(version__source=source, state="current").exclude(
+            version=version
+        ).update(state="invalidated")
+        m.PublicationArtifact.objects.filter(unit__version__source=source, eligible=True).exclude(
+            unit__version=version
+        ).update(eligible=False)
     return presence, created
 
 
@@ -430,6 +437,17 @@ def sync_scope(scope: m.SourceScope, adapter, *, max_snapshot_bytes: int | None 
                                 reason="authoritative_reconciliation",
                             )
                         )
+                        retired = (
+                            m.SourcePresence.objects.filter(scope=scope, retired_at__isnull=False)
+                            .exclude(last_seen_run=run)
+                            .values_list("source_id", flat=True)
+                        )
+                        m.CurationPlan.objects.filter(
+                            version__source_id__in=retired, state="current"
+                        ).update(state="invalidated")
+                        m.PublicationArtifact.objects.filter(
+                            unit__version__source_id__in=retired, eligible=True
+                        ).update(eligible=False)
                         run.state = "completed"
                         run.completed_at = timezone.now()
                     run.save(update_fields=["state", "error_code", "completed_at", "counts"])

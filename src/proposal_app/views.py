@@ -11,9 +11,10 @@ from django.http import Http404, HttpResponse, HttpResponseRedirect, JsonRespons
 from django.shortcuts import render
 from django.views.decorators.http import require_GET, require_http_methods, require_POST
 
-from . import curation, extraction_service, models as m, services, workflow
+from . import classification, curation, extraction_service, models as m, services, workflow
 from .storage import LocalObjectStorage
 from django.conf import settings
+from django.utils import timezone
 
 
 def conflict(error):
@@ -157,6 +158,7 @@ def review_queue(request, collection_id):
             "issues": queue["all"] if request.GET.get("all") == "1" else queue["visible"],
             "hidden_count": 0 if request.GET.get("all") == "1" else queue["hidden_count"],
             "critical_count": queue["critical_count"],
+            "workload": classification.workload(collection_id),
         },
     )
 
@@ -192,6 +194,10 @@ def review_decision(request, decision_id):
                     value = {"value": json.loads(request.POST.get("value", "null"))}
             elif action == "reject" and request.POST.get("alternative"):
                 value = json.loads(request.POST["alternative"])
+            started = request.session.pop(f"review_started_{decision.id}", None)
+            elapsed = None
+            if isinstance(started, (int, float)):
+                elapsed = max(0, min(3600, int(timezone.now().timestamp() - started)))
             curation.review(
                 request.user,
                 decision.id,
@@ -199,10 +205,17 @@ def review_decision(request, decision_id):
                 action,
                 value=value,
                 rationale=request.POST.get("rationale", ""),
+                review_seconds=elapsed,
             )
         except (ValueError, json.JSONDecodeError) as exc:
             return conflict(exc)
+        for version_id in curation._affected_version_ids(decision):
+            if m.ExtractionRun.objects.filter(
+                version_id=version_id, active=True, state="succeeded"
+            ).exists():
+                curation.build_plan(request.user, decision.family_id, version_id)
         return HttpResponseRedirect(request.path)
+    request.session[f"review_started_{decision.id}"] = timezone.now().timestamp()
     curation._scope(decision.family, decision.scope)
     evidence = list(
         m.ExtractedUnit.objects.filter(id__in=decision.recommendation_evidence).select_related(

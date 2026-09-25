@@ -107,37 +107,6 @@ def test_complete_local_services_exclusion_revisions_and_idempotency(slice_owner
     assert VOICE_TEXT.encode() in publication_bytes
     assert EXCLUDED_TEXT.encode() not in publication_bytes
 
-    approved_source = m.SourceItem.objects.get(
-        disposition="included", sourceversion__extractedunit__support_kind="factual"
-    )
-    later_version = services.observe_source(
-        user,
-        collection.id,
-        identity={
-            "connector": approved_source.connector,
-            "tenant": approved_source.tenant,
-            "site": approved_source.site,
-            "drive": approved_source.drive,
-            "item": approved_source.item,
-        },
-        path=approved_source.display_path,
-        observation_key="unreviewed-later-version",
-        content=b"A later synthetic observation.",
-        proposal=proposal.identifier,
-        family=m.VersionFamily.objects.get(proposal=proposal).key,
-        upstream_version="unreviewed-later-version",
-    )
-    m.ExtractedUnit.objects.create(
-        version=later_version,
-        extractor_revision="synthetic-structured-v1",
-        key="unreviewed-later-unit",
-        locator={"section": "Later", "paragraph": 1},
-        text="UNREVIEWED-LATER-PASSAGE must wait for another decision.",
-        support_kind="factual",
-    )
-    assert workflow.publish(user, proposal.id).id == generation.id
-    assert not workflow.search(user, collection.id, "UNREVIEWED-LATER-PASSAGE")
-
     results = workflow.search(user, collection.id, "capacity 500 cycles")
     assert len(results) == 1
     assert FACT_TEXT in results[0]["text"]
@@ -185,6 +154,46 @@ def test_complete_local_services_exclusion_revisions_and_idempotency(slice_owner
     assert artifact_response.status_code == 200
     assert FACT_TEXT.encode() in artifact_response.content
     assert b"section Results, paragraph 2" in artifact_response.content
+
+    approved_source = m.SourceItem.objects.get(
+        disposition="included", sourceversion__extractedunit__support_kind="factual"
+    )
+    later_version = services.observe_source(
+        user,
+        collection.id,
+        identity={
+            "connector": approved_source.connector,
+            "tenant": approved_source.tenant,
+            "site": approved_source.site,
+            "drive": approved_source.drive,
+            "item": approved_source.item,
+        },
+        path=approved_source.display_path,
+        observation_key="unreviewed-later-version",
+        content=b"A later synthetic observation.",
+        proposal=proposal.identifier,
+        family=m.VersionFamily.objects.get(proposal=proposal).key,
+        upstream_version="unreviewed-later-version",
+    )
+    m.ExtractedUnit.objects.create(
+        version=later_version,
+        extractor_revision="synthetic-structured-v1",
+        key="unreviewed-later-unit",
+        locator={"section": "Later", "paragraph": 1},
+        text="UNREVIEWED-LATER-PASSAGE must wait for another decision.",
+        support_kind="factual",
+    )
+    assert not m.PublicationArtifact.objects.filter(
+        generation=generation,
+        unit__version__source=approved_source,
+        eligible=True,
+    ).exists()
+    with pytest.raises(ValueError, match="current source version"):
+        workflow.publish(user, proposal.id)
+    assert not workflow.search(user, collection.id, "capacity 500 cycles")
+    assert not workflow.search(user, collection.id, "UNREVIEWED-LATER-PASSAGE")
+    with pytest.raises(ValueError, match="currently eligible"):
+        workflow.generate(user, session.id, "Refresh after source change")
 
 
 def test_fixture_slice_command_is_idempotent():
@@ -366,10 +375,11 @@ def test_decision_is_bound_to_one_reviewed_version(slice_owner):
     )
     with CaptureQueriesContext(connection) as queries:
         event = workflow.answer_inclusion(user, decision.id, 0, "include")
-    assert any(
-        "FOR UPDATE" in query["sql"] and '"proposal_app_proposal"' in query["sql"]
-        for query in queries
-    )
+    if connection.vendor == "postgresql":
+        assert any(
+            "FOR UPDATE" in query["sql"] and '"proposal_app_proposal"' in query["sql"]
+            for query in queries
+        )
     assert event.value["source_version_id"] == str(reviewed_version.id)
     assert set(event.evidence) == set(
         str(unit_id)
@@ -377,14 +387,9 @@ def test_decision_is_bound_to_one_reviewed_version(slice_owner):
             "id", flat=True
         )
     )
-    generation = workflow.publish(user, decision.family.proposal_id)
-    published = "\n".join(
-        artifact.unit.text
-        for artifact in m.PublicationArtifact.objects.filter(generation=generation).select_related(
-            "unit"
-        )
-    )
-    assert "LATER-BEFORE-REVIEW" not in published
+    with pytest.raises(ValueError, match="current source version"):
+        workflow.publish(user, decision.family.proposal_id)
+    assert not m.PublicationGeneration.objects.filter(proposal=decision.family.proposal).exists()
 
 
 def test_voice_policy_decision_cannot_be_recast_as_factual(slice_owner):

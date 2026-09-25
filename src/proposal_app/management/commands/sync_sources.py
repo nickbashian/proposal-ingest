@@ -3,12 +3,14 @@
 from pathlib import Path
 
 from django.conf import settings
+from django.contrib.auth import get_user_model
 from django.core.management.base import BaseCommand, CommandError
 
 from proposal_app import models as m
 from proposal_app.adapters import ProviderFailure
 from proposal_app.graph_source import GraphSourceAdapter
 from proposal_app.source_sync import LocalSourceAdapter, sync_scope
+from proposal_app.extraction_service import extract_version
 
 
 class Command(BaseCommand):
@@ -25,6 +27,14 @@ class Command(BaseCommand):
         parser.add_argument("--tenant", default="")
         parser.add_argument("--site", default="")
         parser.add_argument("--drive", default="")
+        parser.add_argument(
+            "--ingest",
+            action="store_true",
+            help="Extract captured versions and queue classification",
+        )
+        parser.add_argument(
+            "--mock-bedrock", action="store_true", help="Use the local blocked-provider classifier"
+        )
 
     def handle(self, *args, **options):
         collection = m.Collection.objects.filter(pk=options["collection"]).first()
@@ -91,3 +101,36 @@ class Command(BaseCommand):
         self.stdout.write(f"{run.id} {run.state} {run.counts}")
         if run.state != "completed":
             raise CommandError(f"Sync incomplete: {run.error_code}; rerun to resume")
+        if options["ingest"]:
+            if settings.MODE == "local" and not options["mock_bedrock"]:
+                raise CommandError("Local ingest requires --mock-bedrock")
+            if settings.MODE != "local" and options["mock_bedrock"]:
+                raise CommandError("Mock classification is local only")
+            owner = (
+                get_user_model()
+                .objects.filter(
+                    collectionaccess__collection=collection,
+                    identity__allowed=True,
+                )
+                .order_by("pk")
+                .first()
+            )
+            if owner is None:
+                raise CommandError("No allowlisted collection operator is available")
+            versions = (
+                m.SourceVersion.objects.filter(
+                    source__sourcepresence__scope=scope,
+                    source__sourcepresence__retired_at__isnull=True,
+                )
+                .select_related("source")
+                .order_by("source_id", "-observed_at", "-id")
+            )
+            seen = set()
+            for version in versions:
+                if version.source_id in seen:
+                    continue
+                seen.add(version.source_id)
+                extract_version(owner, version.id)
+            self.stdout.write(
+                f"Ingested {len(seen)} current source versions; run worker to classify."
+            )
