@@ -246,13 +246,23 @@ def test_regeneration_rejects_stale_prior_packet_with_other_valid_pin(corpus):
     assert m.DraftRevision.objects.filter(session=session).count() == 2
     legacy_payload = copy.deepcopy(refreshed.packet.payload)
     legacy_payload[0].pop("generation_id")
-    refreshed.packet.payload = legacy_payload
-    refreshed.packet.save(update_fields=["payload"])
+    legacy_packet = m.EvidencePacket.objects.create(
+        session=session, payload=legacy_payload, policy_revision="legacy-fixture-v1"
+    )
+    session.refresh_from_db()
+    session.revision += 1
+    session.save(update_fields=["revision"])
+    m.DraftRevision.objects.create(
+        session=session,
+        number=session.revision,
+        packet=legacy_packet,
+        text="Historical fictional draft text.",
+    )
     with pytest.raises(ValueError, match="refresh from current pins"):
         workflow.generate(user, session.id, "Legacy packet")
     recovered = workflow.generate(user, session.id, "Current pins only", refresh_evidence=True)
     assert len(recovered.packet.payload) == 1
-    assert m.DraftRevision.objects.filter(session=session).count() == 3
+    assert m.DraftRevision.objects.filter(session=session).count() == 4
 
 
 def test_failure_retry_partial_index_and_replacement_keep_old_generation(corpus, settings):
