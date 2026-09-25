@@ -8,8 +8,8 @@ This document translates the supplied specification into release evidence. [PR_P
 |---|---|
 | Development baseline ready | MVP-00 setup/checks reproducible; external sign-in gaps listed |
 | Local product slice working | MVP-02 complete workflow through production application services using labeled local adapters |
-| Implemented and ready to connect | MVP-00–07 acceptance complete, plus MVP-08 offline deployment, diagnostics, and recovery implementation; all missing live checks listed |
-| Live alpha verified | MVP-08 live checks and MVP-09 real three-family acceptance passed, with Nicholas's usefulness sign-off |
+| Implemented and ready to connect | MVP-00–07, including MVP-05b's operational AI-ingestion path, acceptance complete; MVP-08 offline deployment, diagnostics, and recovery implemented; all missing live checks listed |
+| Live alpha verified | MVP-08 live checks and MVP-09 real three-family acceptance passed, including AI-first review workload and Nicholas's usefulness sign-off |
 | Full-2025 rollout complete | MVP-10 held-out gate passed, year items accounted for, eligible publication reconciled, regressions/cost/recovery reported |
 
 Jev may remain an explicitly incomplete optional experiment while the Bedrock path passes alpha; missing live SharePoint/Managed KB operation cannot be treated the same way. The three-way comparison is reported as incomplete until actually performed. A changed product requirement requires an owner-recorded decision rather than editing a metric until it passes.
@@ -19,8 +19,8 @@ Jev may remain an explicitly incomplete optional experiment while the Bedrock pa
 | ID | Requirement and acceptance evidence | Build PRs | Live verification |
 |---|---|---|---|
 | A01 | 100% of recursively discovered seed items have processed/excluded/deferred/failed/awaiting-decision disposition, reason, and visible coverage; empty extraction never succeeds | 03, 04 | 08, 09 |
-| A02 | At least 95% of manually labeled valuable passages survive curation with essential conditions; report numerator/denominator, source versions, and per-family misses | 04–06 | 09, 10 |
-| A03 | Zero explicitly excluded content enters drafting context in targeted cases, including partial files, summaries, neighbors, pins, cached packets, and stale index results | 02, 05–07 | 08, 09 |
+| A02 | At least 95% of manually labeled valuable passages survive curation with essential conditions; report numerator/denominator, source versions, and per-family misses | 04, 05, 05b, 06 | 09, 10 |
+| A03 | Zero explicitly excluded content enters drafting context in targeted cases, including partial files, summaries, neighbors, pins, cached packets, and stale index results | 02, 05, 05b, 06, 07 | 08, 09 |
 | A04 | >=18 of 20 agreed answerable tasks retrieve relevant support in top 10 eligible displayed results; include exact IDs, cross-document support, and historical reasoning | 06, 07 | 09, 10 |
 | A05 | At least five unanswerable/conflicting tasks produce explicit gaps/conflicts instead of invented evidence | 07 | 09, 10 |
 | A06 | Every citation in evaluated drafts resolves to its source version and passage; source checks confirm semantic support, not only a valid URL | 04, 06, 07 | 08, 09 |
@@ -30,12 +30,13 @@ Jev may remain an explicitly incomplete optional experiment while the Bedrock pa
 | A10 | Changed, renamed, moved, deleted, excluded, and duplicate sources handled; incomplete crawls never imply deletion; inactive artifacts never support new generation | 03, 06, 07 | 08, 09 |
 | A11 | Interrupt/restart jobs without duplicate decisions/invalid publication; restore database/snapshots and rebuild index; retained drafts still show historical citations | 01, 06, 08 | 08, 10 |
 | A12 | Anonymous/nonallowlisted users cannot access protected routes; two allowlisted users cannot access each other's private draft objects or read/update/regenerate/delete/export operations, including direct-ID evidence/artifact access; credentials remain server-side; local auth cannot activate deployed | 01, 07, 08 | 08, 09; repeat before onboarding |
-| A13 | Provider error/quota/budget exhaustion degrades visibly and predictably, retries/spend bounded across restarts, progress/cost available in UI | 01, 05, 08 | 08, 09 |
+| A13 | Provider error/quota/budget exhaustion degrades visibly and predictably, retries/spend bounded across restarts, progress/cost available in UI | 01, 05, 05b, 08 | 08, 09 |
 | A14 | Reserve additional 2025 family with duplicate/related-version grouping before tuning; repeat retrieval/review checks and seed regressions before full-year expansion | 05 harness, 10 rollout | 09 reservation, 10 |
 | A15 | Source prompts cannot override application policy; separate evidence/voice/requirements uses; user assertions/drafts do not silently become collection evidence | 05, 07 | 09 |
 | A16 | Selective evidence-critical figure interpretation source-checked, other figures preserved; unsupported content explicit with recovery route | 04 | 09 |
 | A17 | Repeatable live SharePoint → curated S3 → Managed KB → authenticated writing workflow; current successful publication distinguished from local processing | 03, 06–08 | 08, 09 |
-| A18 | Compare bounded classification routes, calibrate abstention/exclusion, report false exclusion/contamination/error/review load/latency/cost; Jev absence explicit | 05 | 09 |
+| A18 | Compare bounded classification routes, calibrate abstention/exclusion, report false exclusion/contamination/error/review load/latency/cost; Jev absence explicit | 05, 05b | 09 |
+| A19 | Routine ingestion runs AI source-backed tagging and policy resolution through the application; at least 80% of supported, non-sensitive passages need no human decision, with at most ten substantive questions across the three seed families except genuine critical exceptions. Report all denominators, unsupported items, corrections, and review time; meet A01–A03 and A07 before claiming AI-first operation | 05b, 06 | 08, 09, 10 |
 
 ## Evaluation design before model tuning
 
@@ -47,6 +48,8 @@ Prepare at least 20 explicit exclusion/partial-inclusion adversarial cases acros
 
 For classification, begin with roughly 60–100 source-checked bounded decisions spanning useful roles, treatments, claim types, and abstention cases. Use a separate frozen acceptance subset; group proposals, versions, and duplicates so equivalent content cannot cross train/calibration/evaluation boundaries. With few families, report limitations and refrain from claiming broad calibration certainty. Evaluate rare destructive-exclusion errors separately from average accuracy and choose conservative exclusion/abstain rules. Count escalation and retry cost in every route.
 
+Measure ingestion automation separately from classifier accuracy. Count all discovered files, successfully extracted passages, unsupported/failed passages, automatically tagged passages, automatically resolved passages, and passages requiring a human decision. Compute the A19 review-free rate over supported, non-sensitive extracted passages, including those the model abstains on; do not shrink the denominator by treating difficult but supported text as unsupported. Report human decisions and review minutes per family. Enable live automatic clearance only after source-checked calibration and frozen inclusion/exclusion tests; until then, run the Bedrock classifier in supervised mode and keep its proposed inclusions pending. A missed automation target is an explicit product gap, never a reason to relax A02, A03, or A07.
+
 The existing baseline uses different prompt/schema assumptions; explicitly map its outputs to comparable bounded labels, or declare a comparison unsupported. Use identical excerpts/tasks for supported comparisons. Missing confidence triggers a defined abstain/escalate policy rather than an accidental default. Record confusion counts and confidence-bin outcomes; do not select thresholds solely from aggregate agreement with another model.
 
 The 20 retrieval queries should contain exact opportunity identifiers, multiple-document reasoning, version distinctions, scientific conditions, and historical ideas. Freeze query wording, eligible supporting passages, and pass rules before tuning final evaluation. Score after application filtering/deduplication; invisible stale results cannot count. For questions requiring several facts, define whether all essential supporting passages must be in the first ten. Record raw and eligible result counts to diagnose attrition.
@@ -55,7 +58,7 @@ Use at least five separate gap/conflict cases and five representative writing ta
 
 ## Required lifecycle scenarios
 
-Tests must cover: source rename without byte change; content change with old draft citation; same bytes in two proposals; partial Graph listing failure; permission revocation without deletion inference; stale delta token; extraction version change; two version families sharing a review field; question wording change; conflicting new evidence; deferred critical question; review cap hiding a still-unresolved item; concurrent review edits; exclusion while a draft is in flight; cached packet/pin after retirement; partial ingestion; worker crash after external success but before database acknowledgement; competing job claims; uncertain paid-call timeout; monthly budget persistence; revoked user session; backup restored while KB still contains a newer generation.
+Tests must cover: source rename without byte change; content change with old draft citation; same bytes in two proposals; partial Graph listing failure; permission revocation without deletion inference; stale delta token; extraction version change; AI classification retry/abstention and stale completion; automatic resolution followed by human correction; two version families sharing a review field; question wording change; conflicting new evidence; deferred critical question; review cap hiding a still-unresolved item; concurrent review edits; exclusion while a draft is in flight; cached packet/pin after retirement; partial ingestion; worker crash after external success but before database acknowledgement; competing job claims; uncertain paid-call timeout; monthly budget persistence; revoked user session; backup restored while KB still contains a newer generation.
 
 For restore, the application must reject KB artifacts it cannot map to restored active state, then reconcile/reindex deliberately. A restored database must not silently erase newer exclusions: retain/replay the durable decision audit or keep publication disabled until reconciling changes after the recovery point. Record the tested recovery point and any state loss explicitly.
 

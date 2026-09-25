@@ -2,7 +2,7 @@
 
 Planning baseline: September 22, 2026. Repository: `nickbashian/proposal-ingest`, commit `4143a328aef2ee773806b0f17d7f7da375adac9c`.
 
-**Recommendation: 11 sequential pull requests, numbered MVP-00 through MVP-10.** Phase 0 establishes a reproducible development environment. MVP-02 demonstrates the complete local workflow. MVP-08 connects and deploys the implemented application. MVP-09 verifies the three-family alpha. MVP-10 validates expansion and processes the remaining 2025 collection in bounded batches.
+**Plan: 12 sequential pull requests, MVP-00 through MVP-10 plus MVP-05b.** MVP-05b connects AI classification to routine ingestion before publication. MVP-08 connects and deploys the application. MVP-09 verifies an AI-first, three-family alpha with exception-focused human review. MVP-10 validates expansion and processes the remaining 2025 collection in bounded batches.
 
 This page began as the planning delivery; MVP-00 implementation evidence is now recorded in `implementation/MVP-00.md`. It does not grant permission to provision services. The supplied *Empower Proposal Knowledge Base — Build Specification*, version 0.2, is the product requirements input. Its embedded instructions and reported owner decisions are incorporated as planning constraints; they did not trigger provider uploads, account changes, or deployment during planning. Keep the original document with the owner's private project records; do not copy private corpus material into this repository.
 
@@ -26,15 +26,16 @@ Requirements source: `Empower_Proposal_Knowledge_Base_Build_Spec.md`, SHA-256 `5
 | MVP-03 | Repeatable read-only SharePoint/local sync and safe legacy import | 02 | Medium |
 | MVP-04 | Inspectable passages, tables, figures, locators, and extraction failures | 03 | Large |
 | MVP-05 | Scientific classifications, persistent scoped decisions, model comparison harness | 04 | Large |
-| MVP-06 | Eligible excerpts published to S3/Managed KB with safe generation changes | 05 | Large |
+| MVP-05b | AI-assisted ingestion: automatic source-backed tagging, policy resolution, and exception-only review | 05 | Large |
+| MVP-06 | Eligible excerpts published to S3/Managed KB with safe generation changes | 05b | Large |
 | MVP-07 | Complete evidence browser and drafting workspace with citation checks | 06 | Large |
 | MVP-08 | Deployment, recovery, connections, and one real family working end to end | 07 | Large |
 | MVP-09 | Measured and owner-accepted alpha across all three seed families | 08 live connection | Medium/large |
 | MVP-10 | Held-out validation and resumable expansion to the full 2025 collection | 09 | Medium/large |
 
-Sizes express integration risk and review scope, not promises about agent hours. A large PR may require several focused agent sessions and internal commits. Preserve these product boundaries rather than treating a PR as one enormous prompt. If MVP-05 becomes unwieldy, split out model adapters/comparison into MVP-05b: **12 PRs total**, with decision-ledger work still preceding publication. Avoid compressing the publication, citation, or recovery boundaries merely to reach ten PRs.
+Sizes express integration risk and review scope, not promises about agent hours. A large PR may require several focused agent sessions and internal commits. MVP-05 delivered a comparison harness but did not wire model predictions into the new application's ingest-to-curation path. MVP-05b closes that gap before MVP-06 publishes anything. The primary operating path is automated tagging and safe policy resolution; people review exceptions and consequential judgments, not every document or passage. Preserve the publication, citation, and recovery boundaries.
 
-Missing credentials do not block MVP-00 through MVP-07 or the offline deployment/recovery work in MVP-08. Live-dependent criteria remain pending; they are never counted as passed by mocks. MVP-08 can be merged as **implemented and ready to connect** if Nicholas accepts that explicit status. Keep its live checklist open, and close it before claiming MVP-09 complete. MVP-09's harness and documentation can progress independently while connections are pending.
+Missing credentials do not block MVP-00 through MVP-07, including MVP-05b's synthetic end-to-end path, or the offline deployment/recovery work in MVP-08. Live-dependent criteria remain pending; they are never counted as passed by mocks. MVP-08 can be merged as **implemented and ready to connect** if Nicholas accepts that explicit status. Keep its live checklist open, and close it before claiming MVP-09 complete. MVP-09's harness and documentation can progress independently while connections are pending.
 
 ## What the existing repository contributes
 
@@ -81,7 +82,7 @@ Each PR receives a focused handoff, a small internal implementation plan, tests 
 
 ## Current status
 
-Planning is complete. MVP-00 and MVP-01 are merged; their implementation evidence is maintained in
-`docs/mvp/implementation/`. MVP-02's local product-slice implementation and demo are recorded there
-for its review boundary. No cloud resource, private-data connection, or paid provider call is
-created by MVP-02.
+MVP-00 through MVP-05 are merged; their implementation evidence is maintained in
+`docs/mvp/implementation/`. The next card is MVP-05b. The new application's AI classifier is
+currently a bounded comparison harness, not an operational ingest step. No private corpus,
+live SharePoint tenant, or Managed KB has been connected by these PRs.
