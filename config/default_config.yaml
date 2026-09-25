@@ -75,6 +75,13 @@ web_application:
   fixture_slice_revision: "mvp02-fixture-v1"
   classification_demo_source_root: "sample_data/application_slice/2025/Fictional 05b"
   local_storage_root: "tmp/app_storage"
+  publication_backend: "local"
+  publication_hold: false
+  publication_s3_prefix: "curated/"
+  publication_max_metadata_bytes: 10240
+  publication_max_artifact_bytes: 1048576
+  publication_retrieve_limit: 20
+  publication_reconcile_timeout_seconds: 600
   development_database_url: "postgresql://proposal_ingest:local-development-only@127.0.0.1:54329/proposal_ingest_dev"
   session_seconds: 3600
   request_max_bytes: 1048576
