@@ -8,6 +8,7 @@ from decimal import Decimal
 import pytest
 from django.contrib.auth import get_user_model
 from django.core.management import call_command
+from django.db import IntegrityError, connection, transaction
 from django.test import Client
 from django.urls import reverse
 
@@ -462,6 +463,18 @@ def test_local_artifact_and_evidence_packet_contain_only_eligible_bytes(owner, s
     assert b"binder note" in published and b"Personal information" not in published
     session = services.create_draft(owner[0], owner[1].id, "Fictional draft")
     workflow.pin_evidence(owner[0], session.id, artifacts[0].id)
+    if connection.vendor == "postgresql":
+        excluded = m.ExtractedUnit.objects.get(pk=plan.excluded_units[0])
+        unsafe = m.PublicationArtifact.objects.create(
+            generation=generation,
+            unit=excluded,
+            decision_event=m.DecisionEvent.objects.get(decision=inclusion),
+            blob=artifacts[0].blob,
+            eligible=True,
+        )
+        with pytest.raises(IntegrityError, match="Pinned evidence"):
+            with transaction.atomic():
+                m.EvidencePin.objects.create(session=session, artifact=unsafe, actor=owner[0])
     draft = workflow.generate(owner[0], session.id, "Summarize the binder note")
     packet = str(draft.packet.payload)
     assert "binder note" in packet and "Personal information" not in packet
