@@ -265,6 +265,13 @@ def publish(user, proposal_id) -> m.PublicationGeneration:
         approved_version_id = event.value.get(
             "source_version_id", event.decision.scope.removeprefix("version:")
         )
+        from .classification import _latest
+
+        approved_version = m.SourceVersion.objects.filter(
+            pk=approved_version_id, source=source
+        ).first()
+        if approved_version is None or not _latest(approved_version):
+            raise ValueError("Inclusion decision needs review for the current source version")
         approved_unit_ids = [str(unit_id) for unit_id in event.evidence]
         units = m.ExtractedUnit.objects.filter(
             version_id=approved_version_id,
@@ -294,7 +301,7 @@ def publish(user, proposal_id) -> m.PublicationGeneration:
             ).first()
             if plan is None:
                 raise ValueError("Curated plan needs review against the active extraction")
-            if plan.config_fingerprint and plan.config_fingerprint != config_fingerprint():
+            if plan.config_fingerprint != config_fingerprint():
                 raise ValueError("Curated plan uses an obsolete model or policy configuration")
             units = units.filter(id__in=plan.eligible_units)
         for unit in units:
@@ -357,14 +364,13 @@ def search(user, collection_id, query: str) -> list[dict]:
     services.authorize(user, collection_id)
     if not query.strip():
         return []
-    artifacts = services.eligible_artifacts(
+    artifacts = services.factual_artifacts(
         user,
         collection_id,
         m.PublicationArtifact.objects.filter(
             generation__proposal__collection_id=collection_id,
             generation__state="active",
             eligible=True,
-            unit__support_kind="factual",
         ).values_list("id", flat=True),
     ).select_related("generation", "unit__version__source")
     candidates = []
@@ -380,7 +386,7 @@ def search(user, collection_id, query: str) -> list[dict]:
                 "locator": artifact.unit.locator,
                 "locator_label": locator_label(artifact.unit.locator),
                 "source_url": reverse("artifact", args=[artifact.id]),
-                "support_kind": artifact.unit.support_kind,
+                "support_kind": "factual",
             }
         )
     return LocalRetrievalAdapter(candidates).retrieve(query[:500], generations)
@@ -393,9 +399,8 @@ def pin_evidence(user, session_id, artifact_id) -> m.EvidencePin:
     if session.deleted_at:
         raise Http404
     artifact = (
-        services.eligible_artifacts(user, session.collection_id, [artifact_id])
+        services.factual_artifacts(user, session.collection_id, [artifact_id])
         .select_related("unit")
-        .filter(unit__support_kind="factual")
         .first()
     )
     if artifact is None:
@@ -421,9 +426,9 @@ def generate(user, session_id, prompt: str) -> m.DraftRevision:
     )
     eligible = {
         artifact.id: artifact
-        for artifact in services.eligible_artifacts(
+        for artifact in services.factual_artifacts(
             user, session.collection_id, [pin.artifact_id for pin in pins]
-        ).filter(unit__support_kind="factual")
+        )
     }
     evidence = []
     for pin in pins:
@@ -441,7 +446,7 @@ def generate(user, session_id, prompt: str) -> m.DraftRevision:
                 "locator": unit.locator,
                 "locator_label": locator_label(unit.locator),
                 "source_url": reverse("artifact", args=[artifact.id]),
-                "support_kind": unit.support_kind,
+                "support_kind": "factual",
             }
         )
     if not evidence:

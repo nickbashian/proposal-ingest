@@ -214,11 +214,7 @@ def observe_source(
             .order_by("-observed_at", "-created_at", "-id")
             .first()
         )
-        if (
-            latest
-            and latest.pk == version.pk
-            and m.CurationPlan.objects.filter(version__source=source).exists()
-        ):
+        if latest and latest.pk == version.pk:
             m.CurationPlan.objects.filter(version__source=source, state="current").exclude(
                 version=version
             ).update(state="invalidated")
@@ -262,10 +258,7 @@ def eligible_artifacts(user, collection_id, ids):
         family = artifact.decision_event.decision.family
         version = artifact.unit.version
         plans = m.CurationPlan.objects.filter(family=family, version=version)
-        has_curated_source = m.CurationPlan.objects.filter(
-            family=family, version__source=version.source
-        ).exists()
-        if has_curated_source and not _latest(version):
+        if not _latest(version):
             continue
         if plans.exists():
             plan = plans.filter(
@@ -274,13 +267,31 @@ def eligible_artifacts(user, collection_id, ids):
             if (
                 plan is None
                 or str(artifact.unit_id) not in plan.eligible_units
-                or (plan.config_fingerprint and plan.config_fingerprint != config_fingerprint())
+                or plan.config_fingerprint != config_fingerprint()
             ):
                 continue
         elif m.ClassificationResult.objects.filter(family=family, unit=artifact.unit).exists():
             continue
         valid.append(artifact.id)
     return candidates.filter(id__in=valid)
+
+
+def factual_artifacts(user, collection_id, ids):
+    """Keep legacy factual units and current plan-approved classified passages."""
+    eligible = eligible_artifacts(user, collection_id, ids)
+    valid = []
+    for artifact in eligible.select_related("unit", "decision_event__decision__family"):
+        if (
+            artifact.unit.support_kind == "factual"
+            or m.CurationPlan.objects.filter(
+                family=artifact.decision_event.decision.family,
+                version=artifact.unit.version,
+                extraction_run=artifact.unit.extraction_run,
+                state="current",
+            ).exists()
+        ):
+            valid.append(artifact.id)
+    return eligible.filter(id__in=valid)
 
 
 @transaction.atomic

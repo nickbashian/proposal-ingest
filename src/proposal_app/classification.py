@@ -8,6 +8,7 @@ from decimal import Decimal
 
 from django.conf import settings
 from django.db import transaction
+from django.db.models import Count, Sum
 
 from . import curation, models as m, services
 from .adapters import CallResult, ProviderFailure
@@ -125,8 +126,8 @@ def schedule(user, run_id, *, mock=False, max_spend_usd="0"):
                 job.budget = estimate
                 job.save(update_fields=["budget"])
             if job.state in {"failed", "quota_stopped", "budget_stopped", "disabled"}:
-                job.state, job.stop_reason = "queued", ""
-                job.save(update_fields=["state", "stop_reason"])
+                job.state, job.stop_reason, job.attempts = "queued", "", 0
+                job.save(update_fields=["state", "stop_reason", "attempts"])
             if not m.Decision.objects.filter(
                 family=family, scope=f"unit:{unit.id}", field="treatment", kind="curation"
             ).exists():
@@ -450,10 +451,6 @@ def deliver(job):
         )
     content = predictions["content_use"]["value"]
     sensitivity = predictions["sensitivity"]["value"]
-    unit.support_kind = (
-        "voice" if content == "voice" else "factual" if content == "factual" else "unclassified"
-    )
-    unit.save(update_fields=["support_kind"])
     treatment = predictions["treatment"]["value"]
     if sensitivity in settings.APP["curation_prohibited_sensitivity"]:
         treatment = "excluded"
@@ -473,6 +470,7 @@ def deliver(job):
         family=family, scope=f"unit:{unit.id}", field="treatment", kind="curation"
     )
     human = m.DecisionEvent.objects.filter(decision=decision, actor__isnull=False).exists()
+    routine = False
     if not human:
         decision = curation.recommend(
             user,
@@ -561,8 +559,7 @@ def workload(collection_id):
                 state="current",
                 extraction_run_id__in=run_ids,
             )
-            if not plan.config_fingerprint
-            or plan.config_fingerprint == curation.config_fingerprint()
+            if plan.config_fingerprint == curation.config_fingerprint()
         ]
         planned_ids = {
             unit_id
@@ -592,14 +589,22 @@ def workload(collection_id):
         supported_ids = current_ids - {str(item) for item in prohibited_ids}
         automatic_ids = set()
         eligible_ids = {unit_id for plan in plans for unit_id in plan.eligible_units}
-        for decision in m.Decision.objects.filter(
-            family__proposal=proposal,
-            field="treatment",
-            kind="curation",
-            status="resolved",
-            scope__in=[f"unit:{unit_id}" for unit_id in supported_ids & eligible_ids],
-        ):
-            event = curation.current_event(decision)
+        treatment_decisions = list(
+            m.Decision.objects.filter(
+                family__proposal=proposal,
+                field="treatment",
+                kind="curation",
+                status="resolved",
+                scope__in=[f"unit:{unit_id}" for unit_id in supported_ids & eligible_ids],
+            )
+        )
+        events_by_decision = {}
+        for event in m.DecisionEvent.objects.filter(
+            decision_id__in=[decision.id for decision in treatment_decisions]
+        ).order_by("decision_id", "revision"):
+            events_by_decision.setdefault(event.decision_id, []).append(event)
+        for decision in treatment_decisions:
+            event = curation._active_event(events_by_decision.get(decision.id, []))
             if event and event.action == "automatic":
                 automatic_ids.add(decision.scope.removeprefix("unit:"))
         issues = list(
@@ -608,12 +613,10 @@ def workload(collection_id):
                 status__in=curation.UNRESOLVED_STATES,
             ).order_by("-critical", "created_at")
         )
-        reviewed = list(
-            m.DecisionEvent.objects.filter(
-                decision__family__proposal=proposal,
-                actor__isnull=False,
-            )
-        )
+        reviewed = m.DecisionEvent.objects.filter(
+            decision__family__proposal=proposal,
+            actor__isnull=False,
+        ).aggregate(count=Count("id"), seconds=Sum("review_seconds"))
         failed_jobs = list(
             m.Job.objects.filter(
                 collection_id=collection_id,
@@ -662,8 +665,8 @@ def workload(collection_id):
                 )[:5],
                 "failed_calls": len(failed_jobs) + len(failed_results),
                 "failure_reasons": sorted(set(failed_jobs + failed_results)),
-                "human_decisions": len(reviewed),
-                "review_seconds": sum(event.review_seconds or 0 for event in reviewed),
+                "human_decisions": reviewed["count"],
+                "review_seconds": reviewed["seconds"] or 0,
                 "estimated_minutes": len(issues) * settings.APP["curation_minutes_per_exception"],
             }
         )

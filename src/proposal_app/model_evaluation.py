@@ -133,6 +133,10 @@ class BedrockChoiceAdapter:
         if not self.model_id:
             return _prediction(None, None, started, "unconfigured", error="unavailable")
         try:
+            if self.client is None:
+                import boto3
+
+                self.client = boto3.client("bedrock-runtime")
             options = sorted(task_options(case.task))
             payload, usage = bedrock_converse_json(
                 model_id=self.model_id,

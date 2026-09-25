@@ -261,7 +261,7 @@ def _record_item(run, item, snapshot):
     )
     if version.blob_id != blob.id or version.etag != item.etag:
         raise ValueError("Observation identity cannot be rewritten")
-    if created and m.CurationPlan.objects.filter(version__source=source).exists():
+    if created:
         m.CurationPlan.objects.filter(version__source=source, state="current").exclude(
             version=version
         ).update(state="invalidated")

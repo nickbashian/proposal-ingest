@@ -80,6 +80,7 @@ def test_source_to_automatic_plan_and_idempotent_rerun(owner):
     assert len(plan.eligible_units) == 1
     assert plan.pending_units == []
     unit = m.ExtractedUnit.objects.get(pk=plan.eligible_units[0])
+    assert unit.support_kind == "unclassified"  # Extraction history is immutable.
     result = m.ClassificationResult.objects.get(unit=unit)
     assert result.state == "succeeded"
     assert set(result.predictions) == curation.DIMENSIONS
@@ -132,6 +133,7 @@ def test_exception_queue_human_correction_and_revised_plan(owner, settings):
     drain()
     decision.refresh_from_db()
     assert curation.current_event(decision).actor_id == owner[0].id
+    assert not m.Job.objects.filter(kind="classify-unit", state="failed").exists()
 
 
 def test_dispatch_limit_leaves_visible_version_exception(owner, settings):
@@ -165,6 +167,8 @@ def test_stale_completion_after_changed_source_never_applies(owner):
     assert jobs.deliver(attempt.job_id)
     assert not m.ClassificationResult.objects.filter(job=attempt.job).exists()
     assert not m.CurationPlan.objects.filter(version=old, state="current").exists()
+    with pytest.raises(ValueError, match="current source version"):
+        curation.build_plan(owner[0], family.id, old.id)
     drain()
     assert m.CurationPlan.objects.filter(version=new, state="current").exists()
     assert m.ClassificationResult.objects.filter(version=new, state="succeeded").exists()
@@ -188,6 +192,74 @@ def test_failed_model_is_visible_and_cannot_clear(owner, monkeypatch, settings):
     assert plan.eligible_units == [] and plan.pending_units
     summary = classification.workload(owner[1].id)[0]
     assert summary["failed_calls"] == 1 and summary["automatic"] == 0
+
+
+def test_stopped_classification_can_resume_after_attempt_limit(owner, settings):
+    version, run, _ = capture(owner, "Technical fictional evidence.")
+    job = m.Job.objects.get(kind="classify-unit")
+    job.state = "failed"
+    job.stop_reason = "attempt_limit"
+    job.attempts = settings.APP["max_attempts"]
+    job.save(update_fields=["state", "stop_reason", "attempts"])
+    resumed = classification.schedule(owner[0], run.id, mock=True)[0]
+    assert resumed.id == job.id and resumed.attempts == 0
+    assert jobs.work_once()
+    resumed.refresh_from_db()
+    assert resumed.state == "succeeded"
+    assert m.CurationPlan.objects.get(version=version, state="current").eligible_units
+
+
+def test_blank_legacy_plan_fingerprint_cannot_serve_or_republish(owner):
+    version, run, family = capture(owner, "Technical fictional binder note.")
+    drain()
+    unit = m.ExtractedUnit.objects.get(extraction_run=run)
+    inclusion = m.Decision.objects.create(
+        family=family,
+        scope=f"version:{version.id}",
+        field="publication",
+        kind="inclusion",
+        revision=1,
+        status="resolved",
+    )
+    m.DecisionEvent.objects.create(
+        decision=inclusion,
+        revision=1,
+        actor=owner[0],
+        action="approve",
+        value={"treatment": "include", "source_version_id": str(version.id)},
+        rationale="Fictional local publication demonstration.",
+        evidence=[str(unit.id)],
+        resolver_revision="test-v1",
+    )
+    version.source.disposition = "included"
+    version.source.save(update_fields=["disposition"])
+    generation = workflow.publish(owner[0], family.proposal_id)
+    artifact = m.PublicationArtifact.objects.get(generation=generation)
+    assert services.eligible_artifacts(owner[0], owner[1].id, [artifact.id]).exists()
+    m.CurationPlan.objects.filter(version=version, state="current").update(config_fingerprint="")
+    assert not services.eligible_artifacts(owner[0], owner[1].id, [artifact.id]).exists()
+    assert classification.workload(owner[1].id)[0]["pending"] == 1
+    with pytest.raises(ValueError, match="obsolete model or policy"):
+        workflow.publish(owner[0], family.proposal_id)
+
+
+@pytest.mark.parametrize(
+    "setting,value",
+    [
+        ("classification_max_excerpt_chars", 2000),
+        ("classification_max_output_tokens", 800),
+        ("classification_numeric_entity_terms", ["fictional-other-subject"]),
+    ],
+)
+def test_classification_input_change_fences_old_result(owner, settings, setting, value):
+    version, run, family = capture(owner, "Technical fictional binder note.")
+    drain()
+    old_plan = m.CurationPlan.objects.get(version=version, state="current")
+    settings.APP = copy.deepcopy(settings.APP)
+    settings.APP[setting] = value
+    assert old_plan.config_fingerprint != curation.config_fingerprint()
+    assert classification._current(m.Job.objects.get(kind="classify-unit")) is None
+    assert classification.workload(owner[1].id)[0]["pending"] == 1
 
 
 def test_review_browser_shows_uncapped_workload(owner):

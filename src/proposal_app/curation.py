@@ -60,13 +60,21 @@ def config_fingerprint():
     app = settings.APP
     return _hash(
         [
-            app["classification_routes"]["baseline"]["model_id"],
+            app["classification_routes"],
+            app["classification_task_routes"],
             app["classification_model_revision"],
             app["classification_prompt_revision"],
             app["classification_schema_revision"],
             app["classification_auto_policy_revision"],
+            app["classification_max_excerpt_chars"],
+            app["classification_max_output_tokens"],
+            app["classification_numeric_entity_terms"],
             app["curation_policy_revision"],
             app["curation_prohibited_sensitivity"],
+            app["curation_max_evidence_units"],
+            app["curation_max_summary_chars"],
+            app["curation_max_reconcile_versions"],
+            app["curation_max_reconcile_facts"],
         ]
     )
 
@@ -460,7 +468,9 @@ def recommend(
     return decision
 
 
-def _append_event(decision, actor, action, value, rationale, evidence, resolver_revision):
+def _append_event(
+    decision, actor, action, value, rationale, evidence, resolver_revision, review_seconds=None
+):
     decision.revision += 1
     event = m.DecisionEvent.objects.create(
         decision=decision,
@@ -471,6 +481,7 @@ def _append_event(decision, actor, action, value, rationale, evidence, resolver_
         rationale=rationale,
         evidence=evidence,
         resolver_revision=resolver_revision,
+        review_seconds=review_seconds,
     )
     decision.save(update_fields=["revision"])
     m.AuditRecord.objects.create(
@@ -601,12 +612,19 @@ def review(
     evidence = _validate_evidence(
         decision.family, evidence if evidence is not None else decision.recommendation_evidence
     )
-    event = _append_event(decision, user, action, value, rationale, evidence, "human-curation-v1")
     if review_seconds is not None:
         if not isinstance(review_seconds, int) or not 0 <= review_seconds <= 3600:
             raise ValueError("Review duration is outside the allowed range")
-        event.review_seconds = review_seconds
-        event.save(update_fields=["review_seconds"])
+    event = _append_event(
+        decision,
+        user,
+        action,
+        value,
+        rationale,
+        evidence,
+        "human-curation-v1",
+        review_seconds=review_seconds,
+    )
     decision.status = {
         "approve": "resolved",
         "edit": "resolved",
@@ -668,7 +686,6 @@ def automatic_resolution(
         safe = (
             result is not None
             and _current(result.job) is not None
-            and result.unit.support_kind == "factual"
             and predictions.get("treatment", {}).get("value") == "full"
             and predictions.get("content_use", {}).get("value") == "factual"
             and predictions.get("sensitivity", {}).get("value") == "none"
@@ -779,12 +796,32 @@ def build_plan(user, family_id, version_id):
     version = m.SourceVersion.objects.select_related("source").get(pk=version_id)
     if not _member(family, version):
         raise ValueError("Version does not belong to family")
+    from .classification import _latest
+
+    if not _latest(version):
+        raise ValueError("Only the current source version can be curated")
     run = m.ExtractionRun.objects.filter(version=version, active=True, state="succeeded").first()
     if run is None:
         raise ValueError("A successful active extraction is required")
     units = list(m.ExtractedUnit.objects.filter(extraction_run=run).order_by("ordinal", "key"))
     if not units:
         raise ValueError("No extracted units can be curated")
+    # Extracted units are immutable. Use the current classification result for
+    # content use instead of rewriting extraction history after a model call.
+    from .classification import _current
+
+    support_kinds = {unit.id: unit.support_kind for unit in units}
+    for result in m.ClassificationResult.objects.filter(
+        family=family, extraction_run=run, state="succeeded"
+    ).select_related("job"):
+        if _current(result.job) is None:
+            continue
+        content_use = result.predictions.get("content_use", {}).get("value")
+        support_kinds[result.unit_id] = (
+            "voice"
+            if content_use == "voice"
+            else "factual" if content_use == "factual" else "unclassified"
+        )
     facts = list(
         m.ClassificationFact.objects.filter(family=family, version=version).values_list(
             "dimension", "value", "unit_id", "entity_key"
@@ -904,7 +941,8 @@ def build_plan(user, family_id, version_id):
             pending.append(str(unit.id))
             warnings.append(f"Critical review pending: {unit.id}")
             continue
-        if unit.support_kind == "voice":
+        support_kind = support_kinds[unit.id]
+        if support_kind == "voice":
             if treatment == "excluded":
                 excluded.append(str(unit.id))
                 continue
@@ -936,12 +974,12 @@ def build_plan(user, family_id, version_id):
             else:
                 pending.append(str(unit.id))
             continue
-        if treatment == "full" and unit.support_kind == "factual":
+        if treatment == "full" and support_kind == "factual":
             eligible.append(str(unit.id))
         elif (
             treatment == "partial"
             and str(unit.id) in value["selected_units"]
-            and (unit.support_kind == "factual")
+            and support_kind == "factual"
         ):
             eligible.append(str(unit.id))
         elif treatment == "summary" and str(unit.id) in value["source_units"]:
