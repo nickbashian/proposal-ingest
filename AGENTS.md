@@ -96,7 +96,8 @@ freshly installed executable must be resolved normally in all subsequent command
 
 ## Implementation roadmap
 
-The active product is built in **11 sequential PRs, MVP-00 through MVP-10**. Read the selected card
+The active product is built in **12 sequential PRs, MVP-00 through MVP-10 plus MVP-05b**. MVP-05b
+connects AI-assisted classification to routine ingestion before MVP-06 publication. Read the selected card
 in [docs/mvp/PR_PLAYBOOK.md](docs/mvp/PR_PLAYBOOK.md) and do not build later cards except for an
 explicit shared contract.
 

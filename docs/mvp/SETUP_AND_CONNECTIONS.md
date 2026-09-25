@@ -46,7 +46,7 @@ extension](https://marketplace.visualstudio.com/items?itemName=CodeRabbit.codera
 
 ## Build-first connection sequence
 
-Prepare production adapters, settings templates, diagnostics, infrastructure definitions, and synthetic contract tests before asking Nicholas to connect services. Review current provider documentation while writing each adapter. Credential availability is not evidence of a correct request schema; documentation is not evidence that the account supports it.
+Prepare production adapters, settings templates, diagnostics, infrastructure definitions, and synthetic contract tests before asking Nicholas to connect services. MVP-05b must connect Bedrock classification to the application's source-to-curation workflow before MVP-06 publication; a comparison harness alone does not make ingestion AI powered. Review current provider documentation while writing each adapter. Credential availability is not evidence of a correct request schema; documentation is not evidence that the account supports it.
 
 At MVP-00, collect setup prerequisites in one place. At MVP-08, arrange the focused session below when all feasible offline work is ready. If Nicholas makes access available sooner, bounded read-only diagnostics and synthetic service probes can reduce risk early; avoid deploying an idle paid stack months before it is needed.
 
@@ -65,7 +65,7 @@ At MVP-00, collect setup prerequisites in one place. At MVP-08, arrange the focu
 - Keep the source connector under application control: publish curated S3 artifacts to the KB. Do not bypass curation with the service's direct SharePoint connector. Verify parser/chunking settings preserve mapping back to curated artifact/source units. [Managed KB creation](https://docs.aws.amazon.com/bedrock/latest/userguide/kb-managed-create.html).
 - Separate provisioning permission from runtime roles. Scope application/worker/KB service roles to required buckets/prefixes, model profiles, KB, and secret access. Confirm private buckets, encryption, TLS, metadata-service protection, and no public database port. Restrict infrastructure deletion to resources created for this application.
 - Build a cost sheet from current pricing and measured representative usage. Record credits' eligible services, expiration, and actual account applicability privately. Create billing alerts and application limits before paid tests. Set model max-token/timeout/retry budgets and job scope limits.
-- Run a synthetic minimal live lifecycle first, then one approved family. Capture sanitized API capability evidence and service failures. If the account cannot support Managed KB, keep local development working and present a costed alternative; do not silently select a different retrieval backend.
+- Run a synthetic minimal live lifecycle first, then one approved family. During the first real family, record Bedrock classification suggestions and exception workload in supervised mode. Enable automatic clearance of private passages only after MVP-09 source-checked calibration and frozen inclusion/exclusion tests; keep source-backed automatic tagging active while proposed inclusion remains pending. Capture sanitized API capability evidence and service failures. If the account cannot support Managed KB, keep local development working and present a costed alternative; do not silently select a different retrieval backend.
 
 ### 3. Microsoft Entra and SharePoint — Nicholas/tenant administrator plus agent
 
