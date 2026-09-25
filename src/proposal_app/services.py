@@ -208,6 +208,23 @@ def observe_source(
     )
     family_obj, _ = m.VersionFamily.objects.get_or_create(proposal=proposal_obj, key=family)
     m.ProposalMembership.objects.get_or_create(source=source, family=family_obj)
+    if m.SourceVersion.objects.filter(source=source).exclude(pk=version.pk).exists():
+        latest = (
+            m.SourceVersion.objects.filter(source=source)
+            .order_by("-observed_at", "-created_at", "-id")
+            .first()
+        )
+        if (
+            latest
+            and latest.pk == version.pk
+            and m.CurationPlan.objects.filter(version__source=source).exists()
+        ):
+            m.CurationPlan.objects.filter(version__source=source, state="current").exclude(
+                version=version
+            ).update(state="invalidated")
+            m.PublicationArtifact.objects.filter(
+                unit__version__source=source, eligible=True
+            ).exclude(unit__version=version).update(eligible=False)
     return version
 
 
@@ -229,12 +246,41 @@ def import_legacy(user, collection_id, path: Path):
 
 def eligible_artifacts(user, collection_id, ids):
     authorize(user, collection_id)
-    return m.PublicationArtifact.objects.filter(
+    candidates = m.PublicationArtifact.objects.filter(
         id__in=ids,
         eligible=True,
         generation__state="active",
         generation__proposal__collection_id=collection_id,
     )
+    from .classification import _latest
+    from .curation import config_fingerprint
+
+    valid = []
+    for artifact in candidates.select_related(
+        "unit__version__source", "decision_event__decision__family"
+    ):
+        family = artifact.decision_event.decision.family
+        version = artifact.unit.version
+        plans = m.CurationPlan.objects.filter(family=family, version=version)
+        has_curated_source = m.CurationPlan.objects.filter(
+            family=family, version__source=version.source
+        ).exists()
+        if has_curated_source and not _latest(version):
+            continue
+        if plans.exists():
+            plan = plans.filter(
+                state="current", extraction_run=artifact.unit.extraction_run
+            ).first()
+            if (
+                plan is None
+                or str(artifact.unit_id) not in plan.eligible_units
+                or (plan.config_fingerprint and plan.config_fingerprint != config_fingerprint())
+            ):
+                continue
+        elif m.ClassificationResult.objects.filter(family=family, unit=artifact.unit).exists():
+            continue
+        valid.append(artifact.id)
+    return candidates.filter(id__in=valid)
 
 
 @transaction.atomic

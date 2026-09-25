@@ -1,0 +1,30 @@
+# MVP-05b implementation evidence
+
+- Base: merged `main` at `90ba42e` (PR #20)
+- Branch: `codex/mvp-05b-ai-ingestion`
+- Scope: operational source capture to extraction to bounded classification, safe policy resolution, exception review, and current curation plans. No private corpus, paid provider call, S3/KB publication, or live automatic clearance.
+
+## Application path
+
+Successful structured extraction schedules one durable `classify-unit` job per current source unit and proposal membership. A job key includes the source blob, extraction, unit, model, prompt, schema, and policy revisions. The existing worker claims and leases it, reserves the full estimated call budget, fences late completion, and delivers through the transactional outbox. The blocked-provider fixture and the opt-in Bedrock Converse route both produce the same typed ten-dimension suggestion contract. Known labels require a literal source quote and confidence; unknowns and abstentions remain explicit. `ClassificationResult` stores model/prompt/schema/policy revisions, exact unit/version/run, validated predictions, usage, and errors. Existing `ClassificationFact`, `Decision`, `DecisionEvent`, and `CurationPlan` remain the authorities for curation.
+
+The `mock-only-05b-v1` policy automatically resolves only source-supported factual full-unit treatment without sensitivity or an evidence-critical measurement/target/requirement. A sensitive fact prohibits inclusion. Numeric contradictions with a shared source-text subject become a critical source-linked exception. Voice, ambiguous status, sensitive text, numeric claims, unsupported quotes, missing confidence, malformed output, and provider failure remain pending. Human edits override automatic answers; a classifier revision reopens an older automatic answer but retains prior events. A configuration fingerprint on each plan also prevents an existing local artifact or evidence packet from serving after model/prompt/schema/policy settings change, before the next extraction rerun. Live predictions are supervised only; private automatic clearance awaits MVP-09 calibration.
+
+The review page reports every proposal's discovered/extracted files, automatic tag and resolution counts, supported non-sensitive denominator, unit dispositions, exceptions, failure reasons, estimated remaining minutes, and actual browser review seconds. Display limits do not erase critical issues. Source changes and retirement invalidate previous plans and local artifacts. Plan construction and the local publisher retain only selected eligible units; a fictional artifact and evidence-packet test checks actual bytes.
+
+## Acceptance evidence
+
+| ID | Offline result | Evidence |
+|---|---|---|
+| 05b-A | Passed synthetic path | `test_read_only_local_folder_sync_to_current_plan`, `test_operator_demo_uses_real_capture_extraction_worker_and_review`, idempotent rerun, changed source, revision reopening, cancellation, stale completion, bounded dispatch exception tests. |
+| 05b-B | Passed typed contract | `test_source_to_automatic_plan_and_idempotent_rerun` checks ten facts and provenance; missing confidence, unsupported quote, provider failure, and abstention tests leave work pending. Real scientific accuracy is unmeasured. |
+| 05b-C | Passed mock-only policy | Automatic routine inclusion, sensitive exclusion, numeric conflict, voice and status escalation, human correction persistence, changed revision, and supervised live-mode tests. Live automatic clearance remains disabled. |
+| 05b-D | Passed synthetic workload | Queue UI test, uncapped hidden-critical queue test, proposal summary, failure reasons, correction count, and review seconds. Real three-family burden awaits MVP-09. |
+| 05b-E | Passed fictional fixtures | The six-unit operator fixture plus tests cover routine, draft/final ambiguity, contradictory measurements, sensitivity, partial file inclusion, unsupported numeric claim, voice, model error, and changed source. The local artifact/evidence packet test verifies excluded bytes are absent. |
+| 05b-F | Passed dispatch guard; live metric pending | Explicit live opt-in, positive per-call estimate, per-run cap, persistent job/account reservations, supervised live treatment, and no private or paid call. The 80% and ten-question targets are **not claimed** from synthetic data. |
+
+## Verification
+
+The focused suite `tests/test_mvp05b_ingestion.py` passed 15/15 tests with a local SQLite schema override; the prior MVP-05 suite passed 23/23. SQLite was used only for local logic verification because Docker Desktop's Linux engine was inaccessible to this task. The repository's PostgreSQL migration graph was checked with `makemigrations --check --dry-run` against SQLite without applying PostgreSQL-specific historical migrations. The canonical `scripts/dev.py check` passed Black, Ruff, codespell, mypy, secrets, configuration shape, Django system checks, and migration autodetection, then its PostgreSQL test phase could not connect to the development database. Hosted PostgreSQL CI is required on the PR's final head. No live provider calls or charges occurred.
+
+Operator instructions and rollback are in `MVP-05b-OPERATIONS.md`. CodeRabbit and hosted CI disposition will be attached to the PR before owner review.

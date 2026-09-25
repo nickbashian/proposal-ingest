@@ -199,6 +199,22 @@ def deliver(job_id):
             return True
         job.result = {**job.result, "import": summary}
         job.save(update_fields=["result"])
+    elif job.kind == "classify-unit":
+        from .classification import deliver as deliver_classification
+
+        try:
+            summary = deliver_classification(job)
+        except Exception:
+            job.state = "failed"
+            job.stop_reason = "delivery_error"
+            job.result = {}
+            job.save(update_fields=["state", "stop_reason", "result"])
+            outbox.delivered_at = timezone.now()
+            outbox.save(update_fields=["delivered_at"])
+            m.AuditRecord.objects.create(action="job.delivery_failed", object_id=job.id)
+            return True
+        job.result = {**job.result, "classification": summary}
+        job.save(update_fields=["result"])
     m.JobResult.objects.get_or_create(job=job, defaults={"value": job.result})
     outbox.delivered_at = timezone.now()
     outbox.save()
@@ -222,7 +238,12 @@ def work_once():
     except ProviderFailure as failure:
         finish(attempt.id, failure=failure)
         return True
-    if reserve(attempt.id, settings.APP["fixture_reservation_usd"]) is None:
+    estimate = (
+        settings.APP["fixture_reservation_usd"]
+        if attempt.job.kind != "classify-unit" or attempt.job.payload.get("mode") == "mock"
+        else settings.APP["classification_estimate_usd_per_call"]["baseline"]
+    )
+    if reserve(attempt.id, estimate) is None:
         return True
     try:
         # Reservation commits before issuing any call. Cancellation after this point

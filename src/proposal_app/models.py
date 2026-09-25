@@ -295,6 +295,7 @@ class DecisionEvent(Record):
     rationale = models.TextField()
     evidence = models.JSONField(default=list)
     resolver_revision = models.CharField(max_length=100)
+    review_seconds = models.PositiveIntegerField(null=True)
 
     class Meta:
         constraints = [
@@ -332,6 +333,25 @@ class ClassificationFact(Record):
         ]
 
 
+class ClassificationResult(Record):
+    """One validated operational prediction, including abstentions and failures."""
+
+    job = models.OneToOneField("Job", on_delete=models.PROTECT)
+    family = models.ForeignKey(VersionFamily, on_delete=models.PROTECT)
+    version = models.ForeignKey(SourceVersion, on_delete=models.PROTECT)
+    extraction_run = models.ForeignKey(ExtractionRun, on_delete=models.PROTECT)
+    unit = models.ForeignKey(ExtractedUnit, on_delete=models.PROTECT)
+    fingerprint = models.CharField(max_length=64)
+    state = models.CharField(max_length=30)
+    predictions = models.JSONField(default=dict)
+    error = models.CharField(max_length=100, blank=True)
+    model_revision = models.CharField(max_length=100)
+    prompt_revision = models.CharField(max_length=100)
+    schema_revision = models.CharField(max_length=100)
+    policy_revision = models.CharField(max_length=100)
+    usage = models.JSONField(default=dict)
+
+
 class CurationPlan(Record):
     """A versioned eligibility plan; MVP-06 will render its approved bytes."""
 
@@ -339,6 +359,7 @@ class CurationPlan(Record):
     version = models.ForeignKey(SourceVersion, on_delete=models.PROTECT)
     extraction_run = models.ForeignKey(ExtractionRun, on_delete=models.PROTECT, null=True)
     fingerprint = models.CharField(max_length=64)
+    config_fingerprint = models.CharField(max_length=64, blank=True)
     state = models.CharField(max_length=20, default="current")
     eligible_units = models.JSONField(default=list)
     voice_units = models.JSONField(default=list)

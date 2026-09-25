@@ -13,7 +13,7 @@ from django.urls import reverse
 
 from . import models as m, services
 from .adapters import DeterministicDraftingAdapter, LocalRetrievalAdapter
-from .curation import DIMENSIONS
+from .curation import DIMENSIONS, config_fingerprint
 from .storage import LocalObjectStorage
 
 LOCAL_RETRIEVAL_LABEL = "Local deterministic retrieval"
@@ -294,6 +294,8 @@ def publish(user, proposal_id) -> m.PublicationGeneration:
             ).first()
             if plan is None:
                 raise ValueError("Curated plan needs review against the active extraction")
+            if plan.config_fingerprint and plan.config_fingerprint != config_fingerprint():
+                raise ValueError("Curated plan uses an obsolete model or policy configuration")
             units = units.filter(id__in=plan.eligible_units)
         for unit in units:
             specifications.append((unit, event))

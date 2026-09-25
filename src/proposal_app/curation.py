@@ -55,6 +55,22 @@ def _hash(value):
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
+def config_fingerprint():
+    """Publication-sensitive model and policy configuration for current plans."""
+    app = settings.APP
+    return _hash(
+        [
+            app["classification_routes"]["baseline"]["model_id"],
+            app["classification_model_revision"],
+            app["classification_prompt_revision"],
+            app["classification_schema_revision"],
+            app["classification_auto_policy_revision"],
+            app["curation_policy_revision"],
+            app["curation_prohibited_sensitivity"],
+        ]
+    )
+
+
 def _uuid(value):
     try:
         return uuid.UUID(str(value))
@@ -530,7 +546,15 @@ def _invalidate(decision):
 
 @transaction.atomic
 def review(
-    user, decision_id, expected_revision, action, *, value=None, rationale="", evidence=None
+    user,
+    decision_id,
+    expected_revision,
+    action,
+    *,
+    value=None,
+    rationale="",
+    evidence=None,
+    review_seconds=None,
 ):
     family_id = (
         m.Decision.objects.filter(pk=decision_id).values_list("family_id", flat=True).first()
@@ -578,6 +602,11 @@ def review(
         decision.family, evidence if evidence is not None else decision.recommendation_evidence
     )
     event = _append_event(decision, user, action, value, rationale, evidence, "human-curation-v1")
+    if review_seconds is not None:
+        if not isinstance(review_seconds, int) or not 0 <= review_seconds <= 3600:
+            raise ValueError("Review duration is outside the allowed range")
+        event.review_seconds = review_seconds
+        event.save(update_fields=["review_seconds"])
     decision.status = {
         "approve": "resolved",
         "edit": "resolved",
@@ -592,7 +621,15 @@ def review(
 
 @transaction.atomic
 def automatic_resolution(
-    user, decision_id, expected_revision, *, value, rationale, evidence, resolver_revision
+    user,
+    decision_id,
+    expected_revision,
+    *,
+    value,
+    rationale,
+    evidence,
+    resolver_revision,
+    allow_treatment=False,
 ):
     family_id = m.Decision.objects.values_list("family_id", flat=True).get(pk=decision_id)
     m.VersionFamily.objects.select_for_update().get(pk=family_id)
@@ -608,8 +645,47 @@ def automatic_resolution(
         raise ValueError("Human-reviewed decisions require human resolution")
     _validate_value(decision.field, value, decision.family)
     _validate_value_scope(decision, value)
-    if decision.field in {"voice_approval", "treatment"}:
+    if decision.field == "voice_approval" or (
+        decision.field == "treatment" and not allow_treatment
+    ):
         raise ValueError("Voice approval and passage treatment require human review")
+    if decision.field == "treatment":
+        result = (
+            m.ClassificationResult.objects.filter(
+                family=decision.family,
+                unit_id=decision.scope.removeprefix("unit:"),
+                state="succeeded",
+                job__payload__mode="mock",
+                policy_revision=resolver_revision,
+            )
+            .select_related("job", "unit")
+            .order_by("-created_at")
+            .first()
+        )
+        from .classification import _current
+
+        predictions = result.predictions if result else {}
+        safe = (
+            result is not None
+            and _current(result.job) is not None
+            and result.unit.support_kind == "factual"
+            and predictions.get("treatment", {}).get("value") == "full"
+            and predictions.get("content_use", {}).get("value") == "factual"
+            and predictions.get("sensitivity", {}).get("value") == "none"
+            and predictions.get("claim_type", {}).get("value")
+            not in {"measurement", "target", "requirement"}
+            and all(
+                predictions.get(field, {}).get("confidence") is not None
+                for field in ("treatment", "content_use", "sensitivity")
+            )
+        )
+        if (
+            value != {"treatment": "full"}
+            or not decision.scope.startswith("unit:")
+            or resolver_revision != settings.APP["classification_auto_policy_revision"]
+            or not safe
+        ):
+            raise ValueError("Automatic treatment is limited to current-policy unit inclusion")
     evidence = _validate_evidence(decision.family, evidence)
     if not evidence or not rationale.strip() or not resolver_revision:
         raise ValueError("Automatic resolution needs rationale and version")
@@ -798,10 +874,6 @@ def build_plan(user, family_id, version_id):
             excluded.append(str(unit.id))
             warnings.append(f"Policy prohibition: {unit.id}")
             continue
-        if has_blocker(unit):
-            pending.append(str(unit.id))
-            warnings.append(f"Critical review pending: {unit.id}")
-            continue
         try:
             value, event = resolved_value("treatment", unit)
         except ValueError as exc:
@@ -825,6 +897,13 @@ def build_plan(user, family_id, version_id):
         treatment = (value or {}).get("treatment", "unknown")
         if event:
             decisions[str(event.decision_id)] = event.revision
+        if treatment == "excluded" and event and event.actor_id:
+            excluded.append(str(unit.id))
+            continue
+        if has_blocker(unit):
+            pending.append(str(unit.id))
+            warnings.append(f"Critical review pending: {unit.id}")
+            continue
         if unit.support_kind == "voice":
             if treatment == "excluded":
                 excluded.append(str(unit.id))
@@ -898,6 +977,8 @@ def build_plan(user, family_id, version_id):
             decisions,
             warnings,
             settings.APP["curation_policy_revision"],
+            settings.APP["classification_auto_policy_revision"],
+            config_fingerprint(),
         ]
     )
     m.CurationPlan.objects.filter(family=family, version=version, state="current").exclude(
@@ -909,6 +990,7 @@ def build_plan(user, family_id, version_id):
         fingerprint=fingerprint,
         defaults={
             "extraction_run": run,
+            "config_fingerprint": config_fingerprint(),
             "state": "current",
             "eligible_units": eligible,
             "voice_units": voice,
