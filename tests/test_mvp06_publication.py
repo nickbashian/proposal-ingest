@@ -300,6 +300,48 @@ def test_uncertain_ingestion_start_reuses_remote_job(corpus, settings):
     assert publication.process(generation.id, fake).state == "active"
 
 
+def test_observation_failures_time_out_and_missing_adapter_fails(corpus, settings, monkeypatch):
+    user, _, _ = corpus
+    _, _, family, _ = _plan(corpus)
+    settings.APP["publication_backend"] = "managed_kb"
+    settings.APP["publication_reconcile_timeout_seconds"] = 1
+
+    class UnobservableJob(FakeKB):
+        def job(self, job_id):
+            raise OSError("Fictional service outage")
+
+    generation = publication.stage(user, family.proposal_id)
+    fake = UnobservableJob()
+    assert publication.process(generation.id, fake).failure == "ingestion_observation_failed"
+    m.PublicationGeneration.objects.filter(pk=generation.id).update(
+        created_at=timezone.now() - timedelta(seconds=2)
+    )
+    result = publication.process(generation.id, fake)
+    assert (result.state, result.failure) == ("failed", "ingestion_observation_timeout")
+
+    class UnobservableDocuments(FakeKB):
+        def statuses(self, artifacts):
+            raise OSError("Fictional document lookup outage")
+
+    next_generation = publication.stage(user, family.proposal_id)
+    fake = UnobservableDocuments()
+    fake.job_state = "COMPLETE"
+    assert publication.process(next_generation.id, fake).failure == "document_observation_failed"
+    m.PublicationGeneration.objects.filter(pk=next_generation.id).update(
+        created_at=timezone.now() - timedelta(seconds=2)
+    )
+    result = publication.process(next_generation.id, fake)
+    assert (result.state, result.failure) == ("failed", "document_observation_timeout")
+
+    def unavailable():
+        raise ValueError("Fictional missing configuration")
+
+    monkeypatch.setattr(publication, "ManagedKBAdapter", unavailable)
+    final_generation = publication.stage(user, family.proposal_id)
+    result = publication.process(final_generation.id)
+    assert (result.state, result.failure) == ("failed", "adapter_unavailable")
+
+
 def test_source_exclusion_during_draft_and_deletion_lag(corpus, settings, monkeypatch):
     user, collection, _ = corpus
     version, _, family, _ = _plan(corpus)

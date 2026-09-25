@@ -395,7 +395,13 @@ def process(generation_id, adapter=None):
         generation.state, generation.verified_at = "verified", timezone.now()
         generation.save(update_fields=["state", "verified_at"])
         return _activate(generation.id)
-    adapter = adapter or ManagedKBAdapter()
+    if adapter is None:
+        try:
+            adapter = ManagedKBAdapter()
+        except Exception:
+            generation.state, generation.failure = "failed", "adapter_unavailable"
+            generation.save(update_fields=["state", "failure"])
+            return generation
     if generation.state == "staged":
         try:
             adapter.verify_scope()
@@ -433,8 +439,15 @@ def process(generation_id, adapter=None):
         try:
             job = adapter.job(generation.ingestion_job_id)
         except Exception:
-            generation.failure = "ingestion_observation_failed"
-            generation.save(update_fields=["failure"])
+            expired = (timezone.now() - generation.created_at).total_seconds() > settings.APP[
+                "publication_reconcile_timeout_seconds"
+            ]
+            generation.failure = (
+                "ingestion_observation_timeout" if expired else "ingestion_observation_failed"
+            )
+            if expired:
+                generation.state = "failed"
+            generation.save(update_fields=["state", "failure"])
             return generation
         if job["status"] in {"FAILED", "STOPPED"}:
             generation.state, generation.failure = "failed", "ingestion_failed"
@@ -450,8 +463,15 @@ def process(generation_id, adapter=None):
         try:
             statuses = adapter.statuses(artifacts)
         except Exception:
-            generation.failure = "document_observation_failed"
-            generation.save(update_fields=["failure"])
+            expired = (timezone.now() - generation.created_at).total_seconds() > settings.APP[
+                "publication_reconcile_timeout_seconds"
+            ]
+            generation.failure = (
+                "document_observation_timeout" if expired else "document_observation_failed"
+            )
+            if expired:
+                generation.state = "failed"
+            generation.save(update_fields=["state", "failure"])
             return generation
         complete = True
         terminal_failure = False
