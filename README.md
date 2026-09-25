@@ -1,8 +1,9 @@
 # proposal-ingest
 
 The September 2026 product build follows [the MVP implementation playbook](docs/mvp/README.md):
-11 sequential PRs covering this development baseline, a private drafting application, live
-integrations, and bounded 2025 expansion. MVP numbering is separate from the historical CLI phases.
+12 sequential PRs, including MVP-05b for AI-first ingestion before Bedrock publication, covering
+the development baseline, a private drafting application, live integrations, and bounded 2025
+expansion. MVP numbering is separate from the historical CLI phases.
 
 Local-first document ingestion and metadata pipeline for a historical grant/proposal archive.
 
@@ -331,10 +332,10 @@ processed_output/
 
 ## Implementation status
 
-The active product roadmap is [MVP-00 through MVP-10](docs/mvp/README.md). MVP-00 provides the
-reproducible development baseline, MVP-01 provides the durable authenticated application and worker,
-and MVP-02 provides the complete synthetic local product slice. Later work must follow the
-acceptance boundaries in `docs/mvp/PR_PLAYBOOK.md`.
+The active product roadmap is [MVP-00 through MVP-10 plus MVP-05b](docs/mvp/README.md).
+MVP-00 through MVP-05 are merged. The next card, MVP-05b, connects Bedrock-assisted tagging to
+routine document ingestion and exception-focused review before MVP-06 publishes eligible excerpts.
+Later work must follow the acceptance boundaries in `docs/mvp/PR_PLAYBOOK.md`.
 
 The reusable CLI prototype predates that roadmap. Its historical phases 1–12 and 14–16 are
 implemented; its 2024 Phase 13 pilot remains a separate, incomplete historical effort and is not a
