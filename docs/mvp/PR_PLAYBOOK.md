@@ -135,7 +135,7 @@ This is the execution instruction to give the agent later; it is not a claim tha
 
 ## MVP-05 — Curation, scoped review, and model evaluation
 
-**Outcome:** Durable human decisions shape precisely which material can be reused. Depends on 04. Suggested lead: Astra. If needed, split model adapter/comparison work into 05b, keeping the total at 12 PRs.
+**Outcome:** Durable human decisions shape precisely which material can be reused. Depends on 04. Suggested lead: Astra. This merged card delivered the model adapter and comparison harness; mandatory MVP-05b reuses them for operational ingestion and exception review.
 
 **Components:** Independent classification dimensions; deterministic rules and prior scoped decisions; bounded cross-document reconciliation; typed decision ledger and review UI; passage treatments and dependencies; task-specific Bedrock routing; Jev adapter and comparison harness. Reuse synthesis/tracker/override concepts after validating their assumptions.
 
