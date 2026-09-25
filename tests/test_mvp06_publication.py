@@ -175,6 +175,44 @@ def test_auto_plan_uploads_only_curated_bytes_and_rejects_unmapped_results(corpu
         workflow.generate(user, session.id, "Try stale pin")
 
 
+def test_regeneration_rejects_stale_prior_packet_with_other_valid_pin(corpus):
+    user, collection, _ = corpus
+    version, _, family, plan = _plan(
+        corpus,
+        "Technical fictional binder stability is supported.\n\n"
+        "Technical fictional cell capacity is supported.",
+    )
+    assert len(plan.eligible_units) == 2
+    generation = publication.stage(user, family.proposal_id)
+    assert publication.process(generation.id).state == "active"
+    artifacts = list(m.PublicationArtifact.objects.filter(generation=generation).order_by("id"))
+    assert len(artifacts) == 2
+    session = services.create_draft(user, collection.id, "Fictional writing")
+    for artifact in artifacts:
+        workflow.pin_evidence(user, session.id, artifact.id)
+    first = workflow.generate(user, session.id, "Describe the evidence")
+    assert len(first.packet.payload) == 2
+
+    withdrawn = artifacts[0]
+    decision = m.Decision.objects.get(
+        family=family, scope=f"unit:{withdrawn.unit_id}", field="treatment"
+    )
+    curation.review(
+        user,
+        decision.id,
+        decision.revision,
+        "edit",
+        value={"treatment": "excluded"},
+        rationale="Fictional reviewer correction.",
+    )
+    curation.build_plan(user, family.id, version.id)
+    assert (
+        len(services.factual_artifacts(user, collection.id, [item.id for item in artifacts])) == 1
+    )
+    with pytest.raises(ValueError, match="Previous evidence changed"):
+        workflow.generate(user, session.id, "Regenerate with remaining pin")
+
+
 def test_failure_retry_partial_index_and_replacement_keep_old_generation(corpus, settings):
     user, collection, capture = corpus
     old, _, family, _ = _plan(corpus)

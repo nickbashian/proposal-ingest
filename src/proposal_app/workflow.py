@@ -476,6 +476,11 @@ def generate(user, session_id, prompt: str) -> m.DraftRevision:
     if not evidence:
         raise ValueError("Pin at least one currently eligible factual passage")
     latest = m.DraftRevision.objects.filter(session=session).order_by("-number").first()
+    if latest and latest.packet.payload:
+        from .publication import validate_packet
+
+        if not validate_packet(user, session.collection_id, latest.packet.payload):
+            raise ValueError("Previous evidence changed; refresh before continuing")
     packet = m.EvidencePacket.objects.create(
         session=session, payload=evidence, policy_revision="local-evidence-v1"
     )
