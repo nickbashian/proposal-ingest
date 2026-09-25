@@ -23,6 +23,9 @@ SUMMARY_FACTUAL = f"""({previous.CURATED_FACTUAL} OR (
     )
   ))"""
 
+if previous.REFERENCE_GUARD.count(previous.CURATED_FACTUAL) != 1:
+    raise RuntimeError("0018 reference guard changed; summary guard cannot be applied")
+
 
 class Migration(migrations.Migration):
     dependencies = [("proposal_app", "0020_publicationgeneration_deletion_job_id_and_more")]

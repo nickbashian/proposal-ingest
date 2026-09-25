@@ -757,6 +757,49 @@ def effective_value(family, version, unit, field, kind="curation"):
     return winning[3].value, winning[3]
 
 
+def summary_support_current(plan, summary):
+    """A derived summary remains usable only while every backing unit is cleared."""
+    source_ids = summary.get("source_units", [])
+    if not source_ids or len(source_ids) != len(set(source_ids)):
+        return False
+    if set(source_ids) & set(plan.pending_units + plan.metadata_only_units + plan.voice_units):
+        return False
+    prohibited = settings.APP["curation_prohibited_sensitivity"]
+    if (
+        m.ClassificationFact.objects.filter(
+            family=plan.family,
+            version=plan.version,
+            dimension="sensitivity",
+            value__in=prohibited,
+        )
+        .filter(Q(unit_id__in=source_ids) | Q(unit__isnull=True))
+        .exists()
+    ):
+        return False
+    units = {
+        str(unit.id): unit
+        for unit in m.ExtractedUnit.objects.filter(
+            id__in=source_ids, extraction_run=plan.extraction_run
+        )
+    }
+    if set(units) != set(source_ids):
+        return False
+    for source_id in source_ids:
+        try:
+            value, event = effective_value(plan.family, plan.version, units[source_id], "treatment")
+        except ValueError:
+            return False
+        if (
+            event is None
+            or plan.decision_revisions.get(str(event.decision_id)) != event.revision
+            or value.get("treatment") != "summary"
+            or value.get("summary") != summary.get("text")
+            or value.get("source_units") != source_ids
+        ):
+            return False
+    return True
+
+
 def review_queue(collection_id, *, limit=None):
     """The full unresolved set is retained even when the initial view is capped."""
     issues = list(
@@ -905,6 +948,7 @@ def build_plan(user, family_id, version_id):
         )
 
     eligible, voice, excluded, pending, metadata_units, summaries = [], [], [], [], [], []
+    summary_support = {}
     decisions, warnings = {}, []
     for unit in units:
         if prohibited_version or unit.id in prohibited_units:
@@ -983,6 +1027,10 @@ def build_plan(user, family_id, version_id):
         ):
             eligible.append(str(unit.id))
         elif treatment == "summary" and str(unit.id) in value["source_units"]:
+            summary_support[str(unit.id)] = (
+                value["summary"],
+                tuple(value["source_units"]),
+            )
             summary = {
                 "text": value["summary"],
                 "source_units": value["source_units"],
@@ -1000,6 +1048,14 @@ def build_plan(user, family_id, version_id):
             warnings.append(f"No treatment decision: {unit.id}")
         else:
             excluded.append(str(unit.id))
+    summaries = [
+        summary
+        for summary in summaries
+        if all(
+            summary_support.get(unit_id) == (summary["text"], tuple(summary["source_units"]))
+            for unit_id in summary["source_units"]
+        )
+    ]
     metadata_only = bool(metadata_units) and not (eligible or voice or summaries or pending)
     fingerprint = _hash(
         [

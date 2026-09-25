@@ -437,7 +437,7 @@ def pin_evidence(user, session_id, artifact_id) -> m.EvidencePin:
 
 
 @transaction.atomic
-def generate(user, session_id, prompt: str) -> m.DraftRevision:
+def generate(user, session_id, prompt: str, *, refresh_evidence=False) -> m.DraftRevision:
     session = services.owned(user, m.DraftSession, session_id)
     session = m.DraftSession.objects.select_for_update().get(pk=session.id)
     if session.deleted_at:
@@ -479,16 +479,19 @@ def generate(user, session_id, prompt: str) -> m.DraftRevision:
     if latest and latest.packet.payload:
         from .publication import validate_packet
 
-        if not validate_packet(user, session.collection_id, latest.packet.payload):
-            raise ValueError("Previous evidence changed; refresh before continuing")
+        if (
+            not validate_packet(user, session.collection_id, latest.packet.payload)
+            and not refresh_evidence
+        ):
+            raise ValueError("Previous evidence changed; refresh from current pins")
     packet = m.EvidencePacket.objects.create(
         session=session, payload=evidence, policy_revision="local-evidence-v1"
     )
     result = DeterministicDraftingAdapter().draft(
         {
             "evidence": evidence,
-            "base_text": latest.text if latest else "",
-            "prior_evidence": latest.packet.payload if latest else [],
+            "base_text": latest.text if latest and not refresh_evidence else "",
+            "prior_evidence": latest.packet.payload if latest and not refresh_evidence else [],
         },
         prompt,
         idempotency_key=f"{session.id}:{session.revision + 1}",

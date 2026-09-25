@@ -251,7 +251,7 @@ def eligible_artifacts(user, collection_id, ids):
         generation__proposal__collection_id=collection_id,
     )
     from .classification import _latest
-    from .curation import config_fingerprint
+    from .curation import config_fingerprint, summary_support_current
 
     valid = []
     for artifact in candidates.select_related(
@@ -280,6 +280,7 @@ def eligible_artifacts(user, collection_id, ids):
                     and str(artifact.unit_id) in artifact.source_unit_ids
                     and hashlib.sha256(summary["text"].encode("utf-8")).hexdigest()
                     == artifact.blob.sha256
+                    and summary_support_current(plan, summary)
                     for summary in plan.derived_summaries
                 ):
                     continue

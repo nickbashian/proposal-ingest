@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+import math
 import os
 import uuid
 
@@ -13,7 +14,7 @@ from django.utils import timezone
 
 from . import models as m, services
 from .classification import _latest
-from .curation import config_fingerprint, effective_value
+from .curation import config_fingerprint, effective_value, summary_support_current
 from .storage import LocalObjectStorage
 
 
@@ -110,6 +111,8 @@ def _plan_specs(proposal):
             source_ids = summary["source_units"]
             if not source_ids or any(unit_id not in units for unit_id in source_ids):
                 raise ValueError("Derived summary has invalid source mapping")
+            if not summary_support_current(plan, summary):
+                raise ValueError("Derived summary has withdrawn supporting evidence")
             event = m.DecisionEvent.objects.filter(
                 pk=summary["decision_event_id"], decision__family=plan.family
             ).first()
@@ -344,6 +347,20 @@ def _still_current(generation):
 def _activate(generation_id):
     generation = m.PublicationGeneration.objects.select_related("proposal").get(pk=generation_id)
     m.Proposal.objects.select_for_update().get(pk=generation.proposal_id)
+    # Curation writers lock families; source reconciliation invalidates plans.
+    # Hold both locks through the final eligibility check and state swap.
+    list(
+        m.VersionFamily.objects.select_for_update()
+        .filter(proposal_id=generation.proposal_id)
+        .order_by("id")
+        .values_list("id", flat=True)
+    )
+    list(
+        m.CurationPlan.objects.select_for_update()
+        .filter(family__proposal_id=generation.proposal_id, state="current")
+        .order_by("id")
+        .values_list("id", flat=True)
+    )
     if settings.APP["publication_hold"]:
         raise ValueError("Publication is held pending recovery reconciliation")
     if not _still_current(generation):
@@ -365,6 +382,13 @@ def _activate(generation_id):
         details={"revision": generation.revision, "artifact_count": generation.expected_count},
     )
     return generation
+
+
+def _reconciliation_expired(generation):
+    started = generation.indexing_started_at or generation.created_at
+    return (timezone.now() - started).total_seconds() > settings.APP[
+        "publication_reconcile_timeout_seconds"
+    ]
 
 
 def process(generation_id, adapter=None):
@@ -394,7 +418,7 @@ def process(generation_id, adapter=None):
             artifact.save(update_fields=["index_state"])
         generation.state, generation.verified_at = "verified", timezone.now()
         generation.save(update_fields=["state", "verified_at"])
-        return _activate(generation.id)
+        return generation if settings.APP["publication_hold"] else _activate(generation.id)
     if adapter is None:
         try:
             adapter = ManagedKBAdapter()
@@ -429,19 +453,34 @@ def process(generation_id, adapter=None):
             return generation
         try:
             generation.ingestion_job_id = adapter.start(generation)
-        except Exception:
+        except Exception as exc:
+            response = getattr(exc, "response", {})
+            error = response.get("Error", {}) if isinstance(response, dict) else {}
+            code = error.get("Code") if isinstance(error, dict) else None
+            if code in {
+                "ConflictException",
+                "ThrottlingException",
+                "ServiceQuotaExceededException",
+            }:
+                generation.failure = "ingestion_start_deferred"
+                generation.save(update_fields=["failure"])
+                return generation
             generation.state, generation.failure = "failed", "ingestion_start_failed"
             generation.save(update_fields=["state", "failure"])
             return generation
-        generation.state = "indexing"
-        generation.save(update_fields=["ingestion_job_id", "state"])
+        generation.state, generation.indexing_started_at, generation.failure = (
+            "indexing",
+            timezone.now(),
+            "",
+        )
+        generation.save(
+            update_fields=["ingestion_job_id", "state", "indexing_started_at", "failure"]
+        )
     if generation.state == "indexing":
         try:
             job = adapter.job(generation.ingestion_job_id)
         except Exception:
-            expired = (timezone.now() - generation.created_at).total_seconds() > settings.APP[
-                "publication_reconcile_timeout_seconds"
-            ]
+            expired = _reconciliation_expired(generation)
             generation.failure = (
                 "ingestion_observation_timeout" if expired else "ingestion_observation_failed"
             )
@@ -454,18 +493,14 @@ def process(generation_id, adapter=None):
             generation.save(update_fields=["state", "failure"])
             return generation
         if job["status"] != "COMPLETE":
-            if (timezone.now() - generation.created_at).total_seconds() > settings.APP[
-                "publication_reconcile_timeout_seconds"
-            ]:
+            if _reconciliation_expired(generation):
                 generation.state, generation.failure = "failed", "ingestion_timeout"
                 generation.save(update_fields=["state", "failure"])
             return generation
         try:
             statuses = adapter.statuses(artifacts)
         except Exception:
-            expired = (timezone.now() - generation.created_at).total_seconds() > settings.APP[
-                "publication_reconcile_timeout_seconds"
-            ]
+            expired = _reconciliation_expired(generation)
             generation.failure = (
                 "document_observation_timeout" if expired else "document_observation_failed"
             )
@@ -488,11 +523,7 @@ def process(generation_id, adapter=None):
                 "IGNORED",
             }
         if not complete:
-            if (
-                terminal_failure
-                or (timezone.now() - generation.created_at).total_seconds()
-                > settings.APP["publication_reconcile_timeout_seconds"]
-            ):
+            if terminal_failure or _reconciliation_expired(generation):
                 generation.state, generation.failure = "failed", "documents_not_indexed"
                 generation.save(update_fields=["state", "failure"])
             return generation
@@ -503,7 +534,7 @@ def process(generation_id, adapter=None):
         )
         generation.save(update_fields=["state", "verified_at", "failure"])
     if generation.state == "verified":
-        return _activate(generation.id)
+        return generation if settings.APP["publication_hold"] else _activate(generation.id)
     return generation
 
 
@@ -536,20 +567,34 @@ def retrieve(user, collection_id, query, adapter=None):
             "unit__version__source", "generation", "blob"
         )
     }
-    results = []
+    selected = {}
     for item in candidates:
         metadata = item.get("metadata")
         if not isinstance(metadata, dict):
             continue
-        artifact = allowed.get(metadata.get("artifact_id"))
+        artifact_id = metadata.get("artifact_id")
+        if not isinstance(artifact_id, str):
+            continue
+        artifact = allowed.get(artifact_id)
+        location = item.get("location")
+        s3_location = location.get("s3Location") if isinstance(location, dict) else None
         if (
             artifact is None
             or artifact.generation_id not in active
             or metadata.get("generation_id") != str(artifact.generation_id)
             or metadata.get("content_sha256") != artifact.blob.sha256
-            or item.get("location", {}).get("s3Location", {}).get("uri") != adapter.uri(artifact)
+            or not isinstance(s3_location, dict)
+            or s3_location.get("uri") != adapter.uri(artifact)
         ):
             continue
+        score = item.get("score", 0)
+        if not isinstance(score, (int, float)) or not math.isfinite(score):
+            score = 0
+        previous = selected.get(artifact_id)
+        if previous is None or score > previous[0]:
+            selected[artifact_id] = (score, artifact)
+    results = []
+    for score, artifact in sorted(selected.values(), key=lambda pair: -pair[0]):
         results.append(
             {
                 "artifact_id": str(artifact.id),
@@ -566,7 +611,7 @@ def retrieve(user, collection_id, query, adapter=None):
                 ),
                 "source_url": f"/artifacts/{artifact.id}/",
                 "support_kind": "factual",
-                "score": item.get("score", 0),
+                "score": score,
             }
         )
     return results
@@ -595,10 +640,23 @@ def cleanup_retired(generation_id, adapter=None):
     generation = m.PublicationGeneration.objects.get(pk=generation_id)
     if generation.state != "retired" or generation.backend != "managed_kb":
         raise ValueError("Only retired Managed KB generations may be cleaned up")
+    if generation.deletion_state == "complete":
+        return generation
     adapter = adapter or ManagedKBAdapter()
     adapter.verify_scope()
+    with transaction.atomic():
+        m.Proposal.objects.select_for_update().get(pk=generation.proposal_id)
+        generation = m.PublicationGeneration.objects.select_for_update().get(pk=generation_id)
+        if generation.state != "retired":
+            raise ValueError("Only retired Managed KB generations may be cleaned up")
+        deleting = not generation.deletion_job_id or generation.deletion_state == "failed"
+        if deleting:
+            # Persist the marker before any external deletion so restore cannot
+            # activate stale index entries after S3 bytes are gone.
+            generation.deletion_state = "deleting"
+            generation.save(update_fields=["deletion_state"])
     artifacts = list(m.PublicationArtifact.objects.filter(generation=generation).order_by("id"))
-    if not generation.deletion_job_id or generation.deletion_state == "failed":
+    if deleting:
         for artifact in artifacts:
             adapter.delete(artifact)
         generation.deletion_job_id = adapter.start(generation, operation="delete")
@@ -620,11 +678,18 @@ def cleanup_retired(generation_id, adapter=None):
     return generation
 
 
+@transaction.atomic
 def restore_verified(generation_id, adapter=None):
     """Rollback only when the old generation is still eligible and exactly indexed."""
-    generation = m.PublicationGeneration.objects.get(pk=generation_id)
+    proposal_id = m.PublicationGeneration.objects.values_list("proposal_id", flat=True).get(
+        pk=generation_id
+    )
+    m.Proposal.objects.select_for_update().get(pk=proposal_id)
+    generation = m.PublicationGeneration.objects.select_for_update().get(pk=generation_id)
     if generation.state != "retired" or settings.APP["publication_hold"]:
         raise ValueError("Generation is not available for verified restore")
+    if generation.deletion_job_id or generation.deletion_state:
+        raise ValueError("Retired generation cleanup has started; restore is unsafe")
     if not _still_current(generation):
         raise ValueError("Retired generation no longer matches current decisions")
     artifacts = list(m.PublicationArtifact.objects.filter(generation=generation))
@@ -645,6 +710,8 @@ def restore_verified(generation_id, adapter=None):
 
 def reconcile_once():
     """One bounded worker poll; incomplete ingestion waits for the next poll."""
+    if settings.APP["publication_hold"]:
+        return False
     generations = list(
         m.PublicationGeneration.objects.filter(
             state__in=["staged", "uploaded", "indexing", "verified"]
@@ -653,6 +720,13 @@ def reconcile_once():
     changed = False
     for generation in generations:
         previous = generation.state
-        current = process(generation.id)
+        try:
+            current = process(generation.id)
+        except Exception:
+            m.PublicationGeneration.objects.filter(pk=generation.id).update(
+                state="failed", failure="reconcile_error"
+            )
+            changed = True
+            continue
         changed |= current.state != previous
     return changed

@@ -17,7 +17,7 @@ APP["publication_backend"] = os.environ.get(
 )
 if APP["publication_backend"] not in {"local", "managed_kb"}:
     raise ImproperlyConfigured("PROPOSAL_PUBLICATION_BACKEND is invalid")
-publication_hold = os.environ.get("PROPOSAL_PUBLICATION_HOLD", "false").lower()
+publication_hold = os.environ.get("PROPOSAL_PUBLICATION_HOLD", str(APP["publication_hold"])).lower()
 if publication_hold not in {"true", "false"}:
     raise ImproperlyConfigured("PROPOSAL_PUBLICATION_HOLD must be true or false")
 APP["publication_hold"] = publication_hold == "true"

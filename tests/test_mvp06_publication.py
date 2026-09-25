@@ -3,7 +3,10 @@
 import copy
 import hashlib
 import io
+import runpy
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeout
 from datetime import timedelta
+from threading import Event
 
 import pytest
 from django.contrib.auth import get_user_model
@@ -25,6 +28,19 @@ from proposal_app.adapters import DeterministicDraftingAdapter
 from proposal_app.storage import LocalObjectStorage
 
 pytestmark = pytest.mark.django_db
+
+
+def test_publication_hold_uses_yaml_default_until_environment_overrides(settings, monkeypatch):
+    from proposal_ingest import config
+
+    defaults = copy.deepcopy(config.load_web_application_defaults())
+    defaults["publication_hold"] = True
+    monkeypatch.setattr(config, "load_web_application_defaults", lambda: defaults.copy())
+    monkeypatch.delenv("PROPOSAL_PUBLICATION_HOLD", raising=False)
+    settings_path = settings.ROOT / "src" / "proposal_app" / "settings.py"
+    assert runpy.run_path(str(settings_path))["APP"]["publication_hold"] is True
+    monkeypatch.setenv("PROPOSAL_PUBLICATION_HOLD", "false")
+    assert runpy.run_path(str(settings_path))["APP"]["publication_hold"] is False
 
 
 @pytest.fixture
@@ -153,6 +169,16 @@ def test_auto_plan_uploads_only_curated_bytes_and_rejects_unmapped_results(corpu
     assert "binder stability" in result[0]["text"]
     assert "untrusted provider" not in str(result)
     assert publication.validate_packet(user, collection.id, result)
+    fake.results = [
+        {
+            "metadata": metadata,
+            "location": {"s3Location": {"uri": fake.uri(artifact)}},
+            "score": score,
+        }
+        for score in (0.2, 0.95, 0.5)
+    ] + [{"metadata": {"artifact_id": {}}, "location": None}]
+    deduplicated = publication.retrieve(user, collection.id, "binder", fake)
+    assert len(deduplicated) == 1 and deduplicated[0]["score"] == 0.95
     session = services.create_draft(user, collection.id, "Fictional writing")
     workflow.pin_evidence(user, session.id, artifact.id)
     draft = workflow.generate(user, session.id, "Describe the binder")
@@ -211,6 +237,22 @@ def test_regeneration_rejects_stale_prior_packet_with_other_valid_pin(corpus):
     )
     with pytest.raises(ValueError, match="Previous evidence changed"):
         workflow.generate(user, session.id, "Regenerate with remaining pin")
+    refreshed = workflow.generate(
+        user, session.id, "Use only current evidence", refresh_evidence=True
+    )
+    assert len(refreshed.packet.payload) == 1
+    assert str(withdrawn.id) not in str(refreshed.packet.payload)
+    assert withdrawn.unit.text not in refreshed.text
+    assert m.DraftRevision.objects.filter(session=session).count() == 2
+    legacy_payload = copy.deepcopy(refreshed.packet.payload)
+    legacy_payload[0].pop("generation_id")
+    refreshed.packet.payload = legacy_payload
+    refreshed.packet.save(update_fields=["payload"])
+    with pytest.raises(ValueError, match="refresh from current pins"):
+        workflow.generate(user, session.id, "Legacy packet")
+    recovered = workflow.generate(user, session.id, "Current pins only", refresh_evidence=True)
+    assert len(recovered.packet.payload) == 1
+    assert m.DraftRevision.objects.filter(session=session).count() == 3
 
 
 def test_failure_retry_partial_index_and_replacement_keep_old_generation(corpus, settings):
@@ -300,6 +342,42 @@ def test_uncertain_ingestion_start_reuses_remote_job(corpus, settings):
     assert publication.process(generation.id, fake).state == "active"
 
 
+def test_conflict_defers_start_and_late_retry_gets_new_deadline(corpus, settings):
+    user, _, _ = corpus
+    _, _, family, _ = _plan(corpus)
+    settings.APP["publication_backend"] = "managed_kb"
+    settings.APP["publication_reconcile_timeout_seconds"] = 1
+    generation = publication.stage(user, family.proposal_id)
+    artifact = m.PublicationArtifact.objects.get(generation=generation)
+
+    class Conflict(Exception):
+        response = {"Error": {"Code": "ConflictException"}}
+
+    class ContendedKB(FakeKB):
+        def start(self, generation, *, operation="publish"):
+            if not self.calls:
+                self.calls += 1
+                raise Conflict("Fictional concurrent ingestion")
+            return super().start(generation, operation=operation)
+
+    fake = ContendedKB()
+    result = publication.process(generation.id, fake)
+    assert (result.state, result.failure, result.ingestion_job_id) == (
+        "uploaded",
+        "ingestion_start_deferred",
+        "",
+    )
+    m.PublicationGeneration.objects.filter(pk=generation.id).update(
+        created_at=timezone.now() - timedelta(minutes=5)
+    )
+    result = publication.process(generation.id, fake)
+    assert result.state == "indexing"
+    assert result.indexing_started_at > result.created_at
+    fake.job_state = "COMPLETE"
+    fake.index[fake.uri(artifact)] = "INDEXED"
+    assert publication.process(generation.id, fake).state == "active"
+
+
 def test_observation_failures_time_out_and_missing_adapter_fails(corpus, settings, monkeypatch):
     user, _, _ = corpus
     _, _, family, _ = _plan(corpus)
@@ -314,7 +392,7 @@ def test_observation_failures_time_out_and_missing_adapter_fails(corpus, setting
     fake = UnobservableJob()
     assert publication.process(generation.id, fake).failure == "ingestion_observation_failed"
     m.PublicationGeneration.objects.filter(pk=generation.id).update(
-        created_at=timezone.now() - timedelta(seconds=2)
+        indexing_started_at=timezone.now() - timedelta(seconds=2)
     )
     result = publication.process(generation.id, fake)
     assert (result.state, result.failure) == ("failed", "ingestion_observation_timeout")
@@ -328,7 +406,7 @@ def test_observation_failures_time_out_and_missing_adapter_fails(corpus, setting
     fake.job_state = "COMPLETE"
     assert publication.process(next_generation.id, fake).failure == "document_observation_failed"
     m.PublicationGeneration.objects.filter(pk=next_generation.id).update(
-        created_at=timezone.now() - timedelta(seconds=2)
+        indexing_started_at=timezone.now() - timedelta(seconds=2)
     )
     result = publication.process(next_generation.id, fake)
     assert (result.state, result.failure) == ("failed", "document_observation_timeout")
@@ -433,9 +511,65 @@ def test_full_partial_summary_metadata_only_and_excluded_render_exact_bytes(corp
     assert workflow.search(user, collection.id, "Derived fictional approved summary")
     session = services.create_draft(user, collection.id, "Summary packet")
     workflow.pin_evidence(user, session.id, summary.id)
+    browser = Client()
+    browser.force_login(user)
+    writing_page = browser.get(f"/writing/{session.id}/")
+    assert b"Derived fictional approved summary" in writing_page.content
+    assert b"raw passage beta" not in writing_page.content
     draft = workflow.generate(user, session.id, "Use summary")
     assert "Derived fictional approved summary" in str(draft.packet.payload)
     assert "raw passage beta" not in str(draft.packet.payload)
+
+
+def test_summary_withdraws_when_non_anchor_source_is_excluded(corpus):
+    user, collection, _ = corpus
+    version, run, family, _ = _plan(
+        corpus,
+        "Technical fictional binder result alpha.\n\n" "Technical fictional binder result beta.",
+    )
+    units = list(m.ExtractedUnit.objects.filter(extraction_run=run).order_by("ordinal"))
+    source_ids = [str(unit.id) for unit in units]
+    decision = curation.recommend(
+        user,
+        family.id,
+        f"version:{version.id}",
+        "treatment",
+        "curation",
+        value={
+            "treatment": "summary",
+            "source_units": source_ids,
+            "summary": "Approved fictional combined result.",
+            "voice_eligible": False,
+        },
+        rationale="Fictional source-backed summary.",
+        evidence=source_ids,
+        affected_units=source_ids,
+    )
+    curation.review(user, decision.id, decision.revision, "approve")
+    plan = curation.build_plan(user, family.id, version.id)
+    assert len(plan.derived_summaries) == 1
+    generation = publication.stage(user, family.proposal_id)
+    assert publication.process(generation.id).state == "active"
+    artifact = m.PublicationArtifact.objects.get(generation=generation)
+    assert artifact.source_unit_ids == source_ids
+    assert workflow.search(user, collection.id, "combined result")
+
+    non_anchor = next(unit for unit in units if unit.id != artifact.unit_id)
+    override = m.Decision.objects.get(
+        family=family, scope=f"unit:{non_anchor.id}", field="treatment"
+    )
+    curation.review(
+        user,
+        override.id,
+        override.revision,
+        "edit",
+        value={"treatment": "excluded"},
+        rationale="Fictional reviewer withdrew a supporting unit.",
+    )
+    assert workflow.search(user, collection.id, "combined result") == []
+    plan = curation.build_plan(user, family.id, version.id)
+    assert plan.derived_summaries == []
+    assert not services.factual_artifacts(user, collection.id, [artifact.id]).exists()
 
 
 def test_managed_kb_request_contract_and_metadata_limit(corpus, settings, monkeypatch):
@@ -575,7 +709,7 @@ def test_ingestion_timeout_and_unknown_result_after_restore(corpus, settings):
     fake = FakeKB()
     assert publication.process(generation.id, fake).state == "indexing"
     m.PublicationGeneration.objects.filter(pk=generation.id).update(
-        created_at=timezone.now() - timedelta(seconds=2)
+        indexing_started_at=timezone.now() - timedelta(seconds=2)
     )
     assert publication.process(generation.id, fake).failure == "ingestion_timeout"
     fake.results = [
@@ -627,6 +761,56 @@ def test_recovery_hold_and_verified_rollback_obey_latest_decisions(corpus, setti
         publication.restore_verified(generation.id)
 
 
+def test_hold_defers_activation_and_worker_isolates_failed_generation(
+    corpus, settings, monkeypatch
+):
+    user, _, capture = corpus
+    _, _, family, _ = _plan(corpus)
+    first = publication.stage(user, family.proposal_id)
+    _, _, other_family = capture(
+        "Technical fictional separator result.", item="other", proposal="OTHER-06"
+    )
+    second = publication.stage(user, other_family.proposal_id)
+
+    settings.APP["publication_hold"] = True
+    assert publication.process(first.id).state == "verified"
+    assert publication.reconcile_once() is False
+    assert m.PublicationGeneration.objects.get(pk=second.id).state == "staged"
+    settings.APP["publication_hold"] = False
+
+    original = publication.process
+
+    def fail_one(generation_id, adapter=None):
+        if generation_id == first.id:
+            raise OSError("Fictional missing staged bytes")
+        return original(generation_id, adapter)
+
+    monkeypatch.setattr(publication, "process", fail_one)
+    assert publication.reconcile_once() is True
+    failed = m.PublicationGeneration.objects.get(pk=first.id)
+    assert (failed.state, failed.failure) == ("failed", "reconcile_error")
+    assert m.PublicationGeneration.objects.get(pk=second.id).state == "active"
+
+
+def test_cleanup_marker_blocks_restore_during_index_deletion_lag(corpus, settings):
+    user, _, _ = corpus
+    _, _, family, _ = _plan(corpus)
+    settings.APP["publication_backend"] = "managed_kb"
+    generation = publication.stage(user, family.proposal_id)
+    artifact = m.PublicationArtifact.objects.get(generation=generation)
+    fake = FakeKB()
+    publication.process(generation.id, fake)
+    fake.job_state = "COMPLETE"
+    fake.index[fake.uri(artifact)] = "INDEXED"
+    assert publication.process(generation.id, fake).state == "active"
+    generation.state = "retired"
+    generation.save(update_fields=["state"])
+    assert publication.cleanup_retired(generation.id, fake).deletion_state == "pending"
+    assert fake.uri(artifact) not in fake.objects
+    with pytest.raises(ValueError, match="cleanup has started"):
+        publication.restore_verified(generation.id, fake)
+
+
 def test_failed_refresh_does_not_interrupt_another_proposal(corpus, settings):
     user, collection, capture = corpus
     _, _, first_family, _ = _plan(corpus)
@@ -660,6 +844,43 @@ def test_failed_refresh_does_not_interrupt_another_proposal(corpus, settings):
     assert [
         item["artifact_id"] for item in publication.retrieve(user, collection.id, "separator", fake)
     ] == [str(other_artifact.id)]
+
+
+@pytest.mark.django_db(transaction=True)
+def test_activation_serializes_with_plan_invalidation(corpus, monkeypatch):
+    if connection.vendor != "postgresql":
+        pytest.skip("Row locking requires PostgreSQL")
+    user, collection, _ = corpus
+    _, _, family, plan = _plan(corpus)
+    generation = publication.stage(user, family.proposal_id)
+    m.PublicationArtifact.objects.filter(generation=generation).update(index_state="indexed")
+    generation.state = "verified"
+    generation.save(update_fields=["state"])
+    entered, release = Event(), Event()
+    original = publication._still_current
+
+    def pause_during_activation(current):
+        entered.set()
+        assert release.wait(10)
+        return original(current)
+
+    monkeypatch.setattr(publication, "_still_current", pause_during_activation)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        activating = pool.submit(publication._activate, generation.id)
+        assert entered.wait(10)
+        invalidating = pool.submit(
+            lambda: m.CurationPlan.objects.filter(pk=plan.id).update(state="invalidated")
+        )
+        with pytest.raises(FutureTimeout):
+            invalidating.result(timeout=0.2)
+        release.set()
+        assert activating.result(timeout=10).state == "active"
+        assert invalidating.result(timeout=10) == 1
+    assert not services.factual_artifacts(
+        user,
+        collection.id,
+        m.PublicationArtifact.objects.filter(generation=generation).values_list("id", flat=True),
+    ).exists()
 
 
 @pytest.mark.django_db(transaction=True)

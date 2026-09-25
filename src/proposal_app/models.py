@@ -392,6 +392,7 @@ class PublicationGeneration(Record):
     backend = models.CharField(max_length=20, default="local")
     expected_count = models.PositiveIntegerField(default=0)
     ingestion_job_id = models.CharField(max_length=100, blank=True)
+    indexing_started_at = models.DateTimeField(null=True)
     deletion_job_id = models.CharField(max_length=100, blank=True)
     deletion_state = models.CharField(max_length=20, blank=True)
     failure = models.CharField(max_length=100, blank=True)
