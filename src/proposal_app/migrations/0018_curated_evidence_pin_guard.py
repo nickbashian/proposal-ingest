@@ -6,7 +6,8 @@ CURATED_FACTUAL = """(
           u.support_kind = 'factual'
           OR EXISTS (
             SELECT 1 FROM proposal_app_curationplan cp
-            JOIN proposal_app_decision d ON d.id = a.decision_event_id
+            JOIN proposal_app_decisionevent e ON e.id = a.decision_event_id
+            JOIN proposal_app_decision d ON d.id = e.decision_id
             WHERE cp.family_id = d.family_id
               AND cp.version_id = u.version_id
               AND cp.extraction_run_id = u.extraction_run_id
