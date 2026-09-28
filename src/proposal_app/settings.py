@@ -1,6 +1,7 @@
 """Fail-closed application configuration; no provider connections at startup."""
 
 import os
+import re
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from urllib.parse import parse_qsl, unquote, urlparse
@@ -11,6 +12,23 @@ from proposal_ingest.config import load_web_application_defaults
 
 ROOT = Path(__file__).resolve().parents[2]
 APP = load_web_application_defaults()
+APP["publication_backend"] = os.environ.get(
+    "PROPOSAL_PUBLICATION_BACKEND", APP["publication_backend"]
+)
+if APP["publication_backend"] not in {"local", "managed_kb"}:
+    raise ImproperlyConfigured("PROPOSAL_PUBLICATION_BACKEND is invalid")
+publication_hold = os.environ.get("PROPOSAL_PUBLICATION_HOLD", str(APP["publication_hold"])).lower()
+if publication_hold not in {"true", "false"}:
+    raise ImproperlyConfigured("PROPOSAL_PUBLICATION_HOLD must be true or false")
+APP["publication_hold"] = publication_hold == "true"
+if (
+    not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9/_-]*/", APP["publication_s3_prefix"])
+    or "//" in APP["publication_s3_prefix"]
+    or not 1 <= APP["publication_retrieve_limit"] <= 100
+    or not 0 < APP["publication_max_metadata_bytes"] <= 10240
+    or APP["publication_reconcile_timeout_seconds"] <= 0
+):
+    raise ImproperlyConfigured("Invalid curated publication limits or prefix")
 APP["extraction_ocr_executable"] = (
     os.environ.get("PROPOSAL_LOCAL_OCR_EXECUTABLE") or APP["extraction_ocr_executable"]
 )

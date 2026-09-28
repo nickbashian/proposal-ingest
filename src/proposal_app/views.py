@@ -142,6 +142,18 @@ def collection(request, collection_id):
             "retrieval_label": workflow.LOCAL_RETRIEVAL_LABEL,
             "drafting_label": workflow.LOCAL_DRAFTING_LABEL,
             "review_queue": curation.review_queue(collection_id),
+            "publication_status": [
+                {
+                    "proposal": proposal,
+                    "latest": m.PublicationGeneration.objects.filter(proposal=proposal)
+                    .order_by("-revision")
+                    .first(),
+                    "active": m.PublicationGeneration.objects.filter(
+                        proposal=proposal, state="active"
+                    ).first(),
+                }
+                for proposal in proposals
+            ],
         },
     )
 
@@ -297,7 +309,12 @@ def writing(request, object_id):
             if action == "pin":
                 workflow.pin_evidence(request.user, session.id, request.POST.get("artifact_id"))
             elif action == "generate":
-                workflow.generate(request.user, session.id, request.POST.get("prompt", ""))
+                workflow.generate(
+                    request.user,
+                    session.id,
+                    request.POST.get("prompt", ""),
+                    refresh_evidence=request.POST.get("refresh_evidence") == "on",
+                )
             elif action == "edit":
                 workflow.edit(
                     request.user,
@@ -329,6 +346,29 @@ def writing(request, object_id):
         return HttpResponseRedirect(request.path + suffix)
     query = request.GET.get("q", "")
     latest = m.DraftRevision.objects.filter(session=session).order_by("-number").first()
+    pins = list(
+        m.EvidencePin.objects.filter(session=session).select_related(
+            "artifact__unit__version__source"
+        )
+    )
+    eligible = {
+        artifact.id: artifact
+        for artifact in services.factual_artifacts(
+            request.user, session.collection_id, [pin.artifact_id for pin in pins]
+        ).select_related("unit", "generation", "blob")
+    }
+    pin_displays = [
+        {
+            "title": pin.artifact.unit.version.source.display_path,
+            "text": (
+                workflow.artifact_text(eligible[pin.artifact_id])
+                if pin.artifact_id in eligible
+                else ""
+            ),
+            "eligible": pin.artifact_id in eligible,
+        }
+        for pin in pins
+    ]
     return render(
         request,
         "proposal_app/writing.html",
@@ -336,9 +376,7 @@ def writing(request, object_id):
             "session": session,
             "query": query,
             "results": workflow.search(request.user, session.collection_id, query),
-            "pins": m.EvidencePin.objects.filter(session=session).select_related(
-                "artifact__unit__version__source"
-            ),
+            "pins": pin_displays,
             "latest": latest,
             "revisions": m.DraftRevision.objects.filter(session=session).order_by("-number"),
             "retrieval_label": workflow.LOCAL_RETRIEVAL_LABEL,
@@ -417,6 +455,7 @@ def artifact(request, object_id):
         {
             "artifact": obj,
             "locator_label": workflow.locator_label(obj.unit.locator),
+            "curated_text": workflow.artifact_text(obj),
             "withdrawn": not obj.eligible or obj.generation.state != "active",
         },
     )

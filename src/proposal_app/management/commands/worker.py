@@ -4,6 +4,7 @@ from django.conf import settings
 from django.core.management.base import BaseCommand
 
 from proposal_app.jobs import work_once
+from proposal_app.publication import reconcile_once
 
 
 class Command(BaseCommand):
@@ -15,6 +16,8 @@ class Command(BaseCommand):
     def handle(self, *args, **options):
         while True:
             worked = work_once()
+            if not worked:
+                worked = reconcile_once()
             if options["once"]:
                 return
             if not worked:

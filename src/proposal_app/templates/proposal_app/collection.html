@@ -18,6 +18,7 @@
 <section>
   <h2>3. Publish reviewed passages</h2>
   {% for proposal in proposals %}<form method="post">{% csrf_token %}<input type="hidden" name="action" value="publish"><input type="hidden" name="proposal_id" value="{{ proposal.id }}"><button>Publish eligible passages for {{ proposal.identifier }}</button></form>{% empty %}<p>Import the fixture before publishing.</p>{% endfor %}
+  {% for item in publication_status %}<p>{{ item.proposal.identifier }}: latest publication {% if item.latest %}{{ item.latest.state }}{% if item.latest.failure %} ({{ item.latest.failure }}){% endif %}{% else %}none{% endif %}; last successful {% if item.active %}generation {{ item.active.revision }}{% else %}none{% endif %}.</p>{% endfor %}
 </section>
 <section>
   <h2>4. Search evidence and write</h2>
