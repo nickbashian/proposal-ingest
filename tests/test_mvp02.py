@@ -126,7 +126,8 @@ def test_complete_local_services_exclusion_revisions_and_idempotency(slice_owner
     assert EXCLUDED_TEXT not in packet_text
     assert VOICE_TEXT not in packet_text
     assert generated.model_revision == "deterministic-local-v1"
-    assert f"/artifacts/{results[0]['artifact_id']}/" in generated.text
+    assert f"/drafts/packets/{generated.packet_id}/citations/C1/" in generated.text
+    assert generated.packet.payload[0]["artifact_url"] == f"/artifacts/{results[0]['artifact_id']}/"
 
     edited_text = generated.text.replace("92%", "91%") + "\nUser-authored bridge sentence."
     edited = workflow.edit(user, session.id, 1, edited_text)
@@ -595,11 +596,13 @@ def test_browser_complete_local_product_slice(slice_owner, settings, live_server
             assert FACT_TEXT in page.locator("body").inner_text()
             artifact_url = page.get_by_role("link", name="Open exact passage").get_attribute("href")
             page.get_by_role("button", name="Pin factual evidence").click()
+            page.get_by_label("Run in background", exact=False).uncheck()
             page.get_by_role("button", name="Generate deterministic draft").click()
             textarea = page.locator('textarea[name="text"]')
             assert FACT_TEXT in textarea.input_value()
             textarea.fill(textarea.input_value() + "\nUser-authored bridge sentence.")
             page.get_by_role("button", name="Save edit as new revision").click()
+            page.get_by_label("Run in background", exact=False).uncheck()
             page.get_by_role("button", name="Regenerate as a new revision").click()
             assert "User-authored bridge sentence." in page.locator("body").inner_text()
             if screenshot_path := os.environ.get("MVP02_SCREENSHOT_PATH"):

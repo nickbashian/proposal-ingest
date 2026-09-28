@@ -734,15 +734,23 @@ def _applies(decision, version, unit):
     return str(unit.locator.get("section", "")) == scoped
 
 
-def effective_value(family, version, unit, field, kind="curation"):
+def effective_value(family, version, unit, field, kind="curation", *, decisions=None):
     """Human answers outrank automation; then narrower applicable scope wins."""
     applicable = []
-    for decision in m.Decision.objects.filter(
-        family=family, field=field, kind=kind, status="resolved"
-    ):
+    if decisions is None:
+        decisions = m.Decision.objects.filter(
+            family=family, field=field, kind=kind, status="resolved"
+        )
+    for decision in decisions:
+        if decision.field != field or decision.kind != kind or decision.status != "resolved":
+            continue
         if not _applies(decision, version, unit):
             continue
-        event = current_event(decision)
+        event = (
+            _active_event(decision.writing_events)
+            if hasattr(decision, "writing_events")
+            else current_event(decision)
+        )
         if event:
             rank = SCOPE_RANK[decision.scope.split(":", 1)[0]]
             applicable.append((1 if event.actor_id else 0, rank, decision, event))

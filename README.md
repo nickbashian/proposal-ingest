@@ -170,6 +170,12 @@ production configuration, and backup/restore. Application settings use process e
 historical CLI's `.env` loading remains separate. `make fixture-job` remains available for the
 smaller MVP-01 durable-job demonstration.
 
+MVP-07 adds the evidence views, separate approved voice selections, saved model requests,
+private packet citations, conservative claim checks, background generation, and revision
+restore/compare. Run `python scripts/manage.py fixture_writing` for the five fictional writing
+tasks. See the [writing operator guide](docs/mvp/implementation/MVP-07-OPERATIONS.md) for
+the source-update rehearsal, export/recovery behavior, and disabled live drafting route.
+
 VS Code workspace settings recommend the Code Spell Checker extension and keep spelling
 diagnostics at hint level so domain terms do not turn into noisy errors.
 

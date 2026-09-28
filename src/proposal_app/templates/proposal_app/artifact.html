@@ -5,5 +5,8 @@
 <p><a href="{% url 'unit-inspector' artifact.unit.id %}">Inspect exact extracted unit and parser provenance</a> · <a href="{% url 'source-original' artifact.unit.version_id %}">Download captured source</a></p>
 <p>Locator: <span id="locator">{{ locator_label }}</span></p>
 <pre id="passage">{{ curated_text }}</pre>
+<details><summary>Original passage, qualifications, and established scientific context</summary><pre>{{ details.original_text }}</pre><p>{{ details.labels }}</p><p>{{ details.qualifications }}</p><p>{{ details.context }}</p><p>Observed {{ details.date }} · source version {{ details.source_version }}</p></details>
+<details><summary>Neighboring context — inspection only</summary>{% for unit in neighbors %}<pre>{{ unit.text }}</pre>{% empty %}<p>No neighboring unit available.</p>{% endfor %}</details>
+<details><summary>Comparable captured versions</summary>{% for unit in versions %}<p>{{ unit.version.upstream_version }} · {{ unit.version.observed_at }} · {{ unit.locator }}</p><pre>{{ unit.text }}</pre>{% empty %}<p>No comparable version available.</p>{% endfor %}</details>
 <dl><dt>Source version</dt><dd>{{ artifact.unit.version_id }}</dd><dt>Publication generation</dt><dd>{{ artifact.generation_id }}</dd><dt>Evidence role</dt><dd>{{ artifact.unit.support_kind }}</dd></dl>
 {% endblock %}

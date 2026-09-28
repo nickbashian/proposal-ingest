@@ -15,6 +15,11 @@ urlpatterns = [
     path("collections/<uuid:collection_id>/drafts/", views.new_draft),
     path("jobs/<uuid:object_id>/", views.job),
     path("drafts/<str:kind>/<uuid:object_id>/", views.draft),
+    path(
+        "drafts/packets/<uuid:packet_id>/citations/<str:citation_id>/",
+        views.packet_citation,
+        name="packet-citation",
+    ),
     path("drafts/<str:kind>/<uuid:object_id>/<str:action>/", views.draft),
     path("writing/<uuid:object_id>/", views.writing, name="writing"),
     path("artifacts/<uuid:object_id>/", views.artifact, name="artifact"),

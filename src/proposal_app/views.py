@@ -7,11 +7,21 @@ import json
 from urllib.parse import urlencode
 
 from django.core.exceptions import ValidationError
+from django.db.models import Q
 from django.http import Http404, HttpResponse, HttpResponseRedirect, JsonResponse
 from django.shortcuts import render
 from django.views.decorators.http import require_GET, require_http_methods, require_POST
 
-from . import classification, curation, extraction_service, models as m, services, workflow
+from . import (
+    classification,
+    curation,
+    drafting,
+    evidence,
+    extraction_service,
+    models as m,
+    services,
+    workflow,
+)
 from .storage import LocalObjectStorage
 from django.conf import settings
 from django.utils import timezone
@@ -24,7 +34,11 @@ def conflict(error):
 @require_GET
 def home(request):
     collections = m.Collection.objects.filter(collectionaccess__user=request.user)
-    jobs = m.Job.objects.filter(collection__in=collections).order_by("-created_at")[:30]
+    jobs = (
+        m.Job.objects.filter(collection__in=collections)
+        .filter(~Q(kind="draft-generation") | Q(creator=request.user))
+        .order_by("-created_at")[:30]
+    )
     return render(request, "proposal_app/home.html", {"collections": collections, "jobs": jobs})
 
 
@@ -287,6 +301,7 @@ def job(request, object_id):
     if obj is None:
         raise Http404
     services.authorize(request.user, obj.collection_id)
+    services.authorize_private_job(request.user, obj)
     if request.method == "POST":
         try:
             services.control_job(request.user, object_id, request.POST.get("action"))
@@ -308,12 +323,52 @@ def writing(request, object_id):
         try:
             if action == "pin":
                 workflow.pin_evidence(request.user, session.id, request.POST.get("artifact_id"))
+            elif action == "pin-voice":
+                drafting.pin_voice(request.user, session.id, request.POST.get("unit_id"))
+            elif action in {"exclude", "allow", "unpin", "unpin-voice"}:
+                drafting.selection(
+                    request.user,
+                    session.id,
+                    action,
+                    request.POST.get("source_id"),
+                    request.POST.get("pin_id"),
+                )
+            elif action == "cancel-generation":
+                attempt = services.owned(
+                    request.user, m.DraftGeneration, request.POST.get("generation_id")
+                )
+                if attempt.session_id != session.id:
+                    raise Http404
+                drafting.cancel(request.user, attempt.id)
+            elif action == "restore":
+                drafting.restore(
+                    request.user,
+                    session.id,
+                    request.POST.get("revision_id"),
+                    int(request.POST.get("revision", 0)),
+                )
             elif action == "generate":
-                workflow.generate(
+                generate = (
+                    drafting.enqueue
+                    if request.POST.get("background") == "on"
+                    or settings.APP["drafting_backend"] == "bedrock"
+                    else workflow.generate
+                )
+                generate(
                     request.user,
                     session.id,
                     request.POST.get("prompt", ""),
                     refresh_evidence=request.POST.get("refresh_evidence") == "on",
+                    expected_revision=int(request.POST.get("revision", session.revision)),
+                    task={
+                        key: request.POST.get(key, default)
+                        for key, default in {
+                            "mode": "section",
+                            "audience": "Proposal reviewer",
+                            "length": "Brief",
+                            "assertions": "",
+                        }.items()
+                    },
                 )
             elif action == "edit":
                 workflow.edit(
@@ -328,6 +383,7 @@ def writing(request, object_id):
                     session.id,
                     request.POST.get("format", "markdown"),
                     request.build_absolute_uri("/"),
+                    source_appendix=request.POST.get("source_appendix", "on") == "on",
                 )
                 content_type = (
                     "text/markdown; charset=utf-8"
@@ -340,7 +396,17 @@ def writing(request, object_id):
             else:
                 raise ValueError("Unknown writing action")
         except (ValueError, ValidationError) as exc:
-            return conflict(exc)
+            return render(
+                request,
+                "proposal_app/writing_conflict.html",
+                {
+                    "session": session,
+                    "error": str(exc),
+                    "submitted_text": request.POST.get("text", ""),
+                    "submitted_prompt": request.POST.get("prompt", ""),
+                },
+                status=409,
+            )
         query = request.POST.get("query", "")
         suffix = "?" + urlencode({"q": query}) if query else ""
         return HttpResponseRedirect(request.path + suffix)
@@ -359,6 +425,7 @@ def writing(request, object_id):
     }
     pin_displays = [
         {
+            "id": pin.id,
             "title": pin.artifact.unit.version.source.display_path,
             "text": (
                 workflow.artifact_text(eligible[pin.artifact_id])
@@ -369,18 +436,78 @@ def writing(request, object_id):
         }
         for pin in pins
     ]
+    excluded = list(m.EvidenceExclusion.objects.filter(session=session).select_related("source"))
+    excluded_ids = {row.source_id for row in excluded}
+    for pin, display in zip(pins, pin_displays):
+        if pin.artifact.unit.version.source_id in excluded_ids:
+            display["eligible"] = False
+            display["text"] = ""
+    filters = {
+        key: request.GET.get(key, "")
+        for key in ("proposal", "source_role", "chemistry", "temporal_meaning", "content_use")
+    }
+    view = request.GET.get("view", "evidence")
+    try:
+        results = evidence.browse(
+            request.user,
+            session.collection_id,
+            query,
+            view=view,
+            filters=filters,
+            excluded=[str(row.source_id) for row in excluded],
+        )
+    except ValueError as exc:
+        return conflict(exc)
+    current_voice = {
+        row["unit_id"]: row
+        for row in evidence.voice_items(request.user, session.collection_id)
+        if row["source_id"] not in {str(pk) for pk in excluded_ids}
+    }
+    voice_pins = [
+        {"id": pin.id, "unit_id": str(pin.unit_id), "current": current_voice.get(str(pin.unit_id))}
+        for pin in m.VoicePin.objects.filter(session=session)
+    ]
+    comparison = ""
+    if request.GET.get("compare") and latest:
+        import difflib
+
+        prior = services.owned(request.user, m.DraftRevision, request.GET["compare"])
+        if prior.session_id != session.id:
+            raise Http404
+        comparison = "\n".join(
+            difflib.unified_diff(
+                prior.text.splitlines(),
+                latest.text.splitlines(),
+                fromfile=f"Revision {prior.number}",
+                tofile=f"Revision {latest.number}",
+                lineterm="",
+            )
+        )
     return render(
         request,
         "proposal_app/writing.html",
         {
             "session": session,
             "query": query,
-            "results": workflow.search(request.user, session.collection_id, query),
+            "results": results,
+            "view": view,
+            "filters": filters,
+            "excluded": excluded,
+            "voice_pins": voice_pins,
+            "attempts": m.DraftGeneration.objects.filter(session=session).order_by("-created_at")[
+                :10
+            ],
+            "comparison": comparison,
             "pins": pin_displays,
             "latest": latest,
+            "historical": latest is not None and not drafting._current(request.user, latest.packet),
             "revisions": m.DraftRevision.objects.filter(session=session).order_by("-number"),
             "retrieval_label": workflow.LOCAL_RETRIEVAL_LABEL,
-            "drafting_label": workflow.LOCAL_DRAFTING_LABEL,
+            "drafting_label": (
+                workflow.LOCAL_DRAFTING_LABEL
+                if settings.APP["drafting_backend"] == "local"
+                else "Bedrock drafting (budgeted worker)"
+            ),
         },
     )
 
@@ -390,6 +517,7 @@ DRAFT_MODELS = {
     "revisions": m.DraftRevision,
     "packets": m.EvidencePacket,
     "exports": m.DraftExport,
+    "generations": m.DraftGeneration,
 }
 
 
@@ -426,6 +554,9 @@ def draft(request, kind, object_id, action="read"):
         data.update(text=obj.text, number=obj.number)
     elif isinstance(obj, m.EvidencePacket):
         data["payload"] = obj.payload
+        data["model_request"] = obj.model_request
+    elif isinstance(obj, m.DraftGeneration):
+        data.update(state=obj.state, reason=obj.reason)
     return JsonResponse(data)
 
 
@@ -449,6 +580,7 @@ def artifact(request, object_id):
     if obj is None:
         raise Http404
     services.authorize(request.user, obj.generation.proposal.collection_id)
+    neighbors, versions = evidence.context_and_versions(obj.unit)
     return render(
         request,
         "proposal_app/artifact.html",
@@ -456,8 +588,29 @@ def artifact(request, object_id):
             "artifact": obj,
             "locator_label": workflow.locator_label(obj.unit.locator),
             "curated_text": workflow.artifact_text(obj),
-            "withdrawn": not obj.eligible or obj.generation.state != "active",
+            "withdrawn": not services.factual_artifacts(
+                request.user, obj.generation.proposal.collection_id, [obj.id]
+            ).exists(),
+            "neighbors": neighbors,
+            "versions": versions,
+            "details": evidence.factual_item(obj),
         },
+    )
+
+
+@require_GET
+def packet_citation(request, packet_id, citation_id):
+    packet = services.owned(request.user, m.EvidencePacket, packet_id)
+    row = next((row for row in packet.payload if row.get("citation_id") == citation_id), None)
+    if row is None:
+        raise Http404
+    current = services.factual_artifacts(
+        request.user, packet.session.collection_id, [row["artifact_id"]]
+    ).exists()
+    return render(
+        request,
+        "proposal_app/citation.html",
+        {"packet": packet, "row": row, "historical": not current},
     )
 
 

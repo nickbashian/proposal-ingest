@@ -64,6 +64,7 @@ def create_job(user, collection_id, key, *, kind="fixture", payload=None):
 def control_job(user, job_id, action):
     job = m.Job.objects.select_for_update().get(pk=job_id)
     authorize(user, job.collection_id)
+    authorize_private_job(user, job)
     if action not in {"pause", "resume", "cancel"}:
         raise ValueError("Unknown action")
     if job.state in {"succeeded", "canceled", "failed"}:
@@ -93,6 +94,14 @@ def control_job(user, job_id, action):
     return job
 
 
+def authorize_private_job(user, job):
+    if job.kind == "draft-generation":
+        attempt = m.DraftGeneration.objects.filter(provider_job=job).first()
+        if attempt is None:
+            raise Http404
+        owned(user, m.DraftGeneration, attempt.id)
+
+
 @transaction.atomic
 def create_draft(user, collection_id, title):
     authorize(user, collection_id)
@@ -105,6 +114,13 @@ def revise_draft(user, session_id, expected_revision, text, packet_id=None):
     session = m.DraftSession.objects.select_for_update().get(pk=session.id)
     if session.deleted_at or session.revision != expected_revision:
         raise ValueError("Draft changed; refresh before editing")
+    if packet_id is None:
+        packet_id = (
+            m.DraftRevision.objects.filter(session=session)
+            .order_by("-number")
+            .values_list("packet_id", flat=True)
+            .first()
+        )
     if packet_id:
         packet = owned(user, m.EvidencePacket, packet_id)
         if packet.session_id != session.id:
@@ -114,10 +130,23 @@ def revise_draft(user, session_id, expected_revision, text, packet_id=None):
     session.revision += 1
     session.save()
     revision = m.DraftRevision.objects.create(
-        session=session, number=session.revision, packet=packet, text=text
+        session=session,
+        number=session.revision,
+        packet=packet,
+        text=text,
+        checks=_draft_checks(text, packet),
+        reuse_state="needs_review",
     )
     m.AuditRecord.objects.create(actor=user, action="draft.revised", object_id=revision.id)
     return revision
+
+
+def _draft_checks(text, packet):
+    from .drafting import claim_checks
+
+    if len(text) > settings.APP["drafting_max_text_chars"]:
+        raise ValueError("Draft exceeds the configured text limit")
+    return claim_checks(text, packet.payload, packet.model_request)
 
 
 @transaction.atomic
@@ -148,7 +177,13 @@ def draft_action(user, model, object_id, action, *, text="", expected_revision=0
         )
         if revision is None:
             raise ValueError("No saved revision")
-        return m.DraftExport.objects.create(revision=revision, text=revision.text)
+        from .drafting import _current
+        from .writing_export import render_revision
+
+        return m.DraftExport.objects.create(
+            revision=revision,
+            text=render_revision(revision, "text", historical=not _current(user, revision.packet)),
+        )
     if action == "regenerate":
         # Ownership is enforced now; model generation is MVP-02/07.
         raise ValueError("Draft generation adapter is not enabled")

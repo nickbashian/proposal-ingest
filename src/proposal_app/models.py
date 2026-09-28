@@ -520,6 +520,7 @@ class EvidencePacket(Record):
     session = models.ForeignKey(DraftSession, on_delete=models.PROTECT)
     payload = models.JSONField(default=list)
     policy_revision = models.CharField(max_length=100)
+    model_request = models.JSONField(default=dict, db_default={})
 
 
 class EvidencePin(Record):
@@ -540,6 +541,8 @@ class DraftRevision(Record):
     text = models.TextField()
     model_revision = models.CharField(max_length=100, blank=True)
     prompt_revision = models.CharField(max_length=100, blank=True)
+    checks = models.JSONField(default=list, db_default=[])
+    reuse_state = models.CharField(max_length=30, default="needs_review", db_default="needs_review")
 
     class Meta:
         constraints = [models.UniqueConstraint(fields=["session", "number"], name="draft_revision")]
@@ -548,6 +551,39 @@ class DraftRevision(Record):
 class DraftExport(Record):
     revision = models.ForeignKey(DraftRevision, on_delete=models.PROTECT)
     text = models.TextField()
+
+
+class VoicePin(Record):
+    session = models.ForeignKey(DraftSession, on_delete=models.PROTECT)
+    unit = models.ForeignKey(ExtractedUnit, on_delete=models.PROTECT)
+    plan = models.ForeignKey(CurationPlan, on_delete=models.PROTECT)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=["session", "unit"], name="session_voice_pin")
+        ]
+
+
+class EvidenceExclusion(Record):
+    session = models.ForeignKey(DraftSession, on_delete=models.PROTECT)
+    source = models.ForeignKey(SourceItem, on_delete=models.PROTECT)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=["session", "source"], name="session_source_exclusion")
+        ]
+
+
+class DraftGeneration(Record):
+    session = models.ForeignKey(DraftSession, on_delete=models.PROTECT)
+    packet = models.ForeignKey(EvidencePacket, on_delete=models.PROTECT)
+    expected_revision = models.PositiveIntegerField()
+    state = models.CharField(max_length=30, default="queued")
+    started_at = models.DateTimeField(null=True)
+    finished_at = models.DateTimeField(null=True)
+    reason = models.CharField(max_length=100, blank=True)
+    result_revision = models.ForeignKey(DraftRevision, on_delete=models.PROTECT, null=True)
+    provider_job = models.OneToOneField(Job, on_delete=models.PROTECT, null=True)
 
 
 class EvaluationRun(Record):

@@ -9,6 +9,7 @@ from the private archive.
 | `fake_source_root/` | Scanner, extraction, review-loop, and mock-pipeline tests | Hand-created synthetic office files and tracker rows |
 | `quality_benchmark/` | Deterministic proposal-level quality and exclusion tests | Hand-created fictional battery-proposal scenarios |
 | `application_slice/` | MVP-02 review, publication, retrieval, drafting, and export workflow | Hand-created fictional passages with one exclusion and one voice-only item |
+| `application_slice/writing.json` | MVP-07 five-mode writing, conflicting quantities, separate approved voice, and prompt-injection exclusion | Hand-created fictional sodium-cell prose; all numbers are invented; attacker URL is reserved `.invalid` |
 
 Before adding or changing a fixture:
 
