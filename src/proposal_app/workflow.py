@@ -439,6 +439,8 @@ def generate(
 ) -> m.DraftRevision:
     from . import drafting
 
+    if settings.APP["drafting_backend"] != "local":
+        raise ValueError("Synchronous generation requires the local drafting backend")
     attempt = drafting.enqueue(
         user,
         session_id,

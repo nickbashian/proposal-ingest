@@ -6,7 +6,7 @@ from decimal import Decimal
 from pathlib import Path
 
 from django.conf import settings
-from django.core.exceptions import PermissionDenied
+from django.core.exceptions import PermissionDenied, ValidationError
 from django.db import transaction
 from django.http import Http404
 from django.utils import timezone
@@ -28,7 +28,10 @@ def authorize(user, collection_id):
 
 def owned(user, model, object_id):
     """Resolve ownership from the parent chain, never from submitted owner/collection IDs."""
-    obj = model.objects.filter(pk=object_id).first()
+    try:
+        obj = model.objects.filter(pk=object_id).first()
+    except (ValidationError, ValueError, TypeError):
+        raise Http404 from None
     if obj is None:
         raise Http404
     session = (

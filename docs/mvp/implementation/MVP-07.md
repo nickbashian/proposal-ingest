@@ -95,7 +95,20 @@ and verified the comparison and exact saved citation in the browser. Updating th
 preserved the original 92% excerpt and visibly marked it historical and withdrawn for new
 use. Synthetic screenshots and raw CLI output stay in ignored local `tmp/`.
 
-The CodeRabbit follow-up remains pending: automatic approval review rejected the external
-code upload even after the outgoing source/fixture set and passing secrets scan were
-verified. An explicit owner approval request is pending. The initial review is not claimed
-as final-diff review; no review waiver or merge approval is inferred.
+## Follow-up review
+
+Nicholas explicitly approved CodeRabbit on September 29, 2026, requesting local CLI
+review before PR creation. The local follow-up covered the complete committed diff at
+`01227ba` against merged `main` and completed with three findings:
+
+- Malformed comparison IDs: fixed in the shared ownership resolver so invalid UUIDs
+  return 404; browser-route regression retains cross-session denial.
+- Revision counter update preceding validation: already protected by `transaction.atomic`.
+  A regression proves a rejected oversized edit rolls back the counter, packet, and revision.
+- Synchronous/fixture routes could enqueue paid work: fixed with early local-backend guards.
+  A regression enables the Bedrock opt-in and proves these routes create no job, packet,
+  or fixture source.
+
+The final correction review and refreshed canonical gate are recorded in the PR handoff.
+The local report covers the full proposed diff; GitHub re-review is not requested solely
+for organizational or duplicate findings. Nicholas retains the merge decision.

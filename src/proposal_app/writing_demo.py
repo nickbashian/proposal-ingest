@@ -10,7 +10,11 @@ from . import curation, drafting, models as m, services, workflow
 
 
 def load(user, collection):
-    if settings.MODE != "local" or settings.APP["publication_backend"] != "local":
+    if (
+        settings.MODE != "local"
+        or settings.APP["publication_backend"] != "local"
+        or settings.APP["drafting_backend"] != "local"
+    ):
         raise PermissionDenied("Writing fixture is local only")
     fixture = json.loads(
         (settings.ROOT / settings.APP["drafting_demo_path"]).read_text(encoding="utf-8")

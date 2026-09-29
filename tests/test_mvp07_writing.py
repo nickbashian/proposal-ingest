@@ -554,6 +554,43 @@ def test_direct_edit_and_export_preserve_packet_and_safe_links(writing_corpus):
         {"action": "edit", "revision": 1, "text": "Unsaved stale-tab text"},
     )
     assert conflict.status_code == 409 and b"Unsaved stale-tab text" in conflict.content
+    assert (
+        client.get(reverse("writing", args=[session.id]), {"compare": "invalid-uuid"}).status_code
+        == 404
+    )
+
+
+def test_synchronous_and_fixture_routes_cannot_queue_paid_work(slice_owner, settings, monkeypatch):
+    from django.core.exceptions import PermissionDenied
+
+    user, collection = slice_owner
+    session = services.create_draft(user, collection.id, "Local-only route")
+    settings.APP = {
+        **settings.APP,
+        "drafting_backend": "bedrock",
+        "drafting_reservation_usd": "0.01",
+    }
+    monkeypatch.setenv("PROPOSAL_LIVE_DRAFTING_ENABLED", "true")
+    with pytest.raises(ValueError, match="local drafting backend"):
+        workflow.generate(user, session.id, "Describe results")
+    with pytest.raises(PermissionDenied):
+        writing_demo.rehearse(user, collection)
+    assert not m.Job.objects.exists()
+    assert not m.EvidencePacket.objects.exists()
+    assert not m.SourceItem.objects.exists()
+
+
+def test_rejected_revision_rolls_back_session_and_packet(slice_owner, settings):
+    user, collection = slice_owner
+    session = services.create_draft(user, collection.id, "Atomic edit")
+    with pytest.raises(ValueError, match="configured text limit"):
+        services.revise_draft(
+            user, session.id, 0, "x" * (settings.APP["drafting_max_text_chars"] + 1)
+        )
+    session.refresh_from_db()
+    assert session.revision == 0
+    assert not m.DraftRevision.objects.exists()
+    assert not m.EvidencePacket.objects.exists()
 
 
 def test_heading_claims_and_historical_exports_cannot_look_ready(writing_corpus):
