@@ -383,7 +383,10 @@ def test_five_fictional_tasks_edited_revision_and_injection_exclusion(slice_owne
     )
 
 
-@pytest.mark.parametrize("outcome", ["success", "tool", "stale", "budget", "client-failure"])
+@pytest.mark.parametrize(
+    "outcome",
+    ["success", "tool", "stale", "budget", "client-failure", "empty-blocks", "blank-text"],
+)
 def test_bedrock_wire_request_budget_delivery_and_private_job_access(
     writing_corpus, settings, monkeypatch, outcome
 ):
@@ -416,10 +419,10 @@ def test_bedrock_wire_request_budget_delivery_and_private_job_access(
             block = (
                 {"toolUse": {"name": "exfiltrate"}}
                 if outcome == "tool"
-                else {"text": "Measured 99% retention. [C1]"}
+                else {"text": "   " if outcome == "blank-text" else "Measured 99% retention. [C1]"}
             )
             return {
-                "output": {"message": {"content": [block]}},
+                "output": {"message": {"content": [] if outcome == "empty-blocks" else [block]}},
                 "stopReason": "end_turn",
                 "usage": {"inputTokens": 100, "outputTokens": 20},
             }
@@ -465,8 +468,53 @@ def test_bedrock_wire_request_budget_delivery_and_private_job_access(
                 attempt.state == "failed"
                 and not m.DraftRevision.objects.filter(session=session).exists()
             )
-        if outcome == "tool":
+        if outcome in {"tool", "empty-blocks", "blank-text"}:
             assert ledger.state == "unknown"
+
+
+def test_worker_schedules_drafts_during_continuous_job_work(monkeypatch):
+    from django.core.management import call_command
+    from proposal_app.management.commands import worker
+
+    calls = []
+    monkeypatch.setattr(worker, "work_once", lambda: True)
+    monkeypatch.setattr(worker, "draft_once", lambda: calls.append("draft") or True)
+    call_command("worker", once=True)
+    assert calls == ["draft"]
+
+
+def test_cancel_generation_after_provider_job_became_terminal(
+    writing_corpus, settings, monkeypatch
+):
+    user, _, session, _ = writing_corpus
+    settings.APP = {
+        **settings.APP,
+        "drafting_backend": "bedrock",
+        "drafting_reservation_usd": "0.01",
+    }
+    monkeypatch.setenv("PROPOSAL_LIVE_DRAFTING_ENABLED", "true")
+    attempt = drafting.enqueue(user, session.id, "Describe results")
+    m.Job.objects.filter(pk=attempt.provider_job_id).update(state="failed")
+    drafting.cancel(user, attempt.id)
+    attempt.refresh_from_db()
+    assert attempt.state == "canceled"
+    assert m.Job.objects.get(pk=attempt.provider_job_id).state == "failed"
+
+
+def test_packet_chain_reuses_current_voice_lookup(writing_corpus, monkeypatch):
+    user, _, session, _ = writing_corpus
+    workflow.generate(user, session.id, "Describe results")
+    latest = workflow.generate(user, session.id, "Revise results")
+    calls = []
+    original = evidence.voice_items
+
+    def voice_lookup(*args):
+        calls.append(1)
+        return original(*args)
+
+    monkeypatch.setattr(evidence, "voice_items", voice_lookup)
+    assert drafting._current(user, latest.packet)
+    assert calls == [1]
 
 
 def test_eligible_source_instructions_and_markup_stay_data(slice_owner, monkeypatch):
@@ -625,7 +673,8 @@ def test_empty_scientific_scope_and_bare_export_urls(writing_corpus):
         user,
         session.id,
         1,
-        "See https://attacker.example.invalid/private and www.attacker.invalid. [C1]",
+        "See https://attacker.example.invalid/private and www.attacker.invalid. [C1] "
+        f"[https://attacker.invalid]({first.packet.payload[0]['source_url']})",
     )
     for format in ("markdown", "text"):
         _, exported, _ = workflow.export(user, session.id, format, "https://app.example.test/")

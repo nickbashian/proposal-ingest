@@ -212,24 +212,16 @@ def check_state(checks):
     return "needs_review" if checks else "ready_for_reuse"
 
 
-def _packet_current(user, packet):
+def _packet_current(user, packet, *, excluded, voices):
     from .publication import validate_packet
 
     request = packet.model_request
     if not validate_packet(user, packet.session.collection_id, packet.payload):
         return False
-    excluded = set(
-        m.EvidenceExclusion.objects.filter(session=packet.session).values_list(
-            "source_id", flat=True
-        )
-    )
-    if any(row.get("source_id") in {str(pk) for pk in excluded} for row in packet.payload):
+    if any(row.get("source_id") in excluded for row in packet.payload):
         return False
-    voices = {
-        row["unit_id"]: row for row in evidence.voice_items(user, packet.session.collection_id)
-    }
     for row in request.get("voice", []):
-        if row.get("source_id") in {str(pk) for pk in excluded}:
+        if row.get("source_id") in excluded:
             return False
         current = voices.get(row["unit_id"])
         if current is None or any(
@@ -244,11 +236,20 @@ def _current(user, packet):
     """Revalidate the evidence behind all reused draft text, without resending its excerpts."""
     visited = set()
     session_id = packet.session_id
+    excluded = {
+        str(pk)
+        for pk in m.EvidenceExclusion.objects.filter(session_id=session_id).values_list(
+            "source_id", flat=True
+        )
+    }
+    voices = {
+        row["unit_id"]: row for row in evidence.voice_items(user, packet.session.collection_id)
+    }
     while packet is not None:
         if (
             packet.id in visited
             or packet.session_id != session_id
-            or not _packet_current(user, packet)
+            or not _packet_current(user, packet, excluded=excluded, voices=voices)
         ):
             return False
         visited.add(packet.id)
@@ -561,15 +562,16 @@ def work_once():
 @transaction.atomic
 def cancel(user, generation_id):
     attempt = services.owned(user, m.DraftGeneration, generation_id)
+    provider_job = None
     if attempt.provider_job_id:
-        m.Job.objects.select_for_update().get(pk=attempt.provider_job_id)
+        provider_job = m.Job.objects.select_for_update().get(pk=attempt.provider_job_id)
     m.DraftSession.objects.select_for_update().get(pk=attempt.session_id)
     attempt = m.DraftGeneration.objects.select_for_update().get(pk=attempt.id)
     if attempt.state not in {"queued", "running"}:
         raise ValueError("Generation already finished")
     attempt.state, attempt.finished_at = "canceled", timezone.now()
     attempt.save(update_fields=["state", "finished_at"])
-    if attempt.provider_job_id:
+    if provider_job is not None and provider_job.state not in {"succeeded", "canceled", "failed"}:
         services.control_job(user, attempt.provider_job_id, "cancel")
 
 
@@ -619,12 +621,17 @@ class BedrockDraftJobAdapter:
             response = self.client.converse(**attempt.packet.model_request["wire_request"])
             blocks = response["output"]["message"]["content"]
             if (
-                any(set(block) != {"text"} for block in blocks)
+                not blocks
+                or any(set(block) != {"text"} for block in blocks)
                 or response.get("stopReason") != "end_turn"
             ):
                 raise ProviderFailure("invalid_draft_response", unknown=True)
             text = "".join(block["text"] for block in blocks)
-            if not isinstance(text, str) or len(text) > settings.APP["drafting_max_text_chars"]:
+            if (
+                not isinstance(text, str)
+                or not text.strip()
+                or len(text) > settings.APP["drafting_max_text_chars"]
+            ):
                 raise ProviderFailure("invalid_draft_response", unknown=True)
         except ProviderFailure:
             raise

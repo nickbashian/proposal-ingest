@@ -35,7 +35,9 @@ def render_revision(
 
     def link(label, path):
         destination = urljoin(base_url, path) if base_url else path
-        return f"[{escape(label)}]({destination})" if markdown else f"{label}: {destination}"
+        return (
+            f"[{escape(label)}]({destination})" if markdown else f"{escape(label)}: {destination}"
+        )
 
     rows = revision.packet.payload
     allowed = {

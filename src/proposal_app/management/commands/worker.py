@@ -19,8 +19,8 @@ class Command(BaseCommand):
             worked = work_once()
             if not worked:
                 worked = reconcile_once()
-            if not worked:
-                worked = draft_once()
+            drafted = draft_once()
+            worked = worked or drafted
             if options["once"]:
                 return
             if not worked:

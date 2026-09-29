@@ -62,7 +62,7 @@ or closing. These are proposed real cases, not completed real evaluations.
 The documented `.venv/Scripts/python.exe scripts/dev.py check` is the canonical
 `make check` fallback on this shell: `make` remained unresolved after refreshing persistent
 Machine/User PATH. PostgreSQL on loopback 54329 was used; no reinstall was needed.
-The final local gate passed: 610 tests, including browser, PostgreSQL ownership/immutability,
+The final local gate passed: 617 tests, including browser, PostgreSQL ownership/immutability,
 and injected provider contracts; formatting, lint, spelling, typing, secrets, configuration,
 and migration-drift checks also passed. The separate synthetic mock pipeline passed. Ordinary checks and demonstration use synthetic
 data and deterministic/injected adapters. No AWS/private transfer/deployment is claimed.
@@ -112,3 +112,19 @@ review before PR creation. The local follow-up covered the complete committed di
 The final correction review and refreshed canonical gate are recorded in the PR handoff.
 The local report covers the full proposed diff; GitHub re-review is not requested solely
 for organizational or duplicate findings. Nicholas retains the merge decision.
+
+## Final correction verification
+
+The full-diff review covering the code committed as `67f3c91` produced six additional
+findings. Five were verified and corrected: always service local drafting during a busy
+worker loop; reject empty/whitespace provider responses; sanitize plain-text citation
+labels; permit generation cancellation after its provider job is terminal; and reuse
+one current voice/exclusion lookup across the prior-packet chain. Regression coverage
+checks each behavior. The suggestion to support multiple version families inside the
+isolated fictional demo is deferred: its dedicated fixture establishes one named family;
+this does not affect production ingestion or writing ownership.
+
+A final local CLI review of just these four changed code/test files completed with zero
+findings. Combined with the preceding complete-diff review, it covers the final code.
+Only verification/report text was updated afterward. No additional full-diff or GitHub
+review was requested for nonblocking fixture organization or duplicate comments.
