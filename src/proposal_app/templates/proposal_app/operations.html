@@ -1,0 +1,11 @@
+{% extends "proposal_app/base.html" %}{% block content %}
+<h1>Operations</h1>
+<p>{{ summary.job_count }} visible jobs. Refresh this page for current worker progress.</p>
+<h2>Job states</h2>
+<table><tr><th>State</th><th>Jobs</th></tr>{% for state, count in summary.states.items %}<tr><td>{{ state }}</td><td>{{ count }}</td></tr>{% empty %}<tr><td colspan="2">No jobs yet.</td></tr>{% endfor %}</table>
+<h2>Usage by task</h2>
+<p>Accounted cost includes conservative charges for uncertain calls. Recorded provider cost includes only reported calls; check the unreported count before comparing totals. Amounts are USD estimates, not reconciled billing.</p>
+<table><tr><th>Task</th><th>Jobs</th><th>Calls</th><th>Reserved</th><th>Accounted</th><th>Recorded</th><th>Unreported calls</th></tr>{% for row in summary.spending %}<tr><td>{{ row.kind }}</td><td>{{ row.jobs }}</td><td>{{ row.calls }}</td><td>{{ row.reserved }}</td><td>{{ row.accounted }}</td><td>{{ row.recorded|default_if_none:"Not reported" }}</td><td>{{ row.unreported }}</td></tr>{% empty %}<tr><td colspan="7">No provider calls recorded.</td></tr>{% endfor %}</table>
+<h2>Recent work</h2>
+<table><tr><th>Task</th><th>State</th><th>Attempts</th><th>Stop code</th><th>Opened</th></tr>{% for job in summary.recent %}<tr><td><a href="/jobs/{{ job.id }}/">{{ job.kind }}</a></td><td>{{ job.state }}</td><td>{{ job.attempts }}</td><td>{{ job.stop_reason|default:"—" }}</td><td>{{ job.created_at }}</td></tr>{% empty %}<tr><td colspan="5">No jobs yet.</td></tr>{% endfor %}</table>
+{% endblock %}

@@ -79,6 +79,11 @@ def schedule(user, run_id, *, mock=False, max_spend_usd="0"):
         raise ValueError("Live classification requires explicit operator opt-in")
     if (
         not mock
+        and not str(settings.APP["classification_routes"]["baseline"]["model_id"] or "").strip()
+    ):
+        raise ValueError("Live classification requires an explicit Bedrock model/profile ID")
+    if (
+        not mock
         and Decimal(str(settings.APP["classification_estimate_usd_per_call"]["baseline"] or 0)) <= 0
     ):
         raise ValueError("Live classification requires a configured per-call estimate")

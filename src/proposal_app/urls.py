@@ -10,6 +10,11 @@ urlpatterns = [
     path("logout/", auth.sign_out),
     path("", views.home),
     path("collections/<uuid:collection_id>/", views.collection, name="collection"),
+    path(
+        "collections/<uuid:collection_id>/operations/",
+        views.operations_dashboard,
+        name="operations",
+    ),
     path("collections/<uuid:collection_id>/review/", views.review_queue, name="review-queue"),
     path("decisions/<uuid:decision_id>/", views.review_decision, name="review-decision"),
     path("collections/<uuid:collection_id>/drafts/", views.new_draft),

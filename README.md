@@ -5,6 +5,14 @@ The September 2026 product build follows [the MVP implementation playbook](docs/
 the development baseline, a private drafting application, live integrations, and bounded 2025
 expansion. MVP numbering is separate from the historical CLI phases.
 
+MVP-00 through MVP-07 are merged. MVP-08 deployment and operations are in progress;
+the remaining live connections and owner decisions are organized in the
+[finish-line session agenda](docs/mvp/implementation/FINISH_LINE_SESSION.md).
+The [MVP-09 acceptance harness](https://github.com/nickbashian/proposal-ingest/pull/24)
+and [MVP-10 expansion planner](https://github.com/nickbashian/proposal-ingest/pull/25)
+are draft offline preparations. Neither draft establishes live acceptance or
+authorizes full-year processing.
+
 Local-first document ingestion and metadata pipeline for a historical grant/proposal archive.
 
 ## What this tool does
@@ -19,11 +27,12 @@ Local-first document ingestion and metadata pipeline for a historical grant/prop
 - Synthesizes proposal-branch folder metadata and Markdown summaries.
 - Exports a clean mirrored document set ready for future S3 upload and RAG ingestion.
 
-## What this tool does NOT do
+## What the legacy CLI does not do
 
 - It never modifies source files (read-only).
 - It does not perform OCR (out of scope for MVP).
-- It does not upload anything to S3 (it generates a manifest only).
+- Its manifest export does not upload documents to S3; the newer application
+  publishes curated artifacts separately when its Managed KB connection is enabled.
 - It does not process PowerPoints directly by default (they are inventoried; PDFs take priority).
 - It does not run without explicit configuration (no defaults assume a particular machine).
 - It does not commit `.env`, source documents, processed output, logs, or raw model responses.
@@ -339,9 +348,10 @@ processed_output/
 ## Implementation status
 
 The active product roadmap is [MVP-00 through MVP-10 plus MVP-05b](docs/mvp/README.md).
-MVP-00 through MVP-05 are merged. The next card, MVP-05b, connects Bedrock-assisted tagging to
-routine document ingestion and exception-focused review before MVP-06 publishes eligible excerpts.
-Later work must follow the acceptance boundaries in `docs/mvp/PR_PLAYBOOK.md`.
+MVP-00 through MVP-07, including MVP-05b, are merged. The next card is MVP-08: offline
+deployment, operations, and recovery preparation, followed by a focused live connection session.
+The merged work has synthetic acceptance evidence; live SharePoint, AWS, and private-corpus
+acceptance remain pending. Later work follows `docs/mvp/PR_PLAYBOOK.md`.
 
 The reusable CLI prototype predates that roadmap. Its historical phases 1–12 and 14–16 are
 implemented; its 2024 Phase 13 pilot remains a separate, incomplete historical effort and is not a

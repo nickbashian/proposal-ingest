@@ -8,14 +8,36 @@ from urllib.parse import parse_qsl, unquote, urlparse
 
 from django.core.exceptions import ImproperlyConfigured
 
-from proposal_ingest.config import load_web_application_defaults
+from proposal_ingest.config import PROJECT_ROOT, load_web_application_defaults
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = PROJECT_ROOT
 APP = load_web_application_defaults()
 APP["drafting_backend"] = os.environ.get("PROPOSAL_DRAFTING_BACKEND", APP["drafting_backend"])
+APP["drafting_model_id"] = os.environ.get("BEDROCK_DRAFTING_MODEL_ID", APP["drafting_model_id"])
 APP["drafting_reservation_usd"] = os.environ.get(
     "PROPOSAL_DRAFTING_RESERVATION_USD", APP["drafting_reservation_usd"]
 )
+APP["classification_routes"]["baseline"]["model_id"] = os.environ.get(
+    "BEDROCK_CLASSIFICATION_MODEL_ID", APP["classification_routes"]["baseline"]["model_id"]
+)
+classification_estimate_override = os.environ.get(
+    "BEDROCK_CLASSIFICATION_ESTIMATE_USD_PER_CALL", ""
+).strip()
+if classification_estimate_override:
+    classification_estimate: Decimal | None
+    try:
+        classification_estimate = Decimal(classification_estimate_override)
+    except InvalidOperation:
+        classification_estimate = None
+    if (
+        classification_estimate is None
+        or not classification_estimate.is_finite()
+        or classification_estimate <= 0
+    ):
+        raise ImproperlyConfigured(
+            "BEDROCK_CLASSIFICATION_ESTIMATE_USD_PER_CALL must be finite and positive"
+        )
+    APP["classification_estimate_usd_per_call"]["baseline"] = str(classification_estimate)
 if APP["drafting_backend"] not in {"local", "bedrock"}:
     raise ImproperlyConfigured("PROPOSAL_DRAFTING_BACKEND is invalid")
 if any(
@@ -95,12 +117,15 @@ ALLOWED_HOSTS = (
 )
 if MODE == "production" and (not all(ALLOWED_HOSTS) or "*" in ALLOWED_HOSTS):
     raise ImproperlyConfigured("Production requires explicit PROPOSAL_ALLOWED_HOSTS")
+trust_proxy_ssl = os.environ.get("PROPOSAL_TRUST_PROXY_SSL_HEADER", "false").lower()
+if trust_proxy_ssl not in {"true", "false"}:
+    raise ImproperlyConfigured("PROPOSAL_TRUST_PROXY_SSL_HEADER must be true or false")
 database = urlparse(os.environ.get("DATABASE_URL", APP["development_database_url"]))
 if database.scheme not in {"postgres", "postgresql"}:
     raise ImproperlyConfigured("DATABASE_URL must identify PostgreSQL")
 query_pairs = parse_qsl(database.query, keep_blank_values=True)
 database_query = dict(query_pairs)
-if set(database_query) - {"sslmode"} or len(query_pairs) != len(database_query):
+if set(database_query) - {"sslmode", "sslrootcert"} or len(query_pairs) != len(database_query):
     raise ImproperlyConfigured("DATABASE_URL contains unsupported or repeated query parameters")
 if "sslmode" in database_query and database_query["sslmode"] not in {
     "disable",
@@ -113,6 +138,8 @@ if "sslmode" in database_query and database_query["sslmode"] not in {
     raise ImproperlyConfigured("DATABASE_URL contains an invalid sslmode")
 if MODE == "production" and database_query.get("sslmode") not in {"verify-ca", "verify-full"}:
     raise ImproperlyConfigured("Production DATABASE_URL requires a verifying sslmode")
+if MODE == "production" and not database_query.get("sslrootcert"):
+    raise ImproperlyConfigured("Production DATABASE_URL requires a trusted sslrootcert")
 DATABASES = {
     "default": {
         "ENGINE": "django.db.backends.postgresql",
@@ -128,6 +155,7 @@ INSTALLED_APPS = [
     "django.contrib.auth",
     "django.contrib.contenttypes",
     "django.contrib.sessions",
+    "django.contrib.staticfiles",
     "proposal_app",
 ]
 MIDDLEWARE = [
@@ -163,6 +191,22 @@ SESSION_COOKIE_AGE = APP["session_seconds"]
 SESSION_COOKIE_SECURE = MODE == "production"
 CSRF_COOKIE_SECURE = MODE == "production"
 SECURE_SSL_REDIRECT = MODE == "production"
+SECURE_PROXY_SSL_HEADER = (
+    ("HTTP_X_FORWARDED_PROTO", "https")
+    if MODE == "production" and trust_proxy_ssl == "true"
+    else None
+)
+CSRF_TRUSTED_ORIGINS = [
+    value.strip()
+    for value in os.environ.get("CSRF_TRUSTED_ORIGINS", "").split(",")
+    if value.strip()
+]
+if any(
+    urlparse(value).scheme != "https" or not urlparse(value).hostname
+    for value in CSRF_TRUSTED_ORIGINS
+):
+    raise ImproperlyConfigured("CSRF_TRUSTED_ORIGINS must contain HTTPS origins")
+STATIC_ROOT = ROOT / "staticfiles"
 SECURE_HSTS_SECONDS = 31536000 if MODE == "production" else 0
 SECURE_HSTS_INCLUDE_SUBDOMAINS = MODE == "production"
 SECURE_HSTS_PRELOAD = MODE == "production"

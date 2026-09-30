@@ -14,6 +14,7 @@ env/
 .env
 .env.*
 !.env.example
+!.env.production.example
 
 # Local confidential data — NEVER COMMIT
 source_documents/

@@ -1,0 +1,69 @@
+# Isolated restore project: separate database/object volumes and a nonoverlapping bridge subnet.
+name: proposal-ingest-recovery
+
+services:
+  database:
+    image: postgres:18.6-alpine3.24@sha256:77f585114c32fbca283dc835b0596f4e52b51b4c6662d7810b2f4084f60a1873
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:?Set POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER:?Set POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set_POSTGRES_PASSWORD}
+    command:
+      - postgres
+      - -c
+      - ssl=on
+      - -c
+      - ssl_min_protocol_version=TLSv1.2
+      - -c
+      - ssl_cert_file=/run/postgres-tls/server.crt
+      - -c
+      - ssl_key_file=/run/postgres-tls/server.key
+      - -c
+      - hba_file=/etc/postgresql/pg_hba.conf
+    volumes:
+      - database_data:/var/lib/postgresql
+      - ${PROPOSAL_TLS_DIR:?Set PROPOSAL_TLS_DIR}/postgres:/run/postgres-tls:ro
+      - ./postgres/pg_hba.conf:/etc/postgresql/pg_hba.conf:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    networks:
+      private:
+        ipv4_address: 172.31.0.2
+
+  web:
+    image: proposal-ingest:${APP_IMAGE_TAG:-local}
+    env_file: ${PROPOSAL_ENV_FILE:?Set PROPOSAL_ENV_FILE}
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@database:5432/${POSTGRES_DB}?sslmode=verify-full&sslrootcert=%2Frun%2Fpostgres-ca%2Fca.crt
+      PROPOSAL_LOCAL_STORAGE_ROOT: /var/lib/proposal-ingest/objects
+      PROPOSAL_APP_ENV: production
+      PROPOSAL_LOCAL_AUTH_ENABLED: "false"
+      PROPOSAL_TRUST_PROXY_SSL_HEADER: "true"
+      PROPOSAL_ALLOWED_HOSTS: ${PUBLIC_HOST:?Set PUBLIC_HOST}
+      CSRF_TRUSTED_ORIGINS: https://${PUBLIC_HOST:?Set PUBLIC_HOST}
+      PROPOSAL_PUBLICATION_HOLD: "true"
+    volumes:
+      - application_data:/var/lib/proposal-ingest
+      - ${PROPOSAL_TLS_DIR:?Set PROPOSAL_TLS_DIR}/postgres/ca.crt:/run/postgres-ca/ca.crt:ro
+      - static_data:/app/staticfiles
+    depends_on:
+      database:
+        condition: service_healthy
+    networks:
+      private:
+        ipv4_address: 172.31.0.3
+
+volumes:
+  database_data:
+  application_data:
+  static_data:
+
+networks:
+  private:
+    ipam:
+      config:
+        - subnet: 172.31.0.0/24

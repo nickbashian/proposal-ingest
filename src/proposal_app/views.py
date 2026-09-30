@@ -19,6 +19,7 @@ from . import (
     evidence,
     extraction_service,
     models as m,
+    operations,
     services,
     workflow,
 )
@@ -313,6 +314,12 @@ def job(request, object_id):
         "proposal_app/job.html",
         {"job": obj, "usage": m.UsageReservation.objects.filter(attempt__job=obj)},
     )
+
+
+@require_GET
+def operations_dashboard(request, collection_id):
+    summary = operations.dashboard(request.user, collection_id)
+    return render(request, "proposal_app/operations.html", {"summary": summary})
 
 
 @require_http_methods(["GET", "POST"])

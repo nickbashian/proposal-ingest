@@ -1,0 +1,17 @@
+# Production image receives only declared runtime inputs. Private corpora, local
+# environments, Git state, evaluation data, and backup material stay off the daemon.
+**
+!pyproject.toml
+!README.md
+!requirements-prod.lock
+!config/
+!config/default_config.yaml
+!config/knowledge_base_policies.yaml
+!prompts/
+!prompts/**
+!src/
+!src/**
+!scripts/
+!scripts/app_recovery.py
+src/**/__pycache__/
+src/**/*.pyc

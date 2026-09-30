@@ -1,0 +1,11 @@
+[Unit]
+Description=Daily encrypted off-host Proposal Knowledge Base backup
+
+[Timer]
+OnCalendar=daily
+Persistent=true
+RandomizedDelaySec=15m
+Unit=proposal-ingest-backup.service
+
+[Install]
+WantedBy=timers.target

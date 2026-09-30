@@ -636,7 +636,7 @@ def test_fixture_command_rejects_existing_nonlocal_identity():
     "query,production,valid",
     [
         ("sslmode=require", False, True),
-        ("sslmode=verify-full", True, True),
+        ("sslmode=verify-full&sslrootcert=%2Fprivate%2Fsynthetic-ca.crt", True, True),
         ("sslmode=prefer", True, False),
         ("sslmode=verify-full&sslmode=disable", True, False),
         ("unsupported=option", False, False),
@@ -660,9 +660,83 @@ def test_database_url_options_fail_closed(query, production, valid):
     assert (proc.returncode == 0) is valid
     if valid:
         options, hosts = json.loads(proc.stdout)
-        assert options["sslmode"] == query.split("=")[1]
+        assert (
+            options["sslmode"] == dict(pair.split("=", 1) for pair in query.split("&"))["sslmode"]
+        )
         if production:
+            assert options["sslrootcert"] == "/private/synthetic-ca.crt"
             assert hosts == ["app.example.test", "other.example.test"]
+
+
+@pytest.mark.parametrize(
+    "mode,trust,expected",
+    [
+        ("production", "true", ["HTTP_X_FORWARDED_PROTO", "https"]),
+        ("production", "false", None),
+        ("local", "true", None),
+    ],
+)
+def test_forwarded_https_header_requires_explicit_production_trust(mode, trust, expected):
+    env = dict(os.environ)
+    env.update(
+        PROPOSAL_APP_ENV=mode,
+        PROPOSAL_LOCAL_AUTH_ENABLED="false",
+        PROPOSAL_TRUST_PROXY_SSL_HEADER=trust,
+        DATABASE_URL=(
+            "postgresql://localhost/synthetic?sslmode=verify-full&"
+            "sslrootcert=%2Fprivate%2Fsynthetic-ca.crt"
+        ),
+        PROPOSAL_SECRET_KEY=uuid.uuid4().hex + uuid.uuid4().hex,
+        OIDC_ISSUER="https://identity.example.test/tenant/v2.0",
+        ENTRA_CLIENT_ID="synthetic",
+        ENTRA_CLIENT_SECRET="synthetic-test-only",
+        ENTRA_REDIRECT_URI="https://app.example.test/auth/callback/",
+        PROPOSAL_ALLOWED_HOSTS="app.example.test",
+    )
+    code = "import json; from proposal_app import settings; print(json.dumps(settings.SECURE_PROXY_SSL_HEADER))"
+    proc = subprocess.run([sys.executable, "-c", code], env=env, capture_output=True, text=True)
+    assert proc.returncode == 0, proc.stderr
+    assert json.loads(proc.stdout) == expected
+
+
+def test_provider_profile_and_cost_overrides_are_applied_and_validated():
+    env = dict(os.environ)
+    env.update(
+        PROPOSAL_APP_ENV="local",
+        BEDROCK_CLASSIFICATION_MODEL_ID="us.synthetic.classification-profile",
+        BEDROCK_CLASSIFICATION_ESTIMATE_USD_PER_CALL="0.125",
+        BEDROCK_DRAFTING_MODEL_ID="us.synthetic.drafting-profile",
+    )
+    code = (
+        "import json; from proposal_app import settings; "
+        "print(json.dumps([settings.APP['classification_routes']['baseline']['model_id'], "
+        "settings.APP['classification_estimate_usd_per_call']['baseline'], "
+        "settings.APP['drafting_model_id']]))"
+    )
+    proc = subprocess.run([sys.executable, "-c", code], env=env, capture_output=True, text=True)
+    assert proc.returncode == 0, proc.stderr
+    assert json.loads(proc.stdout) == [
+        "us.synthetic.classification-profile",
+        "0.125",
+        "us.synthetic.drafting-profile",
+    ]
+
+
+@pytest.mark.parametrize("estimate", ["0", "-0.1", "NaN", "Infinity", "not-a-number"])
+def test_classification_estimate_override_must_be_finite_and_positive(estimate):
+    env = dict(os.environ)
+    env.update(
+        PROPOSAL_APP_ENV="local",
+        BEDROCK_CLASSIFICATION_ESTIMATE_USD_PER_CALL=estimate,
+    )
+    proc = subprocess.run(
+        [sys.executable, "-c", "from proposal_app import settings"],
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+    assert proc.returncode != 0
+    assert "must be finite and positive" in proc.stderr
 
 
 @pytest.mark.django_db(transaction=True)
