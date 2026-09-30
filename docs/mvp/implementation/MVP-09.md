@@ -12,8 +12,8 @@ three approved seed families. No private files or provider services were used.
 | 09-D | Pending model calibration | Source-checked three-way comparison if Jev is authorized and available; otherwise record the incomplete experiment, select supported routes, and enable only a demonstrated safe policy. |
 | 09-E | Pending owner sign-off | Nicholas reviews the five writing tasks, known limitations, sanitized acceptance report, and observed recurring cost. |
 
-Offline evidence: nine pure harness tests passed; Black, Ruff, and diff checks
-passed. The source fixture is fictional and intentionally reports pending sample
+Offline evidence: nine pure harness tests passed; Black, Ruff, mypy, and diff
+checks passed. The source fixture is fictional and intentionally reports pending sample
 coverage. The harness neither accesses the database nor makes a provider call.
 External CodeRabbit review and required CI remain pending on the final PR head.
 

@@ -331,13 +331,13 @@ def assert_no_group_overlap(manifests: Iterable[dict[str, Any]]) -> None:
         validate_manifest(manifest)
         for group in manifest["groups"]:
             split = group["split"]
-            previous = group_splits.setdefault(group["group_key"], split)
-            if previous != split:
+            previous_group = group_splits.setdefault(group["group_key"], split)
+            if previous_group != split:
                 raise ManifestError("A leakage group overlaps different evaluation splits")
             for fingerprint in group.get("source_fingerprints", []):
                 group_and_split = (group["group_key"], split)
-                previous = fingerprint_groups.setdefault(fingerprint, group_and_split)
-                if previous != group_and_split:
+                previous_fingerprint = fingerprint_groups.setdefault(fingerprint, group_and_split)
+                if previous_fingerprint != group_and_split:
                     raise ManifestError(
                         "A related source/version overlaps different groups or evaluation splits"
                     )
