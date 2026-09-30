@@ -128,3 +128,20 @@ A final local CLI review of just these four changed code/test files completed wi
 findings. Combined with the preceding complete-diff review, it covers the final code.
 Only verification/report text was updated afterward. No additional full-diff or GitHub
 review was requested for nonblocking fixture organization or duplicate comments.
+
+## PR feedback follow-up (2026-09-30 UTC)
+
+Five GitHub review threads from CodeRabbit and Copilot identified verified issues in
+lexical/semantic ranking, incomplete evidence markers, and Bedrock configuration validation.
+Ranking now retains the best eligible matches in a bounded heap and preserves semantic
+scores; unqueried browsing still stops at the configured limit. Known prior citations are
+removed even with incomplete markers while user prose is preserved. Reservations must be
+finite and positive, and the Bedrock timeout is checked after job environment overrides.
+Local drafting remains independent of provider-job lease limits.
+
+The canonical local gate passed 631 tests, including ranking, unqueried-read-bound,
+marker-boundary, and subprocess configuration regressions. Local CodeRabbit review found
+the initial all-match ranking allocation; the bounded correction received a verified
+follow-up with zero findings. The generic docstring-coverage advisory is deferred under
+the repository's bounded review policy. Required lint, typing, secrets, migration, database,
+and browser checks passed; live acceptance remains pending as above.

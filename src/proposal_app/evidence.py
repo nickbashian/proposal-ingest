@@ -1,6 +1,7 @@
 """Current evidence browsing; historical passages never grant current eligibility."""
 
 import hashlib
+import heapq
 from pathlib import Path
 
 from django.conf import settings
@@ -153,6 +154,9 @@ def browse(user, collection_id, query="", *, view="evidence", filters=None, excl
         }
         if view in {"reasoning", "requirements"}:
             required_tags["content_use"] = "context" if view == "reasoning" else "requirements"
+        ranked = []
+        rank_results = bool(semantic or (terms and not exact))
+        limit = settings.APP["publication_retrieve_limit"]
         for artifact in artifacts.order_by("id").iterator(chunk_size=100):
             if str(artifact.unit.version.source_id) in excluded:
                 continue
@@ -166,6 +170,14 @@ def browse(user, collection_id, query="", *, view="evidence", filters=None, excl
                 and terms
                 and not any(term in (text + " " + title).casefold() for term in terms)
             ):
+                continue
+            score = (
+                hits[str(artifact.id)]["score"]
+                if semantic
+                else sum((text + " " + title).casefold().count(term) for term in terms)
+            )
+            rank_key = (score, -artifact.id.int)
+            if rank_results and len(ranked) == limit and rank_key <= ranked[0][:2]:
                 continue
             family = artifact.decision_event.decision.family
             if family.id not in decisions:
@@ -184,14 +196,28 @@ def browse(user, collection_id, query="", *, view="evidence", filters=None, excl
                     continue
             if not services.factual_artifacts(user, collection_id, [artifact.id]).exists():
                 continue
-            candidates.append((artifact, text))
-            if len(candidates) >= settings.APP["publication_retrieve_limit"]:
-                break
+            if rank_results:
+                candidate = (*rank_key, artifact, text)
+                if len(ranked) < limit:
+                    heapq.heappush(ranked, candidate)
+                else:
+                    heapq.heapreplace(ranked, candidate)
+            else:
+                candidates.append((artifact, text, score))
+                if len(candidates) >= limit:
+                    break
+        if rank_results:
+            candidates = [(artifact, text, score) for score, _, artifact, text in ranked]
         rows = [
-            factual_item(
-                item, text=text, decisions=decisions.get(item.decision_event.decision.family_id, [])
-            )
-            for item, text in candidates
+            {
+                **factual_item(
+                    item,
+                    text=text,
+                    decisions=decisions.get(item.decision_event.decision.family_id, []),
+                ),
+                "score": score,
+            }
+            for item, text, score in candidates
         ]
     selected = []
     for row in rows:
@@ -212,7 +238,10 @@ def browse(user, collection_id, query="", *, view="evidence", filters=None, excl
             for key, value in filters.items()
         ):
             continue
-        row["score"] = sum(row["text"].casefold().count(term) for term in terms)
+        row.setdefault(
+            "score",
+            sum((row["text"] + " " + row["title"]).casefold().count(term) for term in terms),
+        )
         selected.append(row)
     # Collapse only equal passages with equal scientific meaning; retain every location.
     groups = {}

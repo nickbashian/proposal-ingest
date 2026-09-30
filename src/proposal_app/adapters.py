@@ -256,15 +256,15 @@ class DeterministicDraftingAdapter:
             if cls.evidence_end in remainder:
                 _, after = remainder.split(cls.evidence_end, 1)
                 base_text = (before + after).strip()
-        elif cls.evidence_end not in base_text:
-            removed_prior_citation = False
-            for item in prior_evidence:
-                citation = cls._citation(item)
-                if citation in base_text:
-                    base_text = base_text.replace(citation, "", 1)
-                    removed_prior_citation = True
-            if removed_prior_citation:
-                base_text = base_text.replace("## Factual evidence", "", 1).strip()
+        removed_prior_citation = False
+        for item in prior_evidence:
+            citation = cls._citation(item)
+            if citation in base_text:
+                base_text = base_text.replace(citation, "")
+                removed_prior_citation = True
+        if removed_prior_citation:
+            base_text = base_text.replace("## Factual evidence", "", 1).strip()
+        base_text = base_text.replace(cls.evidence_start, "").replace(cls.evidence_end, "").strip()
         return base_text
 
     def draft(self, packet: dict, prompt: str, *, idempotency_key: str) -> CallResult:

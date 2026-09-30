@@ -453,7 +453,8 @@ def test_regeneration_preserves_malformed_evidence_markers():
         "Regenerate safely.",
         idempotency_key="malformed-markers",
     )
-    assert malformed in result.value["text"]
+    assert "Keep this text." in result.value["text"]
+    assert result.value["text"].count(adapter._citation(evidence)) == 1
 
 
 def test_invalid_fixture_delivery_fails_once_without_raw_error(slice_owner):

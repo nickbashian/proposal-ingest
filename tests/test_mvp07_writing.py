@@ -20,6 +20,104 @@ from tests.test_mvp02 import approve_and_publish, import_slice
 pytestmark = pytest.mark.django_db
 
 
+@pytest.mark.parametrize(
+    "backend,reservation,lease,valid",
+    [
+        ("bedrock", "abc", "120", False),
+        ("bedrock", "NaN", "120", False),
+        ("bedrock", "Infinity", "120", False),
+        ("bedrock", "-Infinity", "120", False),
+        ("bedrock", "", "120", False),
+        ("bedrock", "0", "120", False),
+        ("bedrock", "-1", "120", False),
+        ("bedrock", "0.01", "60", False),
+        ("bedrock", "0.01", "100", True),
+        ("local", "", "1", True),
+    ],
+)
+def test_drafting_configuration_uses_finite_reservation_and_effective_lease(
+    backend, reservation, lease, valid
+):
+    import os
+    import subprocess
+    import sys
+
+    env = {
+        key: value for key, value in os.environ.items() if not key.startswith(("PROPOSAL_", "JOB_"))
+    }
+    env.update(
+        PROPOSAL_APP_ENV="local",
+        PROPOSAL_DRAFTING_BACKEND=backend,
+        PROPOSAL_DRAFTING_RESERVATION_USD=reservation,
+        JOB_LEASE_SECONDS=lease,
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", "import proposal_app.settings"],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=20,
+    )
+    assert (result.returncode == 0) is valid, result.stderr
+    if not valid:
+        assert "ImproperlyConfigured" in result.stderr
+        assert "decimal.InvalidOperation" not in result.stderr
+
+
+def test_browse_ranks_before_limit_and_preserves_semantic_scores(
+    writing_corpus, settings, monkeypatch
+):
+    user, collection, _, artifacts = writing_corpus
+    ordered = sorted(artifacts.values(), key=lambda item: str(item.id))
+    high, runner_up = ordered[-1], ordered[-2]
+    settings.APP = {**settings.APP, "publication_retrieve_limit": 1}
+    monkeypatch.setattr(
+        workflow, "artifact_text", lambda item: "needle " * (5 if item.id == high.id else 1)
+    )
+    rows = evidence.browse(user, collection.id, "needle")
+    assert [row["artifact_id"] for row in rows] == [str(high.id)]
+    settings.APP["publication_backend"] = "managed_kb"
+    monkeypatch.setattr(
+        "proposal_app.publication.retrieve",
+        lambda *args: [
+            {
+                "artifact_id": str(item.id),
+                "score": 0.9 if item.id == high.id else 0.8 if item.id == runner_up.id else 0.1,
+            }
+            for item in ordered
+        ],
+    )
+    settings.APP["publication_retrieve_limit"] = 2
+    rows = evidence.browse(user, collection.id, "semantically related without exact tokens")
+    assert [row["artifact_id"] for row in rows] == [str(high.id), str(runner_up.id)]
+    assert [row["score"] for row in rows] == [0.9, 0.8]
+    rows = evidence.browse(
+        user, collection.id, "semantically related", excluded=[str(high.unit.version.source_id)]
+    )
+    assert rows[0]["artifact_id"] == str(runner_up.id)
+
+
+@pytest.mark.parametrize("missing", ["start", "end", "both"])
+def test_incomplete_markers_do_not_resend_unpinned_quotes(writing_corpus, missing):
+    user, _, session, artifacts = writing_corpus
+    first = workflow.generate(user, session.id, "Describe results")
+    edited = first.text
+    if missing in {"start", "both"}:
+        edited = edited.replace(DeterministicDraftingAdapter.evidence_start, "")
+    if missing in {"end", "both"}:
+        edited = edited.replace(DeterministicDraftingAdapter.evidence_end, "")
+    workflow.edit(user, session.id, 1, edited + "\nKeep my transition.")
+    drafting.selection(
+        user, session.id, "unpin", pin_id=m.EvidencePin.objects.get(session=session).id
+    )
+    workflow.pin_evidence(user, session.id, artifacts["reasoning"].id)
+    attempt = drafting.enqueue(user, session.id, "Revise the explanation")
+    request = attempt.packet.model_request
+    assert artifacts["results"].unit.text not in request["base_text"]
+    assert "Keep my transition." in request["base_text"]
+    assert artifacts["results"].unit.text not in str(request["evidence"])
+
+
 @pytest.fixture
 def slice_owner(settings, tmp_path):
     settings.LOCAL_STORAGE_ROOT = tmp_path / "objects"
@@ -695,8 +793,17 @@ def test_browse_bounds_enrichment_and_voice_search_is_backend_independent(
         return original(*args, **kwargs)
 
     monkeypatch.setattr(evidence, "factual_item", tracked)
+    reads = []
+    original_text = workflow.artifact_text
+
+    def read_text(artifact):
+        reads.append(artifact.id)
+        return original_text(artifact)
+
+    monkeypatch.setattr(workflow, "artifact_text", read_text)
     assert len(evidence.browse(user, collection.id)) <= 1
     assert len(calls) <= 1
+    assert len(reads) == 1
     calls.clear()
     rows = evidence.browse(user, collection.id, filters={"source_role": "solicitation"})
     assert len(rows) == 1 and rows[0]["labels"]["source_role"] == "solicitation"

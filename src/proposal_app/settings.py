@@ -28,16 +28,21 @@ if any(
     )
 ):
     raise ImproperlyConfigured("Drafting limits must be positive")
-if APP["drafting_timeout_seconds"] + 5 >= APP["lease_seconds"]:
-    raise ImproperlyConfigured(
-        "Drafting timeout plus connection time must fit within the job lease"
-    )
-if APP["drafting_backend"] == "bedrock" and (
-    not APP["drafting_model_id"]
-    or not APP["drafting_reservation_usd"]
-    or Decimal(str(APP["drafting_reservation_usd"])) <= 0
-):
-    raise ImproperlyConfigured("Bedrock drafting needs a model and a bounded per-call reservation")
+if APP["drafting_backend"] == "bedrock":
+    drafting_reservation: Decimal | None
+    try:
+        drafting_reservation = Decimal(str(APP["drafting_reservation_usd"] or ""))
+    except InvalidOperation:
+        drafting_reservation = None
+    if (
+        not APP["drafting_model_id"]
+        or drafting_reservation is None
+        or not drafting_reservation.is_finite()
+        or drafting_reservation <= 0
+    ):
+        raise ImproperlyConfigured(
+            "Bedrock drafting needs a model and a bounded per-call reservation"
+        )
 APP["publication_backend"] = os.environ.get(
     "PROPOSAL_PUBLICATION_BACKEND", APP["publication_backend"]
 )
@@ -171,6 +176,14 @@ for key in ("lease_seconds", "max_attempts", "backoff_seconds", "poll_seconds"):
     APP[key] = int(os.environ.get("JOB_" + key.upper(), APP[key]))
     if APP[key] <= 0:
         raise ImproperlyConfigured(f"JOB_{key.upper()} must be positive")
+
+if (
+    APP["drafting_backend"] == "bedrock"
+    and APP["drafting_timeout_seconds"] + 5 >= APP["lease_seconds"]
+):
+    raise ImproperlyConfigured(
+        "Drafting timeout plus connection time must fit within the job lease"
+    )
 
 for key, environment in (
     ("setup_limit_usd", "SETUP_COST_LIMIT_USD"),
