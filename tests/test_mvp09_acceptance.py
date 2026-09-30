@@ -194,6 +194,19 @@ def test_scoring_reports_per_family_denominators_and_hard_gate_results():
     assert report["metrics"]["A07"]["totals"]["critical_unflagged"] == 0
 
 
+def test_fixed_query_and_writing_panels_cannot_be_diluted_with_extra_cases():
+    manifest = _complete_manifest()
+    for metric in ("A04", "A08"):
+        extra = copy.deepcopy(next(case for case in manifest["cases"] if case["metric"] == metric))
+        extra["case_key"] = f"extra-{metric}"
+        manifest["cases"].append(extra)
+    report = score_manifest(freeze_manifest(manifest))
+    assert report["metrics"]["A04"]["totals"]["denominator"] == 21
+    assert report["metrics"]["A04"]["status"] == "pending"
+    assert report["metrics"]["A08"]["totals"]["case_count"] == 6
+    assert report["metrics"]["A08"]["status"] == "pending"
+
+
 def test_missing_inventory_disposition_fails_against_independent_denominator():
     manifest = _complete_manifest()
     manifest["cases"] = [

@@ -12,10 +12,19 @@ three approved seed families. No private files or provider services were used.
 | 09-D | Pending model calibration | Source-checked three-way comparison if Jev is authorized and available; otherwise record the incomplete experiment, select supported routes, and enable only a demonstrated safe policy. |
 | 09-E | Pending owner sign-off | Nicholas reviews the five writing tasks, known limitations, sanitized acceptance report, and observed recurring cost. |
 
-Offline evidence: nine pure harness tests passed; Black, Ruff, mypy, and diff
-checks passed. The source fixture is fictional and intentionally reports pending sample
+Offline evidence: ten pure harness tests passed; Black, Ruff, and mypy passed.
+The source fixture is fictional and intentionally reports pending sample
 coverage. The harness neither accesses the database nor makes a provider call.
-External CodeRabbit review and required CI remain pending on the final PR head.
+
+Local CodeRabbit review completed on the draft branch (four findings). The
+material A04 finding was valid: an oversized query panel could pass on an
+absolute 18-hit count. The gate now requires exactly the 20 agreed answerable
+queries in the acceptance matrix, with a regression test for an extra case.
+The two A08 findings suggested allowing more than five writing tasks, but the
+matrix specifies four of five representative tasks, so this fixed panel stays
+at five; the same regression test checks an extra case remains pending. The
+test-module naming suggestion was stylistic and has no runtime impact.
+Required CI and final-head verification are recorded on the PR.
 
 Rollback: remove the offline harness and its private evaluation outputs. It does
 not change application records, publication, migrations, or automatic clearance.

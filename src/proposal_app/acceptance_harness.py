@@ -492,7 +492,7 @@ def _gate_status(
             return "pending"
         return "pass" if total["rate"] >= 0.95 and total["critical_losses"] == 0 else "fail"
     if metric == "A04":
-        if total["denominator"] < 20:
+        if total["denominator"] != 20:
             return "pending"
         return "pass" if total["numerator"] >= 18 else "fail"
     if metric == "A05":

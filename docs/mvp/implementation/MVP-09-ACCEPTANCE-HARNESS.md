@@ -89,11 +89,11 @@ separately and bounded by extracted_passages.
 |---|---|
 | A01 | Every inventory case has a recognized disposition and reason; failed/deferred cases need a recovery route. |
 | A02 | At least 60 valuable passages and 20 per family; >=95% retained with essential conditions and zero critical losses. |
-| A04 | At least 20 answerable queries; >=18 have all required support among the top ten eligible results. |
+| A04 | Exactly 20 agreed answerable queries; >=18 have all required support among the top ten eligible results. |
 | A05 | At least five gap/conflict tasks; each returns the expected gap/conflict and has zero unsupported claims. |
 | A06 | Every evaluated citation resolves and has manually confirmed semantic support. |
 | A07 | At least 20 critical-fidelity cases; zero unflagged critical errors. |
-| A08 | At least five owner-rated writing tasks; at least four score >=4/5 with ordinary editing only. |
+| A08 | Exactly five owner-rated writing tasks; at least four score >=4/5 with ordinary editing only. |
 | A19 | Three-family denominator of supported, non-sensitive passages; >=80% automatically resolved and <=10 substantive questions total. Abstentions remain in the denominator; discovered items, extracted passages, automatic tags, unsupported/failed counts, human decisions, and review time are reported separately. |
 
 Metrics without evidence or minimum sample size are pending; they are not counted as
