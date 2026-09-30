@@ -174,3 +174,46 @@ def test_command_writes_private_plan_outside_source_and_never_overwrites(tmp_pat
         call_command("plan_year_expansion", *arguments, "--output", str(output))
     with pytest.raises(CommandError, match="outside"):
         call_command("plan_year_expansion", *arguments, "--output", str(root / "plan.json"))
+
+
+def test_command_preserves_report_created_during_planning(tmp_path, monkeypatch):
+    root = tmp_path / "2025"
+    (root / "A").mkdir(parents=True)
+    (root / "A" / "a.pdf").write_bytes(b"x")
+    observed = tmp_path / "observed.json"
+    observed.write_text(
+        json.dumps(
+            {
+                "observed_items": 1,
+                "observed_accounted_usd": "0.5",
+                "observed_indexed_bytes": 1,
+                "observed_monthly_index_usd": "0.01",
+                "setup_spent_usd": "0",
+                "current_monthly_usd": "0",
+            }
+        )
+    )
+    output = tmp_path / "private_evaluations" / "plan.json"
+    original_open = Path.open
+
+    def create_concurrent_report(path, mode="r", *args, **kwargs):
+        if path == output and mode == "x":
+            output.write_text("earlier report", encoding="utf-8")
+        return original_open(path, mode, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", create_concurrent_report)
+    with pytest.raises(CommandError, match="already exists"):
+        call_command(
+            "plan_year_expansion",
+            "--year-root",
+            str(root),
+            "--observed-costs",
+            str(observed),
+            "--max-items",
+            "2",
+            "--max-cost-usd",
+            "1",
+            "--output",
+            str(output),
+        )
+    assert output.read_text(encoding="utf-8") == "earlier report"

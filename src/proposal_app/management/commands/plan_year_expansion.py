@@ -44,10 +44,13 @@ class Command(BaseCommand):
         except (OSError, ValueError, KeyError, TypeError, ArithmeticError) as exc:
             raise CommandError("Inventory or observed-cost inputs are invalid") from exc
         output.parent.mkdir(parents=True, exist_ok=True)
-        output.write_text(
-            json.dumps({"inventory": asdict(inventory), "plan": plan}, indent=2) + "\n",
-            encoding="utf-8",
-        )
+        try:
+            with output.open("x", encoding="utf-8") as report:
+                report.write(
+                    json.dumps({"inventory": asdict(inventory), "plan": plan}, indent=2) + "\n"
+                )
+        except FileExistsError as exc:
+            raise CommandError("Output already exists; choose a new private report path") from exc
         self.stdout.write(f"Wrote private offline plan to {output}")
         self.stdout.write(
             f"Inventory complete: {inventory.complete}; proposed batches: {len(plan['batches'])}"
