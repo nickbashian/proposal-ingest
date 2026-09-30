@@ -215,6 +215,26 @@ def deliver(job_id):
             return True
         job.result = {**job.result, "classification": summary}
         job.save(update_fields=["result"])
+    elif job.kind == "draft-generation":
+        from .drafting import deliver_job
+
+        try:
+            summary = deliver_job(job)
+        except Exception:
+            job.state, job.stop_reason, job.result = "failed", "draft_delivery_blocked", {}
+            job.save(update_fields=["state", "stop_reason", "result"])
+            m.DraftGeneration.objects.filter(
+                provider_job=job, state__in=["queued", "running"]
+            ).update(
+                state="failed",
+                reason="Draft or evidence changed; retry from current evidence",
+                finished_at=timezone.now(),
+            )
+            outbox.delivered_at = timezone.now()
+            outbox.save(update_fields=["delivered_at"])
+            return True
+        job.result = summary
+        job.save(update_fields=["result"])
     m.JobResult.objects.get_or_create(job=job, defaults={"value": job.result})
     outbox.delivered_at = timezone.now()
     outbox.save()
@@ -243,6 +263,8 @@ def work_once():
         if attempt.job.kind != "classify-unit" or attempt.job.payload.get("mode") == "mock"
         else settings.APP["classification_estimate_usd_per_call"]["baseline"]
     )
+    if attempt.job.kind == "draft-generation":
+        estimate = attempt.job.budget
     if reserve(attempt.id, estimate) is None:
         return True
     try:

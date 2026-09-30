@@ -3,22 +3,51 @@
 <p><span class="label">{{ retrieval_label }}</span> <span class="label">{{ drafting_label }}</span></p>
 <section class="card">
   <h2>Search factual evidence</h2>
-  <form method="get"><label>Query <input name="q" value="{{ query }}" size="45"></label> <button>Search local evidence</button></form>
-  {% for result in results %}<article class="card"><h3>{{ result.title }}</h3><p>{{ result.text }}</p><p class="muted">{{ result.locator_label }} · score {{ result.score }}</p><form method="post">{% csrf_token %}<input type="hidden" name="action" value="pin"><input type="hidden" name="artifact_id" value="{{ result.artifact_id }}"><input type="hidden" name="query" value="{{ query }}"><button>Pin factual evidence</button> <a href="{{ result.source_url }}">Open exact passage</a></form></article>{% empty %}{% if query %}<p>No eligible factual passages matched. Excluded and voice-only passages are not searched here.</p>{% endif %}{% endfor %}
+  <form method="get"><label>Query or exact proposal ID <input aria-label="Query" name="q" value="{{ query }}" size="45"></label>
+    <label>View <select name="view"><option value="evidence" {% if view == 'evidence' %}selected{% endif %}>Evidence</option><option value="reasoning" {% if view == 'reasoning' %}selected{% endif %}>Reasoning</option><option value="voice" {% if view == 'voice' %}selected{% endif %}>Approved voice</option><option value="requirements" {% if view == 'requirements' %}selected{% endif %}>Requirements</option></select></label>
+    <label>Proposal <input name="proposal" value="{{ filters.proposal }}"></label><label>Role <input name="source_role" value="{{ filters.source_role }}"></label><label>Chemistry <input name="chemistry" value="{{ filters.chemistry }}"></label><label>Established temporal status <input name="temporal_meaning" value="{{ filters.temporal_meaning }}"></label><label>Use <input name="content_use" value="{{ filters.content_use }}"></label>
+    <button>Search local evidence</button></form>
+  {% for result in results %}<article class="card"><h3>{{ result.title }}</h3><p>{{ result.text }}</p><p class="muted">{{ result.proposal }} · {{ result.source_version }} · observed {{ result.date }} · {{ result.locator_label }}</p><p>{{ result.labels }}</p><p>{{ result.qualifications }}</p>
+    <details><summary>Preserved provenance ({{ result.provenance|length }} locations)</summary>{% for location in result.provenance %}<p>{{ location.title }} · {{ location.locator_label }} <a href="{{ location.source_url }}">Inspect preserved location</a></p>{% endfor %}</details>
+    <form method="post">{% csrf_token %}<input type="hidden" name="action" value="{% if view == 'voice' %}pin-voice{% else %}pin{% endif %}"><input type="hidden" name="artifact_id" value="{{ result.artifact_id }}"><input type="hidden" name="unit_id" value="{{ result.unit_id }}"><input type="hidden" name="query" value="{{ query }}"><button>{% if view == 'voice' %}Pin approved voice{% else %}Pin factual evidence{% endif %}</button> <a href="{{ result.source_url }}">Open exact passage</a></form>
+    <form method="post">{% csrf_token %}<input type="hidden" name="action" value="exclude"><input type="hidden" name="source_id" value="{{ result.source_id }}"><button>Exclude this source from this draft</button></form>
+  </article>{% empty %}<p>No currently eligible passages match this view and filters. Which approved source should support the task?</p>{% endfor %}
 </section>
 <section>
   <h2>Pinned evidence</h2>
-  <ul>{% for pin in pins %}<li>{{ pin.title }} — {% if pin.eligible %}{{ pin.text }}{% else %}Withdrawn; choose current evidence before drafting.{% endif %}</li>{% empty %}<li>No factual evidence pinned.</li>{% endfor %}</ul>
+  <ul>{% for pin in pins %}<li>{{ pin.title }} — {% if pin.eligible %}{{ pin.text }}{% else %}Withdrawn; choose current evidence before drafting.{% endif %}<form method="post">{% csrf_token %}<input type="hidden" name="action" value="unpin"><input type="hidden" name="pin_id" value="{{ pin.id }}"><button>Unpin factual passage</button></form></li>{% empty %}<li>No factual evidence pinned.</li>{% endfor %}</ul>
+  <h3>Separate approved voice selections</h3><p>Voice controls style only. Its numbers and technical claims cannot support this draft.</p>
+  {% for pin in voice_pins %}<p>{{ pin.current.text|default:'Withdrawn voice reference' }}</p><form method="post">{% csrf_token %}<input type="hidden" name="action" value="unpin-voice"><input type="hidden" name="pin_id" value="{{ pin.id }}"><button>Unpin voice</button></form>{% empty %}<p>No approved voice selected.</p>{% endfor %}
+  <h3>Excluded sources</h3>{% for exclusion in excluded %}<p>{{ exclusion.source.display_path }}</p><form method="post">{% csrf_token %}<input type="hidden" name="action" value="allow"><input type="hidden" name="source_id" value="{{ exclusion.source_id }}"><button>Allow source selection again</button></form>{% empty %}<p>No draft-specific source exclusions.</p>{% endfor %}
 </section>
 <section class="card">
   <h2>Generate or regenerate</h2>
-  <form method="post">{% csrf_token %}<input type="hidden" name="action" value="generate"><label>Drafting request<textarea name="prompt" rows="3">Summarize the supported cycling result.</textarea></label>{% if latest %}<label><input type="checkbox" name="refresh_evidence"> Start a new revision from current pins only; do not reuse the prior draft text or evidence.</label>{% endif %}<button>{% if latest %}Regenerate as a new revision{% else %}Generate deterministic draft{% endif %}</button></form>
+  <form method="post" id="generation-form">{% csrf_token %}<input type="hidden" name="action" value="generate"><input type="hidden" name="revision" value="{{ session.revision }}"><label>Drafting request<textarea name="prompt" rows="3">Summarize the supported cycling result.</textarea></label>
+    <label>Mode <select name="mode"><option>outline</option><option>passage</option><option selected>section</option><option>comparison</option><option>revision</option></select></label><label>Audience <input name="audience" value="Proposal reviewer"></label><label>Length <input name="length" value="Brief"></label><label>Current user assertions or new proposals (unverified)<textarea name="assertions" rows="2"></textarea></label>
+    <label><input type="checkbox" name="background" checked> Run in background with the worker; retain progress if this page closes.</label>
+    {% if latest %}<label><input type="checkbox" name="refresh_evidence"> Start a new revision from current pins only; do not reuse the prior draft text or evidence.</label>{% endif %}<button>{% if latest %}Regenerate as a new revision{% else %}Generate deterministic draft{% endif %}</button><p id="generation-progress" role="status"></p></form>
+  {% for attempt in attempts %}<p>Generation: {{ attempt.state }} {{ attempt.reason }}</p>{% if attempt.state == 'queued' or attempt.state == 'running' %}<form method="post">{% csrf_token %}<input type="hidden" name="action" value="cancel-generation"><input type="hidden" name="generation_id" value="{{ attempt.id }}"><button>Cancel generation</button></form>{% endif %}{% endfor %}
+  <p>Refresh to inspect progress. Failed or interrupted attempts preserve earlier revisions; retry explicitly after resolving the cause.</p>
 </section>
 {% if latest %}<section class="card">
   <h2>Edit revision {{ latest.number }}</h2>
+  {% if historical %}<p class="warning">Historical evidence: one or more saved sources or voice references are no longer eligible for new drafting. Saved citations remain available.</p>{% endif %}
   <p class="muted">{{ latest.model_revision|default:"User-edited revision" }}</p>
+  <p class="warning">Reuse status: {{ latest.reuse_state }}. Source-check every warning before reuse.</p>{% for check in latest.checks %}<p class="warning">{{ check.kind }}: {{ check.message }} {{ check.passage }}</p>{% endfor %}
+  <p><a href="/drafts/packets/{{ latest.packet_id }}/">Inspect exact saved model request and separate voice packet</a></p>{% for row in latest.packet.payload %}<a href="{{ row.source_url }}">Saved citation {{ row.citation_id }}</a> {% endfor %}
   <form method="post">{% csrf_token %}<input type="hidden" name="action" value="edit"><input type="hidden" name="revision" value="{{ session.revision }}"><textarea name="text" rows="14">{{ latest.text }}</textarea><button>Save edit as new revision</button></form>
-  <form method="post" class="inline">{% csrf_token %}<input type="hidden" name="action" value="export"><button name="format" value="markdown">Export Markdown with source links</button> <button name="format" value="text">Export text with source links</button></form>
+  <button type="button" id="copy-draft">Copy saved text</button><p id="copy-status" role="status"></p>
+  <form method="post" class="inline">{% csrf_token %}<input type="hidden" name="action" value="export"><input type="hidden" name="source_appendix" value="off"><label><input type="checkbox" name="source_appendix" checked> Include source appendix</label><button name="format" value="markdown">Export Markdown with source links</button> <button name="format" value="text">Export text with source links</button></form>
 </section>{% endif %}
-<section><h2>Revision history</h2><table><tr><th>Revision</th><th>Origin</th><th>Saved text</th></tr>{% for revision in revisions %}<tr><td>{{ revision.number }}</td><td>{{ revision.model_revision|default:"user edit" }}</td><td><pre>{{ revision.text }}</pre></td></tr>{% empty %}<tr><td colspan="3">No revisions yet.</td></tr>{% endfor %}</table></section>
+<section><h2>Revision history</h2><table><tr><th>Revision</th><th>Origin</th><th>Saved text</th></tr>{% for revision in revisions %}<tr><td>{{ revision.number }} <a href="?compare={{ revision.id }}">Compare to latest</a><form method="post">{% csrf_token %}<input type="hidden" name="action" value="restore"><input type="hidden" name="revision" value="{{ session.revision }}"><input type="hidden" name="revision_id" value="{{ revision.id }}"><button>Restore as new revision</button></form></td><td>{{ revision.model_revision|default:"user edit" }}</td><td><pre>{{ revision.text }}</pre></td></tr>{% empty %}<tr><td colspan="3">No revisions yet.</td></tr>{% endfor %}</table>{% if comparison %}<pre id="revision-comparison">{{ comparison }}</pre>{% endif %}</section>
+<script>
+document.getElementById('generation-form').addEventListener('submit', () => { document.getElementById('generation-progress').textContent = 'Saving generation request. Earlier revisions remain available.'; });
+const copy = document.getElementById('copy-draft');
+if (copy) copy.addEventListener('click', async () => {
+  const text = document.querySelector('textarea[name="text"]');
+  const status = document.getElementById('copy-status');
+  try { await navigator.clipboard.writeText(text.value); status.textContent = 'Copied text. Check reuse status before using it.'; }
+  catch { text.focus(); text.select(); status.textContent = 'Select text and use Ctrl+C to copy.'; }
+});
+</script>
 {% endblock %}

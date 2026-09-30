@@ -5,6 +5,7 @@ from django.core.management.base import BaseCommand
 
 from proposal_app.jobs import work_once
 from proposal_app.publication import reconcile_once
+from proposal_app.drafting import work_once as draft_once
 
 
 class Command(BaseCommand):
@@ -18,6 +19,8 @@ class Command(BaseCommand):
             worked = work_once()
             if not worked:
                 worked = reconcile_once()
+            drafted = draft_once()
+            worked = worked or drafted
             if options["once"]:
                 return
             if not worked:

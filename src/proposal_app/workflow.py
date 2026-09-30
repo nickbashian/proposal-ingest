@@ -1,9 +1,7 @@
 """MVP-02 local workflow built on the durable application domain."""
 
 import hashlib
-import re
 from pathlib import Path
-from urllib.parse import urljoin
 
 from django.conf import settings
 from django.db import transaction
@@ -12,7 +10,7 @@ from django.http import Http404
 from django.urls import reverse
 
 from . import models as m, services
-from .adapters import DeterministicDraftingAdapter, LocalRetrievalAdapter
+from .adapters import LocalRetrievalAdapter
 from .curation import DIMENSIONS, config_fingerprint
 from .storage import LocalObjectStorage
 
@@ -436,84 +434,25 @@ def pin_evidence(user, session_id, artifact_id) -> m.EvidencePin:
     return pin
 
 
-@transaction.atomic
-def generate(user, session_id, prompt: str, *, refresh_evidence=False) -> m.DraftRevision:
-    session = services.owned(user, m.DraftSession, session_id)
-    session = m.DraftSession.objects.select_for_update().get(pk=session.id)
-    if session.deleted_at:
-        raise Http404
-    pins = list(
-        m.EvidencePin.objects.filter(session=session).select_related(
-            "artifact__unit__version__source", "artifact__generation"
-        )
-    )
-    eligible = {
-        artifact.id: artifact
-        for artifact in services.factual_artifacts(
-            user, session.collection_id, [pin.artifact_id for pin in pins]
-        )
-    }
-    evidence = []
-    for pin in pins:
-        artifact = eligible.get(pin.artifact_id)
-        if artifact is None:
-            continue
-        unit = artifact.unit
-        evidence.append(
-            {
-                "artifact_id": str(artifact.id),
-                "generation_id": str(artifact.generation_id),
-                "source_version_id": str(unit.version_id),
-                "unit_id": str(unit.id),
-                "title": Path(unit.version.source.display_path).name,
-                "text": artifact_text(artifact),
-                "locator": artifact.locator or unit.locator,
-                "locator_label": locator_label(artifact.locator or unit.locator),
-                "source_url": reverse("artifact", args=[artifact.id]),
-                "support_kind": "factual",
-            }
-        )
-    if not evidence:
-        raise ValueError("Pin at least one currently eligible factual passage")
-    latest = m.DraftRevision.objects.filter(session=session).order_by("-number").first()
-    if latest and latest.packet.payload:
-        from .publication import validate_packet
+def generate(
+    user, session_id, prompt: str, *, refresh_evidence=False, expected_revision=None, task=None
+) -> m.DraftRevision:
+    from . import drafting
 
-        if (
-            not validate_packet(user, session.collection_id, latest.packet.payload)
-            and not refresh_evidence
-        ):
-            raise ValueError("Previous evidence changed; refresh from current pins")
-    packet = m.EvidencePacket.objects.create(
-        session=session, payload=evidence, policy_revision="local-evidence-v1"
-    )
-    result = DeterministicDraftingAdapter().draft(
-        {
-            "evidence": evidence,
-            "base_text": latest.text if latest and not refresh_evidence else "",
-            "prior_evidence": latest.packet.payload if latest and not refresh_evidence else [],
-        },
+    if settings.APP["drafting_backend"] != "local":
+        raise ValueError("Synchronous generation requires the local drafting backend")
+    attempt = drafting.enqueue(
+        user,
+        session_id,
         prompt,
-        idempotency_key=f"{session.id}:{session.revision + 1}",
+        refresh_evidence=refresh_evidence,
+        expected_revision=expected_revision,
+        task=task,
     )
-    if set(
-        services.factual_artifacts(
-            user, session.collection_id, [item["artifact_id"] for item in evidence]
-        ).values_list("id", flat=True)
-    ) != set(eligible):
-        raise ValueError("Evidence changed during drafting; refresh before continuing")
-    session.revision += 1
-    session.save(update_fields=["revision"])
-    revision = m.DraftRevision.objects.create(
-        session=session,
-        number=session.revision,
-        packet=packet,
-        text=result.value["text"],
-        model_revision=DeterministicDraftingAdapter.revision,
-        prompt_revision="local-writing-form-v1",
-    )
-    m.AuditRecord.objects.create(actor=user, action="draft.generated", object_id=revision.id)
-    return revision
+    attempt = drafting.execute(attempt.id)
+    if attempt.state != "succeeded":
+        raise ValueError(attempt.reason or "Generation did not finish")
+    return attempt.result_revision
 
 
 def edit(user, session_id, expected_revision: int, text: str) -> m.DraftRevision:
@@ -531,7 +470,9 @@ def edit(user, session_id, expected_revision: int, text: str) -> m.DraftRevision
 
 
 @transaction.atomic
-def export(user, session_id, export_format: str, base_url: str) -> tuple[m.DraftExport, str, str]:
+def export(
+    user, session_id, export_format: str, base_url: str, *, source_appendix=True
+) -> tuple[m.DraftExport, str, str]:
     if export_format not in {"markdown", "text"}:
         raise ValueError("Export format must be markdown or text")
     session = services.owned(user, m.DraftSession, session_id)
@@ -541,22 +482,16 @@ def export(user, session_id, export_format: str, base_url: str) -> tuple[m.Draft
     revision = m.DraftRevision.objects.filter(session=session).order_by("-number").first()
     if revision is None:
         raise ValueError("Generate a draft before exporting")
-    text = revision.text
-    for marker in (
-        DeterministicDraftingAdapter.evidence_start,
-        DeterministicDraftingAdapter.evidence_end,
-    ):
-        text = text.replace(marker + "\n", "").replace(marker, "")
+    from .drafting import _current
+    from .writing_export import render_revision
 
-    def absolute_artifact_link(match: re.Match) -> str:
-        label, destination = match.groups()
-        if destination.startswith("/artifacts/"):
-            destination = urljoin(base_url, destination)
-        return f"[{label}]({destination})"
-
-    text = re.sub(r"\[([^]]+)]\(([^)]+)\)", absolute_artifact_link, text)
-    if export_format == "text":
-        text = re.sub(r"\[([^]]+)]\(([^)]+)\)", r"\1: \2", text)
+    text = render_revision(
+        revision,
+        export_format,
+        base_url,
+        source_appendix=source_appendix,
+        historical=not _current(user, revision.packet),
+    )
     exported = m.DraftExport.objects.create(revision=revision, text=text)
     extension = "md" if export_format == "markdown" else "txt"
     return exported, text, extension

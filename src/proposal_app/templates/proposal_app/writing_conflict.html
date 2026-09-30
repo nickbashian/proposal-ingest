@@ -1,0 +1,7 @@
+{% extends "proposal_app/base.html" %}{% block content %}
+<h1>Writing request needs attention</h1>
+<p class="warning">{{ error }}</p>
+{% if submitted_text %}<label>Your submitted edit (not saved)<textarea rows="16">{{ submitted_text }}</textarea></label><p>Copy this text before returning to the latest revision.</p>{% endif %}
+{% if submitted_prompt %}<label>Your submitted request<textarea rows="4">{{ submitted_prompt }}</textarea></label>{% endif %}
+<p><a href="{% url 'writing' session.id %}">Return to the latest saved workspace</a></p>
+{% endblock %}

@@ -241,33 +241,54 @@ class DeterministicDraftingAdapter:
     @staticmethod
     def _citation(item: dict) -> str:
         locator = item["locator_label"]
-        return f"- {item['text']} " f"([Source: {item['title']} — {locator}]({item['source_url']}))"
+        identity = f" [{item['citation_id']}]" if item.get("citation_id") else ""
+        return (
+            f"- {item['text']}{identity} "
+            f"([Source: {item['title']} — {locator}]({item['source_url']}))"
+        )
+
+    @classmethod
+    def editable_base(cls, text: str, prior_evidence: list) -> str:
+        """Remove generated quotation blocks without sending old evidence to a new call."""
+        base_text = text.strip()
+        if cls.evidence_start in base_text:
+            before, remainder = base_text.split(cls.evidence_start, 1)
+            if cls.evidence_end in remainder:
+                _, after = remainder.split(cls.evidence_end, 1)
+                base_text = (before + after).strip()
+        removed_prior_citation = False
+        for item in prior_evidence:
+            citation = cls._citation(item)
+            if citation in base_text:
+                base_text = base_text.replace(citation, "")
+                removed_prior_citation = True
+        if removed_prior_citation:
+            base_text = base_text.replace("## Factual evidence", "", 1).strip()
+        base_text = base_text.replace(cls.evidence_start, "").replace(cls.evidence_end, "").strip()
+        return base_text
 
     def draft(self, packet: dict, prompt: str, *, idempotency_key: str) -> CallResult:
         evidence = packet.get("evidence", [])
         if not evidence or any(item.get("support_kind") != "factual" for item in evidence):
             raise ProviderFailure("evidence_policy_block")
-        base_text = packet.get("base_text", "").strip()
-        prior_evidence = packet.get("prior_evidence", [])
-        if self.evidence_start in base_text:
-            before, remainder = base_text.split(self.evidence_start, 1)
-            if self.evidence_end in remainder:
-                _, after = remainder.split(self.evidence_end, 1)
-                base_text = (before + after).strip()
-        elif self.evidence_end not in base_text:
-            removed_prior_citation = False
-            for item in prior_evidence:
-                citation = self._citation(item)
-                if citation in base_text:
-                    base_text = base_text.replace(citation, "", 1)
-                    removed_prior_citation = True
-            if removed_prior_citation:
-                base_text = base_text.replace("## Factual evidence", "", 1).strip()
+        base_text = self.editable_base(
+            packet.get("base_text", ""), packet.get("prior_evidence", [])
+        )
         body = (
             f"{base_text}\n\n## Regeneration request\n\n{prompt.strip()}"
             if base_text
             else f"## Requested draft\n\n{prompt.strip()}"
         )
+        task = packet.get("task", {})
+        if task:
+            body += (
+                f"\n\nMode: {task['mode']}. Audience: {task['audience']}. Length: {task['length']}."
+            )
+            if task.get("assertions"):
+                body += "\n\n## Unverified user assertions / new proposals\n\n" + task["assertions"]
+            body += "\n\n[Gap: verify that the selected passages answer the requested task.]"
+            if packet.get("voice"):
+                body += "\n\nVoice examples are saved separately for style only; their facts are not support."
         citations = [self._citation(item) for item in evidence]
         evidence_block = (
             f"{self.evidence_start}\n## Factual evidence\n\n"
@@ -283,6 +304,10 @@ class DeterministicDraftingAdapter:
 
 
 def adapter_for(kind: str):
+    if kind == "draft-generation":
+        from .drafting import BedrockDraftJobAdapter
+
+        return BedrockDraftJobAdapter()
     if kind == "classify-unit":
         from .classification import OperationalAdapter
 

@@ -1,0 +1,8 @@
+{% extends "proposal_app/base.html" %}{% block content %}
+<h1>Saved citation {{ row.citation_id }}</h1>
+{% if historical %}<p class="warning">Historical evidence — withdrawn for new use. This exact saved excerpt remains available for this draft.</p>{% endif %}
+<h2>{{ row.title }}</h2><pre id="passage">{{ row.text }}</pre>
+<p id="locator">{{ row.locator_label }}</p>
+<dl><dt>Source version / observed date</dt><dd>{{ row.source_version }} / {{ row.date }}</dd><dt>Generation / revision</dt><dd>{{ row.generation_id }} / {{ row.generation_revision }}</dd><dt>Decision / revision</dt><dd>{{ row.decision_event_id }} / {{ row.decision_revision }}</dd><dt>Scientific labels</dt><dd>{{ row.labels }}</dd><dt>Qualifications</dt><dd>{{ row.qualifications }}</dd></dl>
+<p><a href="{{ row.artifact_url }}">Open original passage and version comparisons</a> · <a href="/drafts/packets/{{ packet.id }}/">Inspect exact saved model request</a> · <a href="{% url 'writing' packet.session_id %}">Return to draft</a></p>
+{% endblock %}

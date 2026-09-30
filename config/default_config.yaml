@@ -70,6 +70,18 @@ synthesis:
 
 # Persistent application defaults. Live providers are intentionally unavailable in MVP-01.
 web_application:
+  drafting_prompt_revision: "trustworthy-writing-v1"
+  drafting_demo_path: "sample_data/application_slice/writing.json"
+  drafting_backend: "local"
+  drafting_model_id: "us.anthropic.claude-opus-4-6-v1"
+  drafting_max_output_tokens: 2000
+  drafting_reservation_usd: null
+  drafting_policy_revision: "conservative-claims-v1"
+  drafting_max_text_chars: 40000
+  drafting_timeout_seconds: 90
+  drafting_max_evidence_items: 20
+  drafting_chemistry_terms: ["lithium", "sodium", "silicon", "graphite", "sulfur", "lfp", "nmc"]
+  drafting_condition_terms: ["temperature", "pressure", "c-rate", "electrolyte", "loading", "voltage"]
   fixture_source_root: "sample_data/fake_source_root/2025"
   fixture_slice_path: "sample_data/application_slice/family.json"
   fixture_slice_revision: "mvp02-fixture-v1"
