@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "suite_id": "fictional-alpha-smoke",
+  "kind": "synthetic",
+  "source_snapshot": "fictional-fixture-v1",
+  "policy_revision": "fictional-policy-v1",
+  "schema_revision": "fictional-schema-v1",
+  "prompt_revision": "fictional-prompt-v1",
+  "sampling_method": "hand-authored fictional smoke cases",
+  "inventory_counts": {"F1": 1, "F2": 0, "F3": 0},
+  "groups": [
+    {"group_key": "g-f1", "split": "synthetic", "source_fingerprints": []},
+    {"group_key": "g-f2", "split": "synthetic", "source_fingerprints": []},
+    {"group_key": "g-f3", "split": "synthetic", "source_fingerprints": []}
+  ],
+  "cases": [
+    {"case_key": "fictional-a01-f1", "family_key": "F1", "group_key": "g-f1", "split": "synthetic", "metric": "A01", "data": {"disposition": "processed", "reason": "fictional source extracted"}},
+    {"case_key": "fictional-a02-f1", "family_key": "F1", "group_key": "g-f1", "split": "synthetic", "metric": "A02", "data": {"valuable": true, "retained": true, "essential_conditions_preserved": true, "critical": false}},
+    {"case_key": "fictional-a04-f1", "family_key": "F1", "group_key": "g-f1", "split": "synthetic", "metric": "A04", "data": {"answerable": true, "required_support_ids": ["fictional-unit-1"], "top10_eligible_ids": ["fictional-unit-1"]}},
+    {"case_key": "fictional-a05-f1", "family_key": "F1", "group_key": "g-f1", "split": "synthetic", "metric": "A05", "data": {"case_kind": "gap", "observed": "gap", "unsupported_claims": 0}},
+    {"case_key": "fictional-a06-f1", "family_key": "F1", "group_key": "g-f1", "split": "synthetic", "metric": "A06", "data": {"citation_resolves": true, "semantic_support": true}},
+    {"case_key": "fictional-a07-f1", "family_key": "F1", "group_key": "g-f1", "split": "synthetic", "metric": "A07", "data": {"critical_error": false, "flagged": false}},
+    {"case_key": "fictional-a08-f1", "family_key": "F1", "group_key": "g-f1", "split": "synthetic", "metric": "A08", "data": {"usefulness_rating": 4, "ordinary_editing_only": true}},
+    {"case_key": "fictional-a19-f1", "family_key": "F1", "group_key": "g-f1", "split": "synthetic", "metric": "A19", "data": {"discovered_items": 1, "extracted_passages": 10, "supported_nonsensitive": 10, "automatically_tagged": 9, "automatically_resolved": 8, "substantive_questions": 1, "human_decisions": 2, "review_seconds": 120, "unsupported_or_failed": 1}},
+    {"case_key": "fictional-a19-f2", "family_key": "F2", "group_key": "g-f2", "split": "synthetic", "metric": "A19", "data": {"discovered_items": 0, "extracted_passages": 10, "supported_nonsensitive": 10, "automatically_tagged": 9, "automatically_resolved": 8, "substantive_questions": 1, "human_decisions": 2, "review_seconds": 120, "unsupported_or_failed": 1}},
+    {"case_key": "fictional-a19-f3", "family_key": "F3", "group_key": "g-f3", "split": "synthetic", "metric": "A19", "data": {"discovered_items": 0, "extracted_passages": 10, "supported_nonsensitive": 10, "automatically_tagged": 9, "automatically_resolved": 8, "substantive_questions": 1, "human_decisions": 2, "review_seconds": 120, "unsupported_or_failed": 1}}
+  ]
+}
