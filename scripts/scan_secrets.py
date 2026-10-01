@@ -75,8 +75,8 @@ SENSITIVE_NAME_PATTERN = re.compile(
     re.IGNORECASE,
 )
 SAFE_ASSIGNMENT_PATTERN = re.compile(
-    r"(?:\$\{[A-Z0-9_]+\}|<[^>]+>|\*{6,}|"
-    r"(?:change-me|example|placeholder|redacted)(?:[-_][A-Za-z0-9]+)*|"
+    r"(?:\$\{[A-Z0-9_]+(?::\?[^}]+)?\}|<[^>]+>|\*{6,}|"
+    r"REPLACE_WITH_[A-Z0-9_]+|(?:change-me|example|placeholder|redacted)(?:[-_][A-Za-z0-9]+)*|"
     r"local-development-only)",
     re.IGNORECASE,
 )
@@ -177,7 +177,10 @@ def scan_text(path: Path, text: str) -> list[Finding]:
                 if not _is_safe_assignment(value):
                     findings.append(Finding(path, number, "non-placeholder secret assignment"))
         for match in URI_CREDENTIAL_PATTERN.finditer(line):
-            if match.group(0) != ALLOWED_LOOPBACK_CREDENTIAL_URI:
+            uri = match.group(0)
+            user_info = uri.split("://", 1)[1].split("@", 1)[0]
+            password = user_info.split(":", 1)[1]
+            if uri != ALLOWED_LOOPBACK_CREDENTIAL_URI and not _is_safe_assignment(password):
                 findings.append(Finding(path, number, "credential in URI user-info"))
     return findings
 

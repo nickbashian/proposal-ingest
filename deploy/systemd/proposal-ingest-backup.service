@@ -1,0 +1,16 @@
+[Unit]
+Description=Create and upload a verified Proposal Knowledge Base backup
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+User=root
+EnvironmentFile=/etc/proposal-ingest/backup.env
+ExecStart=/usr/bin/bash /opt/proposal-ingest/deploy/backup_to_s3.sh
+UMask=0077
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/proposal-ingest /run/docker.sock
+PrivateTmp=true

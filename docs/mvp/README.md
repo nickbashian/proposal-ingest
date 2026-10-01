@@ -82,7 +82,15 @@ Each PR receives a focused handoff, a small internal implementation plan, tests 
 
 ## Current status
 
-MVP-00 through MVP-05 are merged; their implementation evidence is maintained in
-`docs/mvp/implementation/`. The next card is MVP-05b. The new application's AI classifier is
-currently a bounded comparison harness, not an operational ingest step. No private corpus,
-live SharePoint tenant, or Managed KB has been connected by these PRs.
+MVP-00 through MVP-07, including MVP-05b, are merged; their implementation evidence is maintained
+in `docs/mvp/implementation/`. MVP-05b connected bounded AI classification to the application's
+ingestion and exception-review path. The next card is MVP-08. Its offline deployment, operations,
+and recovery work precedes the focused connection session. Draft PRs
+[#24](https://github.com/nickbashian/proposal-ingest/pull/24) and
+[#25](https://github.com/nickbashian/proposal-ingest/pull/25) contain MVP-09/10
+offline preparation; rebase and reverify them sequentially after the earlier
+cards merge. The batched owner actions are in the
+[finish-line session agenda](implementation/FINISH_LINE_SESSION.md).
+No private corpus, live SharePoint
+tenant, or Managed KB has been verified by the merged PRs. Live automatic clearance remains
+disabled until MVP-09 calibration and owner review.

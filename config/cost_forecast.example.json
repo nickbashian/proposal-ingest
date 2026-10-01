@@ -1,0 +1,18 @@
+{
+  "region": "",
+  "priced_at": "",
+  "estimated_credits_usd": "0",
+  "line_items": [
+    {"name": "EC2 host", "category": "compute", "period": "monthly", "unit_price_usd": null, "quantity": "730"},
+    {"name": "Encrypted EBS", "category": "persistent_storage", "period": "monthly", "unit_price_usd": null, "quantity": null},
+    {"name": "Off-host backup", "category": "backup", "period": "monthly", "unit_price_usd": null, "quantity": null},
+    {"name": "Public address and transfer", "category": "network_and_address", "period": "monthly", "unit_price_usd": null, "quantity": null},
+    {"name": "Private S3 storage and requests", "category": "object_storage", "period": "monthly", "unit_price_usd": null, "quantity": null},
+    {"name": "Managed KB storage and retrieval", "category": "managed_kb", "period": "monthly", "unit_price_usd": null, "quantity": null},
+    {"name": "Bedrock classification and drafting", "category": "models", "period": "monthly", "unit_price_usd": null, "quantity": null},
+    {"name": "Secrets and logging", "category": "secrets_and_logs", "period": "monthly", "unit_price_usd": null, "quantity": null},
+    {"name": "DNS", "category": "dns", "period": "monthly", "unit_price_usd": null, "quantity": null},
+    {"name": "Deployment and recovery tests", "category": "setup_testing", "period": "setup", "unit_price_usd": null, "quantity": null},
+    {"name": "Development subscriptions", "category": "subscriptions", "period": "tooling", "unit_price_usd": null, "quantity": null}
+  ]
+}

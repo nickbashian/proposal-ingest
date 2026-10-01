@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
 
-# Prompts directory lives two levels above this file: <repo_root>/prompts/
-PROMPTS_DIR = Path(__file__).resolve().parents[2] / "prompts"
+from .config import PROJECT_ROOT
+
+# The resource root is explicit in an installed production image.
+PROMPTS_DIR = PROJECT_ROOT / "prompts"
 
 _DOCUMENT_METADATA_TEMPLATE = {
     "schema_version": "0.1.0",

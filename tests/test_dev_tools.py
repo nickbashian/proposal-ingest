@@ -133,6 +133,22 @@ def test_secret_scanner_rejects_remote_uri_credentials_but_allows_local_fixture(
     assert local_findings == []
 
 
+def test_secret_scanner_allows_deployment_placeholders_only_as_complete_values(
+    tmp_path: Path,
+) -> None:
+    safe = (
+        "POSTGRES_PASSWORD=${POSTGRES_PASSWORD:?Set_POSTGRES_PASSWORD}\n"
+        "CLIENT_SECRET=REPLACE_WITH_SSM_VALUE\n"
+        "DATABASE_URL=postgresql://service:${POSTGRES_PASSWORD}@database:5432/proposals\n"
+    )
+    unsafe = "CLIENT_SECRET=REPLACE_WITH_SSM_VALUE-extra\n"
+
+    assert scan_secrets.scan_text(tmp_path / "compose.yml", safe) == []
+    assert [
+        finding.kind for finding in scan_secrets.scan_text(tmp_path / "compose.yml", unsafe)
+    ] == ["non-placeholder secret assignment"]
+
+
 def test_secret_scanner_rejects_private_artifact_path(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -771,6 +771,95 @@ def test_recovery_hold_and_verified_rollback_obey_latest_decisions(corpus, setti
         publication.restore_verified(generation.id)
 
 
+def _active_managed_generation(corpus, settings):
+    user, _, _ = corpus
+    version, _, family, _ = _plan(corpus)
+    settings.APP["publication_backend"] = "managed_kb"
+    generation = publication.stage(user, family.proposal_id)
+    fake = FakeKB()
+    artifact = m.PublicationArtifact.objects.get(generation=generation)
+    assert publication.process(generation.id, fake).state == "indexing"
+    fake.job_state = "COMPLETE"
+    fake.index[fake.uri(artifact)] = "INDEXED"
+    assert publication.process(generation.id, fake).state == "active"
+    return version, family, generation, artifact, fake
+
+
+def test_held_active_reindex_recovers_missing_index_with_explicit_activation(corpus, settings):
+    _, _, generation, artifact, fake = _active_managed_generation(corpus, settings)
+    fake.index.clear()
+    fake.objects.clear()
+    settings.APP["publication_hold"] = True
+    call_command("reconcile_publication", str(generation.id), "--reindex-active")
+    generation.refresh_from_db()
+    artifact.refresh_from_db()
+    assert generation.state == "staged" and generation.ingestion_job_id == ""
+    assert artifact.index_state == "pending"
+    assert publication.process(generation.id, fake).state == "indexing"
+    assert fake.objects[fake.uri(artifact)]
+    assert publication.process(generation.id, fake).state == "indexing"
+    fake.index[fake.uri(artifact)] = "INDEXED"
+    assert publication.process(generation.id, fake).state == "verified"
+    assert publication.reconcile_once() is False
+    assert m.PublicationGeneration.objects.get(pk=generation.id).state == "verified"
+    settings.APP["publication_hold"] = False
+    assert publication.process(generation.id, fake).state == "verified"
+    with pytest.raises(ValueError, match="explicit held activation"):
+        publication._activate(generation.id)
+    settings.APP["publication_hold"] = True
+    call_command("reconcile_publication", str(generation.id), "--activate-reindexed")
+    assert m.PublicationGeneration.objects.get(pk=generation.id).state == "active"
+    assert settings.APP["publication_hold"] is True
+
+
+def test_active_reindex_retries_upload_failure_under_hold(corpus, settings):
+    _, _, generation, artifact, fake = _active_managed_generation(corpus, settings)
+    fake.index.clear()
+    settings.APP["publication_hold"] = True
+    publication.prepare_reindex_active(generation.id)
+    fake.upload_failure = True
+    failed = publication.process(generation.id, fake)
+    assert failed.state == "failed" and failed.failure == "upload_failed"
+    fake.upload_failure = False
+    assert publication.process(generation.id, fake).state == "indexing"
+    fake.index[fake.uri(artifact)] = "INDEXED"
+    assert publication.process(generation.id, fake).state == "verified"
+    assert publication.activate_reindexed(generation.id).state == "active"
+
+
+def test_active_reindex_rejects_stale_decisions_and_competing_work(corpus, settings):
+    version, family, generation, artifact, _ = _active_managed_generation(corpus, settings)
+    with pytest.raises(ValueError, match="hold"):
+        publication.prepare_reindex_active(generation.id)
+    settings.APP["publication_hold"] = True
+    competing = m.PublicationGeneration.objects.create(
+        proposal=family.proposal,
+        revision=generation.revision + 1,
+        state="staged",
+        fingerprint=generation.fingerprint,
+        backend="managed_kb",
+        expected_count=1,
+    )
+    with pytest.raises(ValueError, match="Another publication"):
+        publication.prepare_reindex_active(generation.id)
+    competing.delete()
+    decision = m.Decision.objects.get(
+        family=family, scope=f"unit:{artifact.unit_id}", field="treatment"
+    )
+    curation.review(
+        corpus[0],
+        decision.id,
+        decision.revision,
+        "edit",
+        value={"treatment": "excluded"},
+        rationale="Reviewer withdrew fictional evidence before recovery.",
+    )
+    curation.build_plan(corpus[0], family.id, version.id)
+    with pytest.raises(ValueError, match="current decisions"):
+        publication.prepare_reindex_active(generation.id)
+    assert m.PublicationGeneration.objects.get(pk=generation.id).state == "active"
+
+
 def test_hold_defers_activation_and_worker_isolates_failed_generation(
     corpus, settings, monkeypatch
 ):

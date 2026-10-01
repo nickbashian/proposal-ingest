@@ -1,0 +1,231 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Private single-host Proposal Knowledge Base alpha foundation; creates resources only when explicitly deployed.
+
+Parameters:
+  PublicHost:
+    Type: String
+    Description: DNS name pointed to the allocated Elastic IP.
+    AllowedPattern: '^[A-Za-z0-9.-]+$'
+  HttpsClientCidr:
+    Type: String
+    Description: Restrict application HTTPS access to the owner's approved network (for example, 203.0.113.10/32).
+    AllowedPattern: '^[0-9]{1,3}(\.[0-9]{1,3}){3}/([0-9]|[1-2][0-9]|3[0-2])$'
+  InstanceType:
+    Type: String
+    Default: t3.small
+    AllowedValues: [t3.small, t3.medium, t3.large]
+  KnowledgeBaseId:
+    Type: String
+    Description: Existing Managed Knowledge Base ID for a narrowly scoped runtime role.
+    AllowedPattern: '^[A-Za-z0-9]{10}$'
+  ModelResourceArns:
+    Type: CommaDelimitedList
+    Description: Exact Bedrock inference-profile and foundation-model ARNs allowed for InvokeModel.
+  BackupRetentionDays:
+    Type: Number
+    Default: 90
+    MinValue: 30
+    MaxValue: 3650
+    Description: Current and noncurrent backup object retention; does not expire curated artifacts.
+  LatestAmazonLinux2023Ami:
+    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+    Default: /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64
+
+Resources:
+  Network:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.42.0.0/16
+      EnableDnsHostnames: true
+      EnableDnsSupport: true
+      Tags: [{Key: Name, Value: proposal-ingest-alpha}]
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+  GatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref Network
+      InternetGatewayId: !Ref InternetGateway
+  PublicSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Network
+      CidrBlock: 10.42.1.0/24
+      MapPublicIpOnLaunch: true
+      AvailabilityZone: !Select [0, !GetAZs '']
+      Tags: [{Key: Name, Value: proposal-ingest-alpha-public}]
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref Network
+  PublicRoute:
+    Type: AWS::EC2::Route
+    DependsOn: GatewayAttachment
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+  PublicRouteAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnet
+      RouteTableId: !Ref PublicRouteTable
+  ApplicationSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: HTTPS is limited to the approved client network; HTTP is used only for ACME and redirect.
+      VpcId: !Ref Network
+      SecurityGroupIngress:
+        - {IpProtocol: tcp, FromPort: 80, ToPort: 80, CidrIp: 0.0.0.0/0, Description: HTTP redirect and ACME HTTP-01}
+        - {IpProtocol: tcp, FromPort: 443, ToPort: 443, CidrIp: !Ref HttpsClientCidr, Description: Approved application client network}
+      SecurityGroupEgress:
+        - {IpProtocol: -1, CidrIp: 0.0.0.0/0}
+  SnapshotBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault: {SSEAlgorithm: AES256}
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      VersioningConfiguration: {Status: Enabled}
+      LifecycleConfiguration:
+        Rules:
+          - Id: AbortIncompleteMultipartUploads
+            Status: Enabled
+            AbortIncompleteMultipartUpload: {DaysAfterInitiation: 7}
+          - Id: ExpireBackupBundles
+            Status: Enabled
+            Prefix: backups/
+            ExpirationInDays: !Ref BackupRetentionDays
+            NoncurrentVersionExpirationInDays: !Ref BackupRetentionDays
+  RuntimeRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: {Service: ec2.amazonaws.com}
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+      Policies:
+        - PolicyName: proposal-ingest-private-data-and-kb
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: [s3:GetObject, s3:PutObject]
+                Resource: !Sub '${SnapshotBucket.Arn}/*'
+              - Effect: Allow
+                Action: [s3:DeleteObject]
+                Resource: !Sub '${SnapshotBucket.Arn}/curated/*'
+              - Effect: Allow
+                Action: [s3:ListBucket, s3:GetBucketLocation]
+                Resource: !GetAtt SnapshotBucket.Arn
+              - Effect: Allow
+                Action: [bedrock:Retrieve, bedrock:StartIngestionJob, bedrock:GetIngestionJob, bedrock:GetDataSource, bedrock:GetKnowledgeBaseDocuments]
+                Resource: !Sub 'arn:${AWS::Partition}:bedrock:${AWS::Region}:${AWS::AccountId}:knowledge-base/${KnowledgeBaseId}'
+              - Effect: Allow
+                Action: [bedrock:InvokeModel]
+                Resource: !Ref ModelResourceArns
+              - Effect: Allow
+                Action: [ssm:GetParameter]
+                Resource:
+                  - !Sub 'arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/proposal-ingest/prod/PROPOSAL_SECRET_KEY'
+                  - !Sub 'arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/proposal-ingest/prod/ENTRA_CLIENT_SECRET'
+                  - !Sub 'arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/proposal-ingest/prod/SHAREPOINT_CLIENT_SECRET'
+                  - !Sub 'arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/proposal-ingest/prod/POSTGRES_PASSWORD'
+  RuntimeProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles: [!Ref RuntimeRole]
+  ApplicationHost:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: !Ref LatestAmazonLinux2023Ami
+      InstanceType: !Ref InstanceType
+      IamInstanceProfile: !Ref RuntimeProfile
+      SubnetId: !Ref PublicSubnet
+      SecurityGroupIds: [!Ref ApplicationSecurityGroup]
+      MetadataOptions:
+        HttpEndpoint: enabled
+        HttpTokens: required
+        HttpPutResponseHopLimit: 2
+      BlockDeviceMappings:
+        - DeviceName: /dev/xvda
+          Ebs:
+            VolumeSize: 48
+            VolumeType: gp3
+            Encrypted: true
+            DeleteOnTermination: false
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          set -euo pipefail
+          dnf install -y docker iptables curl
+          install -d -m 0755 /usr/local/lib/docker/cli-plugins
+          curl -fL --retry 3 --silent --show-error \
+            https://github.com/docker/compose/releases/download/v5.5.1/docker-compose-linux-x86_64 \
+            -o /var/tmp/proposal-docker-compose
+          printf '%s  %s\n' \
+            db1889184726840f75c4f9c001048430d4f25b3be3cb084d3ddd762bc0aed576 \
+            /var/tmp/proposal-docker-compose | sha256sum -c -
+          install -m 0755 /var/tmp/proposal-docker-compose /usr/local/lib/docker/cli-plugins/docker-compose
+          rm -f /var/tmp/proposal-docker-compose
+          docker compose version
+          systemctl enable --now docker
+          usermod -aG docker ec2-user
+          cat > /usr/local/sbin/proposal-ingest-imds-firewall <<'FIREWALL'
+          #!/bin/bash
+          set -euo pipefail
+          iptables -N PROPOSAL-IMDS 2>/dev/null || true
+          iptables -F PROPOSAL-IMDS
+          iptables -A PROPOSAL-IMDS -s 172.30.0.3/32 -d 169.254.169.254/32 -j ACCEPT
+          iptables -A PROPOSAL-IMDS -s 172.30.0.4/32 -d 169.254.169.254/32 -j ACCEPT
+          iptables -A PROPOSAL-IMDS -d 169.254.169.254/32 -j DROP
+          iptables -A PROPOSAL-IMDS -j RETURN
+          iptables -C DOCKER-USER -j PROPOSAL-IMDS 2>/dev/null || iptables -I DOCKER-USER 1 -j PROPOSAL-IMDS
+          FIREWALL
+          chmod 0750 /usr/local/sbin/proposal-ingest-imds-firewall
+          cat > /etc/systemd/system/proposal-ingest-imds-firewall.service <<'UNIT'
+          [Unit]
+          Description=Restrict instance metadata credentials to application containers
+          After=docker.service
+          Requires=docker.service
+          [Service]
+          Type=oneshot
+          ExecStart=/usr/local/sbin/proposal-ingest-imds-firewall
+          RemainAfterExit=yes
+          [Install]
+          WantedBy=multi-user.target
+          UNIT
+          systemctl daemon-reload
+          systemctl enable --now proposal-ingest-imds-firewall.service
+          mkdir -p /opt/proposal-ingest /var/lib/proposal-ingest
+          chmod 0750 /opt/proposal-ingest /var/lib/proposal-ingest
+          dnf clean all
+      Tags:
+        - {Key: Name, Value: proposal-ingest-alpha}
+  ApplicationAddress:
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: vpc
+      InstanceId: !Ref ApplicationHost
+      Tags: [{Key: Name, Value: proposal-ingest-alpha}]
+
+Outputs:
+  PublicAddress:
+    Value: !GetAtt ApplicationAddress.PublicIp
+  SnapshotBucketName:
+    Value: !Ref SnapshotBucket
+  RuntimeRoleArn:
+    Value: !GetAtt RuntimeRole.Arn
+  InstanceId:
+    Value: !Ref ApplicationHost

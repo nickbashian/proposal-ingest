@@ -1,0 +1,11 @@
+{$PUBLIC_HOST} {
+	encode zstd gzip
+	request_body {
+		max_size 20MB
+	}
+	handle_path /static/* {
+		root * /srv/static
+		file_server
+	}
+	reverse_proxy web:8000
+}

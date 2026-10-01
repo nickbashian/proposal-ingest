@@ -13,6 +13,7 @@ Authlib==1.8.0
 cffi==2.1.1
 cryptography==50.0.1
 Django==5.2.17
+gunicorn==23.0.0
 joserfc==1.7.5
 psycopg==3.3.6
 psycopg-binary==3.3.6

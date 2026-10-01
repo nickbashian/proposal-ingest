@@ -4,13 +4,14 @@
 <p>Recommendations do not clear publication gates. Deferred and rejected questions remain unresolved until an explicit answer is recorded.</p>
 <h2>Current proposal workload</h2>
 <p>Automation coverage counts all supported, non-sensitive extracted passages, including abstentions. The time estimate uses the configured minutes per unresolved exception; recorded review time covers completed browser decisions.</p>
-<table><thead><tr><th>Proposal</th><th>Automatic tagging</th><th>Passage treatment</th><th>Review</th></tr></thead><tbody>
+<div class="table-scroll" role="region" aria-label="Proposal workload" tabindex="0"><table><thead><tr><th>Proposal</th><th>Automatic tagging</th><th>Passage treatment</th><th>Review</th></tr></thead><tbody>
 {% for row in workload %}<tr><td>{{ row.proposal.identifier }}<br>{{ row.discovered }} discovered files · {{ row.documents }} extracted · {{ row.failed_or_unsupported }} failed/unsupported files · {{ row.units }} units</td><td>{{ row.tagged }} tagged<br>{{ row.automatic }}/{{ row.supported_nonsensitive }} supported, non-sensitive passages resolved automatically</td><td>{{ row.included }} included · {{ row.excluded }} excluded · {{ row.pending }} pending</td><td>{{ row.exceptions }} exceptions ({{ row.critical }} critical)<br>{{ row.estimated_minutes }} estimated minutes · {{ row.human_decisions }} human decisions · {{ row.review_seconds }} recorded seconds{% if row.failed_calls %}<br>{{ row.failed_calls }} failed/stopped classification jobs: {{ row.failure_reasons|join:", " }}{% endif %}{% for reason in row.reasons %}<br>{{ reason }}{% endfor %}</td></tr>
 {% empty %}<tr><td colspan="4">No proposals captured yet.</td></tr>{% endfor %}
-</tbody></table>
-<table><thead><tr><th>Question</th><th>Scope</th><th>Recommendation</th><th>State</th></tr></thead><tbody>
+</tbody></table></div>
+<h2>Unresolved decisions</h2>
+<div class="table-scroll" role="region" aria-label="Unresolved decisions" tabindex="0"><table><thead><tr><th>Question</th><th>Scope</th><th>Recommendation</th><th>State</th></tr></thead><tbody>
 {% for issue in issues %}<tr><td><a href="{% url 'review-decision' issue.id %}">{{ issue.field }} / {{ issue.kind }}</a>{% if issue.critical %} <strong>Critical</strong>{% endif %}</td><td>{{ issue.family.proposal.identifier }} / {{ issue.family.key }}<br>{{ issue.scope }}</td><td>{{ issue.recommendation }}</td><td>{{ issue.status }}</td></tr>
 {% empty %}<tr><td colspan="4">No unresolved decisions.</td></tr>{% endfor %}
-</tbody></table>
+</tbody></table></div>
 {% if hidden_count %}<p class="warning">{{ hidden_count }} more unresolved decisions remain. <a href="?all=1">Show the complete set, including every critical item</a>.</p>{% endif %}
 {% endblock %}

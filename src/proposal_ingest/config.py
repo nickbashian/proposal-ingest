@@ -11,10 +11,11 @@ import yaml
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field
 
-DEFAULT_CONFIG_PATH = Path(__file__).resolve().parents[2] / "config" / "default_config.yaml"
-DEFAULT_KNOWLEDGE_BASE_POLICIES_PATH = (
-    Path(__file__).resolve().parents[2] / "config" / "knowledge_base_policies.yaml"
-)
+PROJECT_ROOT = Path(
+    os.environ.get("PROPOSAL_PROJECT_ROOT") or Path(__file__).resolve().parents[2]
+).resolve()
+DEFAULT_CONFIG_PATH = PROJECT_ROOT / "config" / "default_config.yaml"
+DEFAULT_KNOWLEDGE_BASE_POLICIES_PATH = PROJECT_ROOT / "config" / "knowledge_base_policies.yaml"
 
 
 class AppConfig(BaseModel):

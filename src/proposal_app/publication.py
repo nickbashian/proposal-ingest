@@ -343,8 +343,16 @@ def _still_current(generation):
     )
 
 
+def _reindex_pending(generation):
+    events = m.AuditRecord.objects.filter(object_id=generation.id)
+    return (
+        events.filter(action="publication.reindex_prepared").count()
+        > events.filter(action="publication.reindex_activated").count()
+    )
+
+
 @transaction.atomic
-def _activate(generation_id):
+def _activate(generation_id, *, allow_held=False):
     generation = m.PublicationGeneration.objects.select_related("proposal").get(pk=generation_id)
     m.Proposal.objects.select_for_update().get(pk=generation.proposal_id)
     # Curation writers lock families; source reconciliation invalidates plans.
@@ -361,8 +369,10 @@ def _activate(generation_id):
         .order_by("id")
         .values_list("id", flat=True)
     )
-    if settings.APP["publication_hold"]:
+    if settings.APP["publication_hold"] and not allow_held:
         raise ValueError("Publication is held pending recovery reconciliation")
+    if _reindex_pending(generation) and not allow_held:
+        raise ValueError("Recovery reindex requires explicit held activation")
     if not _still_current(generation):
         generation.state, generation.failure = "failed", "eligibility_changed"
         generation.save(update_fields=["state", "failure"])
@@ -382,6 +392,77 @@ def _activate(generation_id):
         details={"revision": generation.revision, "artifact_count": generation.expected_count},
     )
     return generation
+
+
+@transaction.atomic
+def prepare_reindex_active(generation_id):
+    """Fence a restored active generation for explicit, held recovery reindexing."""
+    if not settings.APP["publication_hold"]:
+        raise ValueError("Recovery reindex requires the publication hold")
+    proposal_id = m.PublicationGeneration.objects.values_list("proposal_id", flat=True).get(
+        pk=generation_id
+    )
+    m.Proposal.objects.select_for_update().get(pk=proposal_id)
+    generation = m.PublicationGeneration.objects.select_for_update().get(pk=generation_id)
+    if generation.state != "active" or generation.backend != "managed_kb":
+        raise ValueError("Only an active Managed KB generation can be reindexed")
+    if generation.deletion_job_id or generation.deletion_state:
+        raise ValueError("Generation cleanup has started")
+    if (
+        m.PublicationGeneration.objects.filter(
+            proposal_id=proposal_id, state__in=["staged", "uploaded", "indexing", "verified"]
+        )
+        .exclude(pk=generation_id)
+        .exists()
+    ):
+        raise ValueError("Another publication generation is in progress")
+    list(
+        m.VersionFamily.objects.select_for_update()
+        .filter(proposal_id=proposal_id)
+        .order_by("id")
+        .values_list("id", flat=True)
+    )
+    list(
+        m.CurationPlan.objects.select_for_update()
+        .filter(family__proposal_id=proposal_id, state="current")
+        .order_by("id")
+        .values_list("id", flat=True)
+    )
+    if not _still_current(generation):
+        raise ValueError("Generation no longer matches current decisions")
+    generation.state = "staged"
+    generation.ingestion_job_id = ""
+    generation.indexing_started_at = None
+    generation.verified_at = None
+    generation.failure = ""
+    generation.save(
+        update_fields=["state", "ingestion_job_id", "indexing_started_at", "verified_at", "failure"]
+    )
+    m.PublicationArtifact.objects.filter(generation=generation).update(index_state="pending")
+    m.AuditRecord.objects.create(action="publication.reindex_prepared", object_id=generation.id)
+    return generation
+
+
+@transaction.atomic
+def activate_reindexed(generation_id):
+    """Activate an exactly verified recovery generation while the hold remains on."""
+    if not settings.APP["publication_hold"]:
+        raise ValueError("Recovery activation requires the publication hold")
+    proposal_id = m.PublicationGeneration.objects.values_list("proposal_id", flat=True).get(
+        pk=generation_id
+    )
+    m.Proposal.objects.select_for_update().get(pk=proposal_id)
+    generation = m.PublicationGeneration.objects.select_for_update().get(pk=generation_id)
+    if generation.state != "verified" or generation.backend != "managed_kb":
+        raise ValueError("Recovery generation has not been verified")
+    if not _reindex_pending(generation):
+        raise ValueError("Generation was not prepared for recovery reindex")
+    activated = _activate(generation.id, allow_held=True)
+    if activated.state == "active":
+        m.AuditRecord.objects.create(
+            action="publication.reindex_activated", object_id=generation.id
+        )
+    return activated
 
 
 def _reconciliation_expired(generation):
@@ -418,7 +499,11 @@ def process(generation_id, adapter=None):
             artifact.save(update_fields=["index_state"])
         generation.state, generation.verified_at = "verified", timezone.now()
         generation.save(update_fields=["state", "verified_at"])
-        return generation if settings.APP["publication_hold"] else _activate(generation.id)
+        return (
+            generation
+            if settings.APP["publication_hold"] or _reindex_pending(generation)
+            else _activate(generation.id)
+        )
     if adapter is None:
         try:
             adapter = ManagedKBAdapter()
@@ -534,7 +619,11 @@ def process(generation_id, adapter=None):
         )
         generation.save(update_fields=["state", "verified_at", "failure"])
     if generation.state == "verified":
-        return generation if settings.APP["publication_hold"] else _activate(generation.id)
+        return (
+            generation
+            if settings.APP["publication_hold"] or _reindex_pending(generation)
+            else _activate(generation.id)
+        )
     return generation
 
 
