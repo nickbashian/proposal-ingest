@@ -584,6 +584,14 @@ def test_browser_complete_local_product_slice(slice_owner, settings, live_server
             page.reload()
             assert "succeeded" in page.locator("body").inner_text()
             page.get_by_role("link", name="Return to collection review").click()
+            # Keep wide tables inside their scroll region, not the page.
+            for width in (390, 768, 1280):
+                page.set_viewport_size({"width": width, "height": 900})
+                assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
+            page.get_by_role("link", name="Operations", exact=True).click()
+            page.set_viewport_size({"width": 390, "height": 844})
+            assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
+            page.get_by_role("link", name="Back to collection").click()
             body = page.locator("body").inner_text()
             assert "awaiting_decision" in body and "excluded" in body and "included" in body
             assert "Voice-only passages" in body
@@ -592,6 +600,16 @@ def test_browser_complete_local_product_slice(slice_owner, settings, live_server
             page.get_by_role("button", name="Create writing workspace").click()
             assert "Local deterministic retrieval" in page.locator("body").inner_text()
             assert "Deterministic local drafting" in page.locator("body").inner_text()
+            for width in (390, 768, 1280):
+                page.set_viewport_size({"width": width, "height": 900})
+                assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
+                query_box = page.get_by_label(
+                    "Query or exact proposal ID", exact=True
+                ).bounding_box()
+                assert query_box and query_box["x"] + query_box["width"] <= width
+            page.get_by_role("link", name="Skip to main content").focus()
+            page.keyboard.press("Enter")
+            assert page.locator("main").evaluate("element => element === document.activeElement")
             page.get_by_label("Query").fill("capacity 500 cycles")
             page.get_by_role("button", name="Search local evidence").click()
             assert FACT_TEXT in page.locator("body").inner_text()
@@ -599,7 +617,7 @@ def test_browser_complete_local_product_slice(slice_owner, settings, live_server
             page.get_by_role("button", name="Pin factual evidence").click()
             page.get_by_label("Run in background", exact=False).uncheck()
             page.get_by_role("button", name="Generate deterministic draft").click()
-            textarea = page.locator('textarea[name="text"]')
+            textarea = page.get_by_label("Draft text", exact=True)
             assert FACT_TEXT in textarea.input_value()
             textarea.fill(textarea.input_value() + "\nUser-authored bridge sentence.")
             page.get_by_role("button", name="Save edit as new revision").click()
