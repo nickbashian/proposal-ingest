@@ -48,4 +48,7 @@ valid deployment findings. UserData now starts the IMDS firewall service on firs
 boot, and the backup timer installer rejects a checkout outside its fixed
 `/opt/proposal-ingest` service path. Linux syntax and the explicit custom-path
 rejection were verified in the image. Required CI must pass on the follow-up
-commit; the offline evidence does not close 08-C/D/E.
+commit; the offline evidence does not close 08-C/D/E. A later offline preflight
+against `.env.production.example` exposed placeholder Entra/SharePoint settings
+incorrectly reported as configured. The preflight now marks template values
+unresolved without printing them, and the production-template regression passed.

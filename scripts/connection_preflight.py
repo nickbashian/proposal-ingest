@@ -1,6 +1,6 @@
 """Read-only local preflight for the MVP-08 service connection session.
 
-This command inspects environment variable names and presence only. It never
+This command checks presence and unresolved template placeholders. It never
 prints values or contacts a provider; live probes remain explicit operator steps.
 """
 
@@ -46,12 +46,21 @@ def _parse_env_file(path: Path) -> dict[str, str]:
 
 
 def inspect_connections(values: Mapping[str, str]) -> list[Check]:
-    """Return presence-only configuration checks; never include supplied values."""
+    """Return configuration checks without including supplied values."""
+
+    def configured(value: str) -> bool:
+        candidate = value.strip().lower()
+        return bool(candidate) and not any(
+            marker in candidate
+            for marker in ("replace_with", "${", "example.org", "example.com", "example.net")
+        )
 
     def check(name: str, keys: Sequence[str], action: str) -> Check:
-        missing = [key for key in keys if not values.get(key, "").strip()]
+        missing = [key for key in keys if not configured(values.get(key, ""))]
         if missing:
-            return Check(name, "NEEDS CONFIG", "Missing: " + ", ".join(missing), action)
+            return Check(
+                name, "NEEDS CONFIG", "Unset or placeholder: " + ", ".join(missing), action
+            )
         return Check(
             name,
             "CONFIGURED",

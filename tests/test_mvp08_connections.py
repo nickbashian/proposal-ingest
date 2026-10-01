@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from scripts.connection_preflight import _parse_env_file, inspect_connections, main
 
 
@@ -40,6 +42,13 @@ def test_preflight_marks_present_settings_without_printing_values():
     checks = inspect_connections(values)
     assert all(item.status == "CONFIGURED" for item in checks)
     assert all("private-" not in item.detail and "private-" not in item.action for item in checks)
+
+
+def test_production_template_is_unconfigured_until_real_values_are_supplied():
+    template = Path(__file__).resolve().parents[1] / ".env.production.example"
+    checks = inspect_connections(_parse_env_file(template))
+    assert all(item.status == "NEEDS CONFIG" for item in checks)
+    assert all("REPLACE_WITH" not in item.detail for item in checks)
 
 
 def test_preflight_rejects_unimplemented_snapshot_s3_mode():
