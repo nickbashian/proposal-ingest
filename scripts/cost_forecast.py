@@ -55,7 +55,7 @@ def forecast(payload: dict, *, limits: dict | None = None) -> dict:
             raise ValueError(f"Line item {index} needs a unique name")
         if not isinstance(category, str) or not category.strip():
             raise ValueError(f"Line item {index} needs a category")
-        if period not in totals:
+        if not isinstance(period, str) or period not in totals:
             raise ValueError(f"Line item {index} needs a setup, monthly, or tooling period")
         seen.add(name)
         price = _money(item.get("unit_price_usd"), f"{name} unit_price_usd")
@@ -89,7 +89,7 @@ def main() -> int:
     args = parser.parse_args()
     try:
         report = forecast(json.loads(args.path.read_text(encoding="utf-8")))
-    except (OSError, ValueError, json.JSONDecodeError) as exc:
+    except (OSError, ValueError) as exc:
         parser.exit(2, f"Forecast incomplete: {exc}\n")
     print(json.dumps(report, indent=2))
     return 0 if report["setup_within_limit"] and report["monthly_within_limit"] else 1

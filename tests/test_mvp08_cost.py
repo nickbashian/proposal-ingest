@@ -1,10 +1,11 @@
 """Forecasts must expose gross spend and reject missing or invalid prices."""
 
+import json
 from decimal import Decimal
 
 import pytest
 
-from scripts.cost_forecast import REQUIRED_MONTHLY_CATEGORIES, forecast
+from scripts.cost_forecast import REQUIRED_MONTHLY_CATEGORIES, forecast, main
 
 
 def _scenario(monthly_price="1"):
@@ -74,3 +75,24 @@ def test_forecast_refuses_duplicate_names_and_nonfinite_values():
     scenario["line_items"][0]["quantity"] = "NaN"
     with pytest.raises(ValueError, match="finite nonnegative"):
         forecast(scenario)
+
+
+@pytest.mark.parametrize("period", [[], {}, None, 1, "weekly"])
+def test_forecast_cli_reports_invalid_period_without_traceback(
+    period, tmp_path, monkeypatch, capsys
+):
+    scenario = _scenario()
+    scenario["line_items"][0]["period"] = period
+    path = tmp_path / "forecast.json"
+    path.write_text(json.dumps(scenario), encoding="utf-8")
+    monkeypatch.setattr("sys.argv", ["cost_forecast.py", str(path)])
+
+    with pytest.raises(SystemExit) as error:
+        main()
+
+    assert error.value.code == 2
+    output = capsys.readouterr()
+    assert output.out == ""
+    assert output.err == (
+        "Forecast incomplete: Line item 1 needs a setup, monthly, or tooling period\n"
+    )
