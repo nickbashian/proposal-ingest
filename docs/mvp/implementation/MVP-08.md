@@ -42,5 +42,10 @@ signed in. Its seven comments were checked against the code:
 | Amazon Linux Compose plugin installation | Replaced the unavailable assumed package with a pinned, checksum-verified official plugin binary and a version check in UserData. |
 
 The corrected scripts and extracted UserData passed Linux `bash -n`; CloudFormation
-YAML parsed, and the focused recovery/connection suite passed. A final-head
-CodeRabbit follow-up and required CI are pending until this branch is pushed.
+YAML parsed, and the focused recovery/connection suite passed. The final-head
+CodeRabbit follow-up reviewed all 51 changed files and produced two additional
+valid deployment findings. UserData now starts the IMDS firewall service on first
+boot, and the backup timer installer rejects a checkout outside its fixed
+`/opt/proposal-ingest` service path. Linux syntax and the explicit custom-path
+rejection were verified in the image. Required CI must pass on the follow-up
+commit; the offline evidence does not close 08-C/D/E.

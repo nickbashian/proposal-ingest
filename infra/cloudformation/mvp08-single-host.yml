@@ -207,7 +207,7 @@ Resources:
           WantedBy=multi-user.target
           UNIT
           systemctl daemon-reload
-          systemctl enable proposal-ingest-imds-firewall.service
+          systemctl enable --now proposal-ingest-imds-firewall.service
           mkdir -p /opt/proposal-ingest /var/lib/proposal-ingest
           chmod 0750 /opt/proposal-ingest /var/lib/proposal-ingest
           dnf clean all

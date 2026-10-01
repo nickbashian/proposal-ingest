@@ -2,6 +2,10 @@
 set -euo pipefail
 
 repo=${1:-/opt/proposal-ingest}
+if [[ "$repo" != /opt/proposal-ingest ]]; then
+  echo "Backup timer requires the deployment checkout at /opt/proposal-ingest" >&2
+  exit 2
+fi
 if [[ ! -f "$repo/deploy/backup_to_s3.sh" ]]; then
   echo "Expected deployment repository at $repo" >&2
   exit 2
