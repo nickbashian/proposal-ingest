@@ -4,7 +4,7 @@ September 30, 2026. This is a small presentation-only follow-up to MVP-08, not a
 
 ## Scope and branch coordination
 
-Isolated branch `codex/mvp-ui-polish`, based on MVP-08 commit `dcae3037b129b83aa64ef2ba750b98ddc7c72b24`. The original checkout and draft PRs #26, #24, and #25 were left unchanged. The UI draft targets the MVP-08 branch to show only this diff. Preserve the existing #26 -> #24 -> #25 merge order; keep this draft unmerged, then retarget it to merged `main` and verify the resulting diff/checks before merging. The MVP-09 harness and MVP-10 planner currently touch none of this pass's files.
+Isolated branch `codex/mvp-ui-polish`, based on MVP-08 commit `dcae3037b129b83aa64ef2ba750b98ddc7c72b24`. The UI PR targets `codex/mvp-08-operations-connections` to isolate this diff. Nicholas has authorized the coordinating chat to merge #28 into the MVP-08 branch after final PR CI passes. PR #26 itself stays draft for tomorrow's live connection work. Do not retarget #28 to `main`. The later product merge order remains #26 -> #24 -> #25; this UI merge is part of #26 and does not advance its live acceptance. The MVP-09 harness and MVP-10 planner currently touch none of this pass's files.
 
 ## What changed
 
@@ -43,3 +43,5 @@ Live Microsoft sign-in, Managed KB retrieval, Bedrock latency/errors and product
 Final check and review results are recorded in the draft PR. The full Windows `scripts/dev.py check` gate uses synthetic tests and the existing browser smoke. Responsive and skip-link assertions were added to the existing full product-flow browser test at 390, 768 and 1280 pixels.
 
 The initial local CodeRabbit review completed with one trivial finding: remove the query input's redundant `aria-label`. Fixed it and aligned the exact test selector. The initial full check passed 662 tests and found the old copy-button label in the MVP-07 browser test; that selector was updated without weakening assertions. One final full check and one bounded CodeRabbit follow-up cover the resulting code. Further speculative or stylistic review loops are not requested.
+
+The final merge-instruction update changes documentation only. The verified UI code and tests remain unchanged; the coordinating chat handles the merge after final PR CI passes. No additional CodeRabbit cycle is requested for this owner-directed documentation update.
