@@ -6,18 +6,19 @@ metric, or account cost is marked passed by an offline check. Keep credentials,
 source excerpts, screenshots, account identifiers, and private evaluation labels
 in the approved private stores, not in this repository or a PR comment.
 
-Draft PRs [#24](https://github.com/nickbashian/proposal-ingest/pull/24) and
-[#25](https://github.com/nickbashian/proposal-ingest/pull/25) contain independent
+Draft [PR #26](https://github.com/nickbashian/proposal-ingest/pull/26) contains
+MVP-08 offline deployment and connection preparation. Draft
+[PR #24](https://github.com/nickbashian/proposal-ingest/pull/24) and
+[PR #25](https://github.com/nickbashian/proposal-ingest/pull/25) contain independent
 MVP-09 and MVP-10 offline preparation from the last merged main. Rebase and
 reverify them in sequence after MVP-08 and then MVP-09 merge; their current CI
 does not prove the combined final branch.
 
 ## Before the session: agent-owned preparation
 
-- Finish the MVP-08 offline gate: deployment definition, production configuration,
-  backup/restore/reindex rehearsal, operations view, connection preflight, cost
-  forecast tool, synthetic integration contracts, canonical checks, and CodeRabbit
-  review. Record the final commit and any unresolved review issue.
+- Keep the reviewed MVP-08 deployment, recovery, operations, connection preflight,
+  and cost artifacts ready. Confirm the final PR head and required CI before the
+  merge decision. The synthetic restore does not establish live recovery targets.
 - Prepare an idle, typical, and busy cost file from
   `config/cost_forecast.example.json`. Prices, account credit eligibility, instance
   size, and quantities remain blank until the intended account and region are
@@ -32,7 +33,7 @@ does not prove the combined final branch.
 
 | Order | Nicholas or administrator action | Agent verification and evidence |
 |---|---|---|
-| 1 | Refresh GitHub CLI and CodeRabbit sign-in if their current tokens remain invalid. Confirm repository visibility and review coverage. | `gh auth status`, `cr auth status`, complete review of the final diff, then attach sanitized dispositions. No paid over-limit review. |
+| 1 | Review the three draft PRs and the acceptance holds before merging in MVP order. | Present final-head CI and local CodeRabbit dispositions. The GitHub connector and CodeRabbit CLI are working; refresh CLI sign-in only if a later step requires it. |
 | 2 | Select the intended AWS account, region, named SSO profile, and credit/billing view. Confirm the monthly and setup envelope. | Run `scripts/connection_preflight.py`, then explicit redacted identity/API probes. Price all cost scenarios and check the applicable credits separately from gross cost. Configure billing alerts before paid probes. |
 | 3 | Approve the endpoint/DNS name, access network, host size, backup retention, and any provider-term or network-isolation decision. Provision narrowly scoped secrets and IAM, curated private S3 and Managed KB access. | Validate infrastructure and runtime roles, TLS/OIDC URLs, bucket privacy, prefix isolation, model inference profiles, quotas, KB metadata/retrieval API behavior, and deployment cost. Deploy only after the cost and capability checks pass. |
 | 4 | Register the web Entra app and background read-only SharePoint app; grant the selected site/drive/folder scope and initial allowlist identity. | Confirm anonymous/nonallowlisted denial, OIDC sign-in/session expiry, Graph selected-site read and denial outside scope. Record IDs privately. |
