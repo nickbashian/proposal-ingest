@@ -617,7 +617,7 @@ def test_browser_complete_local_product_slice(slice_owner, settings, live_server
             page.get_by_role("button", name="Pin factual evidence").click()
             page.get_by_label("Run in background", exact=False).uncheck()
             page.get_by_role("button", name="Generate deterministic draft").click()
-            textarea = page.get_by_label("Draft text", exact=True)
+            textarea = page.get_by_role("textbox", name="Draft text", exact=True)
             assert FACT_TEXT in textarea.input_value()
             textarea.fill(textarea.input_value() + "\nUser-authored bridge sentence.")
             page.get_by_role("button", name="Save edit as new revision").click()
