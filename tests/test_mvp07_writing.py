@@ -901,7 +901,7 @@ def test_browser_background_cancel_errors_revisions_and_session_expiry(
             page.get_by_role("button", name="Restore as new revision").last.click()
             assert page.locator('textarea[name="text"]').input_value() == first.text
             page.context.grant_permissions(["clipboard-read", "clipboard-write"])
-            page.get_by_role("button", name="Copy saved text").click()
+            page.get_by_role("button", name="Copy draft text").click()
             expect(page.locator("#copy-status")).not_to_be_empty()
             assert (
                 page.evaluate("navigator.clipboard.readText()").replace("\r\n", "\n") == first.text

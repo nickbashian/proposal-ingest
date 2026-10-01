@@ -1,5 +1,35 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Proposal Knowledge Base</title>
-<style>body{font:17px/1.6 system-ui,sans-serif;max-width:1100px;margin:3rem auto;padding:0 2rem;color:#183344;background:#f7f9fa}a{color:#005f7a}button,input,textarea,select{font:inherit;padding:.4rem .8rem}textarea{box-sizing:border-box;width:100%}table{width:100%;border-collapse:collapse}td,th{padding:.7rem;text-align:left;vertical-align:top;border-bottom:1px solid #ccd5db}nav{display:flex;justify-content:space-between}small,.muted{color:#526472}.label{display:inline-block;border-radius:1rem;background:#dcecf0;padding:.1rem .6rem}.warning{border-left:.35rem solid #c47400;padding:.5rem 1rem;background:#fff7e8}.card{margin:1rem 0;padding:1rem;border:1px solid #ccd5db;border-radius:.4rem;background:#fff}section{padding:1rem 0}pre{white-space:pre-wrap;background:#edf2f4;padding:1rem}form.inline{display:inline}</style>
-</head><body><nav><a href="/">Proposal Knowledge Base</a>{% if request.user.is_authenticated %}<form method="post" action="/logout/">{% csrf_token %}<button>Sign out</button></form>{% endif %}</nav>{% block content %}{% endblock %}</body></html>
+<title>{% block title %}Proposal Knowledge Base{% endblock %}</title>
+<style>
+*{box-sizing:border-box}
+body{font:17px/1.6 system-ui,sans-serif;max-width:1164px;margin:2rem auto;padding:0 2rem;color:#183344;background:#f7f9fa;overflow-wrap:anywhere}
+a{color:#005f7a;text-underline-offset:.15em}
+a:hover{text-decoration-thickness:2px}
+h1,h2,h3{line-height:1.25}h1{font-size:2rem;margin:1.5rem 0 1rem}h2{font-size:1.4rem}h3{font-size:1.15rem}
+button,input,textarea,select{font:inherit;padding:.5rem .75rem;max-width:100%;border:1px solid #82949f;border-radius:.3rem}
+input,textarea,select{background:#fff;color:#183344}
+button{color:#183344;background:#edf2f4;cursor:pointer;white-space:normal}
+button:hover{background:#dcecf0}button:disabled{cursor:wait;opacity:.65}
+:focus-visible{outline:3px solid #006d91;outline-offset:3px}
+label{display:block;margin:.6rem 0;font-weight:600}
+label input:not([type=checkbox]),label select,label textarea{display:block;margin-top:.25rem;width:100%;font-weight:400}
+input[type=checkbox]{width:1.1rem;height:1.1rem;vertical-align:middle;accent-color:#005f7a}
+textarea{width:100%;resize:vertical}form{margin:.6rem 0}form.inline{display:inline}
+form button{margin:.25rem .25rem .25rem 0}
+.filter-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:.25rem 1rem;align-items:end}
+.filter-grid .query-field{grid-column:span 2}.filter-grid button{justify-self:start}
+.table-scroll{max-width:100%;overflow-x:auto;margin:1rem 0;border:1px solid #ccd5db;border-radius:.35rem;background:#fff}
+table{width:100%;border-collapse:collapse}td,th{padding:.75rem;text-align:left;vertical-align:top;border-bottom:1px solid #ccd5db}th{background:#edf2f4;font-size:.9rem}tr:last-child td{border-bottom:0}
+.table-scroll td{min-width:7rem}.table-scroll pre{min-width:15rem}
+nav{display:flex;align-items:center;justify-content:space-between;gap:1rem;padding-bottom:1rem;border-bottom:1px solid #ccd5db}nav form{margin:0;flex-shrink:0}
+small,.muted{color:#526472}.label{display:inline-block;border-radius:1rem;background:#dcecf0;padding:.1rem .6rem;margin:.15rem 0}
+.warning{border-left:.35rem solid #c47400;padding:.5rem 1rem;background:#fff7e8}
+.card{margin:1rem 0;padding:1.25rem;border:1px solid #ccd5db;border-radius:.4rem;background:#fff}.card>h2:first-child,.card>h3:first-child{margin-top:0}
+section{padding:1rem 0}pre{white-space:pre-wrap;overflow-wrap:anywhere;background:#edf2f4;padding:1rem;font-size:.9rem}
+dt{font-weight:600}dd{margin:0 0 .6rem}summary{cursor:pointer;color:#005f7a}details{margin:.75rem 0}img{max-width:100%;height:auto}
+.metadata{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:.25rem 1rem}.metadata dt{text-transform:capitalize}.metadata dd{margin:0}
+.skip-link{position:absolute;left:1rem;top:-6rem;background:#fff;padding:.5rem 1rem;z-index:1}.skip-link:focus{top:1rem}
+@media(max-width:640px){body{margin:1rem auto;padding:0 1rem}h1{font-size:1.65rem}.card{padding:1rem}.filter-grid,.metadata{grid-template-columns:1fr}.filter-grid .query-field{grid-column:auto}nav{align-items:flex-start}nav>a{max-width:65%}}
+</style>
+</head><body><a class="skip-link" href="#main-content">Skip to main content</a><nav aria-label="Main navigation"><a href="/">Proposal Knowledge Base</a>{% if request.user.is_authenticated %}<form method="post" action="/logout/">{% csrf_token %}<button>Sign out</button></form>{% endif %}</nav><main id="main-content" tabindex="-1">{% block content %}{% endblock %}</main></body></html>
